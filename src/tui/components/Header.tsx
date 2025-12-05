@@ -1,6 +1,7 @@
 import React, { memo, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { formatTokens } from '../utils/markdown.ts';
+import type { AuthType } from '../../config/storage.ts';
 
 export interface HeaderProps {
   connected: boolean;
@@ -9,6 +10,7 @@ export interface HeaderProps {
   workspaceName?: string;
   contextTokens?: number;
   costUsd?: number;
+  authType?: AuthType;
 }
 
 export const Header: React.FC<HeaderProps> = memo(({
@@ -18,6 +20,7 @@ export const Header: React.FC<HeaderProps> = memo(({
   workspaceName,
   contextTokens = 0,
   costUsd = 0,
+  authType = 'api_key',
 }) => {
   // Map model IDs to friendly names
   const modelDisplay = useMemo(() => {
@@ -51,6 +54,10 @@ export const Header: React.FC<HeaderProps> = memo(({
           {connected ? '●' : '○'}
         </Text>
         <Text dimColor> {mcpDisplay}</Text>
+        <Text dimColor> | </Text>
+        <Text color={authType === 'oauth_token' ? 'green' : 'blue'}>
+          {authType === 'oauth_token' ? 'Max' : 'API'}
+        </Text>
       </Box>
 
       <Box>

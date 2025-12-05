@@ -4,7 +4,7 @@ import { render } from 'ink';
 import meow from 'meow';
 import { App } from './tui/App.tsx';
 import { Setup } from './tui/components/Setup.tsx';
-import { loadStoredConfig, getActiveWorkspace, type StoredConfig, type Workspace } from './config/storage.ts';
+import { loadStoredConfig, getActiveWorkspace, type StoredConfig, type Workspace, type AuthType } from './config/storage.ts';
 import type { CraftAgentConfig } from './agent/craft-agent.ts';
 
 const cli = meow(
@@ -136,8 +136,19 @@ const Root: React.FC<RootProps> = ({ initialConfig, cliFlags, forceSetup }) => {
     model: cliFlags.model || config.model,
   };
 
-  // Set API key in environment for the SDK
-  process.env.ANTHROPIC_API_KEY = config.anthropicApiKey;
+  // Set authentication in environment for the SDK based on auth type
+  const authType: AuthType = config.authType || 'api_key';
+  if (authType === 'oauth_token' && config.claudeOAuthToken) {
+    // Use Claude Max subscription via OAuth token
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = config.claudeOAuthToken;
+    // Clear API key to ensure SDK uses OAuth token
+    delete process.env.ANTHROPIC_API_KEY;
+  } else {
+    // Use API key (pay-as-you-go)
+    process.env.ANTHROPIC_API_KEY = config.anthropicApiKey;
+    // Clear OAuth token if set
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  }
 
   return <App config={agentConfig} onRequestSetup={handleRequestSetup} />;
 };

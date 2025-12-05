@@ -21,8 +21,14 @@ export interface Workspace {
   sessionId?: string;  // SDK session ID for conversation continuity
 }
 
+export type AuthType = 'api_key' | 'oauth_token';
+
 export interface StoredConfig {
   anthropicApiKey: string;
+  // Claude Max OAuth token (alternative to API key)
+  claudeOAuthToken?: string;
+  // Which auth method to use
+  authType?: AuthType;
   // Legacy fields (kept for migration from single-workspace config)
   craftMcpUrl?: string;
   oauth?: OAuthCredentials;
@@ -65,17 +71,27 @@ function extractWorkspaceName(mcpUrl: string): string {
 function migrateConfig(rawConfig: Record<string, unknown>): StoredConfig | null {
   // Check if already migrated (has workspaces array)
   if (Array.isArray(rawConfig.workspaces)) {
-    return rawConfig as unknown as StoredConfig;
+    // Already migrated - just validate it has required auth
+    const config = rawConfig as unknown as StoredConfig;
+    const hasApiKey = config.anthropicApiKey && config.anthropicApiKey.length > 0;
+    const hasOAuthToken = config.claudeOAuthToken && config.claudeOAuthToken.length > 0;
+    if (!hasApiKey && !hasOAuthToken) {
+      return null;
+    }
+    return config;
   }
 
   // Validate legacy required fields
   const anthropicApiKey = rawConfig.anthropicApiKey as string | undefined;
+  const claudeOAuthToken = rawConfig.claudeOAuthToken as string | undefined;
   const craftMcpUrl = rawConfig.craftMcpUrl as string | undefined;
   const oauth = rawConfig.oauth as OAuthCredentials | undefined;
   const isPublic = rawConfig.isPublic as boolean | undefined;
   const model = rawConfig.model as string | undefined;
 
-  if (!anthropicApiKey || !craftMcpUrl) {
+  // Must have either API key or OAuth token for Claude auth
+  const hasClaudeAuth = (anthropicApiKey && anthropicApiKey.length > 0) || (claudeOAuthToken && claudeOAuthToken.length > 0);
+  if (!hasClaudeAuth || !craftMcpUrl) {
     return null;
   }
 
@@ -95,7 +111,8 @@ function migrateConfig(rawConfig: Record<string, unknown>): StoredConfig | null 
   };
 
   const migratedConfig: StoredConfig = {
-    anthropicApiKey,
+    anthropicApiKey: anthropicApiKey || '',
+    claudeOAuthToken: claudeOAuthToken,
     // Keep legacy fields for backwards compatibility
     craftMcpUrl,
     oauth,
@@ -120,8 +137,10 @@ export function loadStoredConfig(): StoredConfig | null {
     const content = readFileSync(CONFIG_FILE, 'utf-8');
     const rawConfig = JSON.parse(content) as Record<string, unknown>;
 
-    // Validate API key exists
-    if (!rawConfig.anthropicApiKey) {
+    // Validate Claude auth exists (either API key or OAuth token)
+    const hasApiKey = rawConfig.anthropicApiKey && (rawConfig.anthropicApiKey as string).length > 0;
+    const hasOAuthToken = rawConfig.claudeOAuthToken && (rawConfig.claudeOAuthToken as string).length > 0;
+    if (!hasApiKey && !hasOAuthToken) {
       return null;
     }
 
@@ -239,6 +258,42 @@ export function clearConfig(): void {
   if (existsSync(CONFIG_FILE)) {
     writeFileSync(CONFIG_FILE, '{}', 'utf-8');
   }
+}
+
+export function updateApiKey(newApiKey: string): boolean {
+  const config = loadStoredConfig();
+  if (!config) return false;
+
+  config.anthropicApiKey = newApiKey;
+  config.authType = 'api_key';
+  saveConfig(config);
+  return true;
+}
+
+export function updateOAuthToken(newToken: string): boolean {
+  const config = loadStoredConfig();
+  if (!config) return false;
+
+  config.claudeOAuthToken = newToken;
+  config.authType = 'oauth_token';
+  saveConfig(config);
+  return true;
+}
+
+export function getAuthType(): AuthType {
+  const config = loadStoredConfig();
+  return config?.authType || 'api_key';
+}
+
+export function getAuthCredential(): { type: AuthType; value: string } | null {
+  const config = loadStoredConfig();
+  if (!config) return null;
+
+  const authType = config.authType || 'api_key';
+  if (authType === 'oauth_token' && config.claudeOAuthToken) {
+    return { type: 'oauth_token', value: config.claudeOAuthToken };
+  }
+  return { type: 'api_key', value: config.anthropicApiKey };
 }
 
 export function getConfigPath(): string {

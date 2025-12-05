@@ -611,10 +611,29 @@ export class CraftAgent {
             // Find pending SDK tool by matching tool name suffix
             for (const [sdkId, pending] of pendingToolUses) {
               if (pending.name.endsWith(`__${event.toolName}`)) {
-                // Stringify result
+                // Check if result indicates an error (both from proxy flag and result content)
+                // MCP servers can return error responses without throwing exceptions
+                const isError = event.isError || this.isToolResultError(event.result);
+
+                // Stringify result - extract clean error message if it's an error
                 let resultStr: string;
                 if (typeof event.result === 'string') {
                   resultStr = event.result;
+                } else if (isError && typeof event.result === 'object' && event.result !== null) {
+                  // Try to extract a clean error message from MCP error response
+                  const obj = event.result as Record<string, unknown>;
+                  if (obj.error && typeof obj.error === 'string') {
+                    resultStr = obj.error;
+                  } else if (Array.isArray(obj.content)) {
+                    // Extract text from error content blocks
+                    const errorTexts = obj.content
+                      .filter((item: unknown) => typeof item === 'object' && item !== null && (item as Record<string, unknown>).type === 'error')
+                      .map((item: unknown) => (item as Record<string, unknown>).text)
+                      .filter((text): text is string => typeof text === 'string');
+                    resultStr = errorTexts.length > 0 ? errorTexts.join('\n') : JSON.stringify(event.result, null, 2);
+                  } else {
+                    resultStr = JSON.stringify(event.result, null, 2);
+                  }
                 } else {
                   try {
                     resultStr = JSON.stringify(event.result, null, 2);
@@ -628,11 +647,11 @@ export class CraftAgent {
                   type: 'tool_result',
                   toolUseId: sdkId,
                   result: resultStr,
-                  isError: event.isError,
+                  isError,
                   input: pending.input,
                 });
                 pendingToolUses.delete(sdkId);
-                this.onDebug?.(`MCP onToolResult: captured result for ${sdkId} (${event.toolName}), duration=${event.duration}ms`);
+                this.onDebug?.(`MCP onToolResult: captured result for ${sdkId} (${event.toolName}), duration=${event.duration}ms, isError=${isError}`);
                 break;
               }
             }

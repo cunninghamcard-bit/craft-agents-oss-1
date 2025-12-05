@@ -7,12 +7,13 @@ import { ModelSelector, type Model } from './components/ModelSelector.tsx';
 import { WorkspaceSelector } from './components/WorkspaceSelector.tsx';
 import { WorkspaceAdd } from './components/WorkspaceAdd.tsx';
 import { WorkspaceRename } from './components/WorkspaceRename.tsx';
+import { ApiKeyChange } from './components/ApiKeyChange.tsx';
 import { AskUserQuestion } from './components/AskUserQuestion.tsx';
 import { useAgent } from './hooks/useAgent.ts';
 import { useHistory } from './hooks/useHistory.ts';
 import { useResize } from './hooks/useResize.ts';
 import { formatToolsHelp } from '../mcp/tools.ts';
-import { getConfigPath, getWorkspaces, setActiveWorkspace, removeWorkspace, renameWorkspace, getWorkspaceDataPath, type Workspace } from '../config/storage.ts';
+import { getConfigPath, getWorkspaces, setActiveWorkspace, removeWorkspace, renameWorkspace, getWorkspaceDataPath, updateApiKey, getAuthType, type Workspace, type AuthType } from '../config/storage.ts';
 import { formatPreferencesDisplay, getPreferencesPath } from '../config/preferences.ts';
 import { formatTokens } from './utils/markdown.ts';
 import { processInputWithFiles, readClipboard, type FileAttachment } from './utils/files.ts';
@@ -37,6 +38,7 @@ const HELP_TEXT = `
   /config      Show current configuration
   /prefs       Show user preferences
   /setup       Reconfigure API keys and MCP settings
+  /apikey      Change Anthropic API key
   /compact     Toggle compact/expanded tool output
   /cost        Show token usage and estimated cost
   /model       Show or change model (e.g., /model opus)
@@ -117,6 +119,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
   const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false);
   const [showWorkspaceAdd, setShowWorkspaceAdd] = useState(false);
   const [showWorkspaceRename, setShowWorkspaceRename] = useState(false);
+  const [showApiKeyChange, setShowApiKeyChange] = useState(false);
   const [pendingRemoveWorkspace, setPendingRemoveWorkspace] = useState<string | null>(null);
 
   // Models list
@@ -199,6 +202,20 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
     setShowWorkspaceRename(false);
   }, []);
 
+  const handleApiKeySubmit = useCallback((newApiKey: string) => {
+    setShowApiKeyChange(false);
+    const success = updateApiKey(newApiKey);
+    if (success) {
+      addLocalMessage('API key updated. Restart the app to use the new key.', 'system');
+    } else {
+      addLocalMessage('Failed to update API key.', 'error');
+    }
+  }, [addLocalMessage]);
+
+  const handleApiKeyCancel = useCallback(() => {
+    setShowApiKeyChange(false);
+  }, []);
+
   const handlePaste = useCallback(() => {
     try {
       const clipboardItems = readClipboard();
@@ -261,11 +278,6 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
 
   const handleSubmit = useCallback(
     async (input: string) => {
-      // Hide welcome on first interaction
-      if (showWelcome) {
-        setShowWelcome(false);
-      }
-
       // Handle slash commands
       if (input.startsWith('/')) {
         const parts = input.toLowerCase().trim().split(/\s+/);
@@ -274,7 +286,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
         // Primary commands for partial matching (order matters for priority)
         const primaryCommands = [
           '/help', '/clear', '/paste', '/tools', '/config', '/prefs',
-          '/setup', '/compact', '/cost', '/model', '/workspace', '/web', '/fetch',
+          '/setup', '/apikey', '/compact', '/cost', '/model', '/workspace', '/web', '/fetch',
           '/bash', '/debug', '/exit'
         ];
 
@@ -332,11 +344,17 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             }
             return;
 
+          case '/apikey':
+            setShowApiKeyChange(true);
+            return;
+
           case '/config':
+            const currentAuthType = getAuthType();
             addLocalMessage(
               `**Configuration**
 
 - Config file: \`${getConfigPath()}\`
+- Claude auth: ${currentAuthType === 'oauth_token' ? '**Max Subscription**' : 'API Key'}
 - Workspace: \`${workspace.name}\`
 - MCP URL: \`${workspace.mcpUrl}\`
 - Model: \`${model}\`
@@ -628,15 +646,17 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
 
   return (
     <Box flexDirection="column" width="100%" minHeight={20}>
-      {/* Welcome banner (shown once) */}
-      {showWelcome && allMessages.length === 0 && (
+      {/* Welcome banner */}
+      {showWelcome && (
         <Box flexDirection="column" paddingX={1}>
           <WelcomeBanner />
-          <Box marginTop={1}>
-            <Text dimColor>
-              Type a message to get started, or /help for commands.
-            </Text>
-          </Box>
+          {allMessages.length === 0 && (
+            <Box marginTop={1}>
+              <Text dimColor>
+                Type a message to get started, or /help for commands.
+              </Text>
+            </Box>
+          )}
         </Box>
       )}
 
@@ -692,6 +712,14 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
         />
       )}
 
+      {/* API key change input */}
+      {showApiKeyChange && (
+        <ApiKeyChange
+          onSubmit={handleApiKeySubmit}
+          onCancel={handleApiKeyCancel}
+        />
+      )}
+
       {/* Input + Status bar + Header together at bottom */}
       <Box flexDirection="column" width="100%" paddingX={1}>
         {/* Permission prompt */}
@@ -720,7 +748,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             />
           </Box>
         )}
-        {!showModelSelector && !showWorkspaceSelector && !showWorkspaceAdd && !showWorkspaceRename && !pendingPermission && !pendingQuestion && (
+        {!showModelSelector && !showWorkspaceSelector && !showWorkspaceAdd && !showWorkspaceRename && !showApiKeyChange && !pendingPermission && !pendingQuestion && (
           <Input
             onSubmit={handleSubmit}
             onPaste={handlePaste}
@@ -741,6 +769,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
           workspaceName={workspace.name}
           contextTokens={tokenUsage.contextTokens}
           costUsd={tokenUsage.costUsd}
+          authType={getAuthType()}
         />
       </Box>
     </Box>

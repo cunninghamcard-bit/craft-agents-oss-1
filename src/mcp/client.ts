@@ -157,6 +157,8 @@ export class CraftMcpProxy {
     this.initialized = true;
   }
 
+
+
   /**
    * Create an in-process SDK MCP server that proxies tool calls to the persistent client.
    */
@@ -199,7 +201,7 @@ export class CraftMcpProxy {
               fieldSchema = z.array(z.unknown());
               break;
             case 'object':
-              fieldSchema = z.record(z.unknown());
+              fieldSchema = z.any();
               break;
             default:
               fieldSchema = z.unknown();

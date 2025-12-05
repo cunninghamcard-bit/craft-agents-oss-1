@@ -28,15 +28,9 @@ const SimpleTextInput: React.FC<{
       return;
     }
 
-    // Add printable characters (supports paste - multi-char input)
-    if (input && input.length >= 1) {
-      // Strip bracketed paste markers
-      const chars = input.replace(/\x1b\[200~/g, '').replace(/\x1b\[201~/g, '');
-      // Filter to printable characters
-      const printable = chars.split('').filter((c) => c.charCodeAt(0) >= 32).join('');
-      if (printable) {
-        onChange(value + printable);
-      }
+    // Add printable characters
+    if (input && input.length === 1 && input.charCodeAt(0) >= 32) {
+      onChange(value + input);
     }
   });
 
@@ -612,7 +606,6 @@ function getStepNumber(step: SetupStep, hasExistingMcp: boolean = false): number
       case 'auth-type': return 1;
       case 'api-key': return 2;
       case 'oauth-token': return 2;
-      case 'oauth-token-setup': return 2;
       case 'confirm':
       case 'testing':
       case 'complete':
@@ -627,7 +620,6 @@ function getStepNumber(step: SetupStep, hasExistingMcp: boolean = false): number
     case 'auth-type': return 1;
     case 'api-key': return 2;
     case 'oauth-token': return 2;
-    case 'oauth-token-setup': return 2;
     case 'mcp-url': return 3;
     case 'checking-auth': return 4;
     case 'oauth-auth': return 4;
@@ -645,7 +637,6 @@ function getStepName(step: SetupStep): string {
     case 'auth-type': return 'Authentication';
     case 'api-key': return 'API Key';
     case 'oauth-token': return 'OAuth Token';
-    case 'oauth-token-setup': return 'Setting up...';
     case 'mcp-url': return 'MCP URL';
     case 'checking-auth': return 'Checking...';
     case 'oauth-auth': return 'Authorization';
@@ -944,158 +935,6 @@ const ConfirmStep: React.FC<ConfirmStepProps> = ({
       <Box marginTop={2}>
         <Text color="green" bold>Press Enter to save, or Esc to go back</Text>
       </Box>
-    </Box>
-  );
-};
-
-interface OAuthTokenStepProps {
-  existingToken: string | null;
-  hasClaudeCli: boolean;
-  onUseExisting: () => void;
-  onRunSetup: () => void;
-  onManualEntry: (token: string) => void;
-  onBack: () => void;
-  error?: string | null;
-}
-
-const OAuthTokenStep: React.FC<OAuthTokenStepProps> = ({
-  existingToken,
-  hasClaudeCli,
-  onUseExisting,
-  onRunSetup,
-  onManualEntry,
-  onBack,
-  error,
-}) => {
-  const [mode, setMode] = useState<'select' | 'manual'>('select');
-  const [manualToken, setManualToken] = useState('');
-  const [selected, setSelected] = useState(0);
-
-  // Build options based on what's available
-  const options: { id: string; label: string; desc: string; action: () => void }[] = [];
-
-  if (existingToken) {
-    options.push({
-      id: 'existing',
-      label: 'Use existing token',
-      desc: `Found token: ${existingToken.slice(0, 20)}...`,
-      action: onUseExisting,
-    });
-  }
-
-  if (hasClaudeCli) {
-    options.push({
-      id: 'setup',
-      label: 'Run claude setup-token',
-      desc: 'Opens browser to authenticate with your Max subscription',
-      action: onRunSetup,
-    });
-  }
-
-  options.push({
-    id: 'manual',
-    label: 'Enter token manually',
-    desc: 'Paste a token you already have',
-    action: () => setMode('manual'),
-  });
-
-  useInput((input, key) => {
-    if (mode === 'select') {
-      if (key.upArrow && selected > 0) {
-        setSelected(selected - 1);
-      } else if (key.downArrow && selected < options.length - 1) {
-        setSelected(selected + 1);
-      } else if (key.return) {
-        options[selected]?.action();
-      } else if (key.escape) {
-        onBack();
-      }
-    } else if (mode === 'manual') {
-      if (key.return && manualToken.trim()) {
-        onManualEntry(manualToken.trim());
-      } else if (key.escape) {
-        setMode('select');
-        setManualToken('');
-      } else if (key.backspace || key.delete) {
-        setManualToken(prev => prev.slice(0, -1));
-      } else if (input && input.length === 1 && input.charCodeAt(0) >= 32) {
-        setManualToken(prev => prev + input);
-      }
-    }
-  });
-
-  if (mode === 'manual') {
-    return (
-      <Box flexDirection="column">
-        <Text bold>Enter OAuth Token</Text>
-        <Box marginY={1}>
-          <Text dimColor>Paste your Claude Max OAuth token below.</Text>
-        </Box>
-        <Box>
-          <Text color="green">&gt; </Text>
-          {manualToken.length === 0 ? (
-            <>
-              <Text dimColor>sk-ant-oat01-...</Text>
-              <Text color="green">▌</Text>
-            </>
-          ) : (
-            <>
-              <Text>{'•'.repeat(Math.min(manualToken.length, 20))}{manualToken.length > 20 ? '...' : ''}</Text>
-              <Text color="green">▌</Text>
-            </>
-          )}
-        </Box>
-        <Box marginTop={1}>
-          <Text dimColor>Enter to confirm, Esc to go back</Text>
-        </Box>
-      </Box>
-    );
-  }
-
-  return (
-    <Box flexDirection="column">
-      <Text bold>Claude Max OAuth Token</Text>
-      <Box marginY={1}>
-        <Text dimColor>Choose how to provide your Claude Max token:</Text>
-      </Box>
-
-      {error && (
-        <Box marginBottom={1}>
-          <Text color="red">{error}</Text>
-        </Box>
-      )}
-
-      <Box flexDirection="column" marginY={1}>
-        {options.map((opt, i) => (
-          <Box key={opt.id} flexDirection="column">
-            <Box>
-              <Text color={selected === i ? 'green' : undefined}>
-                {selected === i ? '❯ ' : '  '}
-              </Text>
-              <Text color={selected === i ? 'green' : undefined} bold={selected === i}>
-                {opt.label}
-              </Text>
-            </Box>
-            {selected === i && (
-              <Box marginLeft={4}>
-                <Text dimColor>{opt.desc}</Text>
-              </Box>
-            )}
-          </Box>
-        ))}
-      </Box>
-
-      <Box marginTop={1}>
-        <Text dimColor>Use ↑↓ to select, Enter to confirm, Esc to go back</Text>
-      </Box>
-
-      {!hasClaudeCli && (
-        <Box marginTop={1}>
-          <Text color="yellow" dimColor>
-            Note: Claude CLI not found. Install it to use automatic token setup.
-          </Text>
-        </Box>
-      )}
     </Box>
   );
 };
