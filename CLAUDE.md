@@ -64,7 +64,7 @@ src/
     │   ├── WorkspaceRename.tsx   # Rename workspace dialog
     │   └── WorkspaceSelector.tsx # Workspace switcher
     ├── hooks/
-    │   ├── useAgent.ts           # Agent state, MCP proxy, streaming
+    │   ├── useAgent.ts           # Agent state, streaming, token tracking
     │   ├── useElapsedTime.ts     # Track elapsed time during processing
     │   ├── useHistory.ts         # Command history (arrow keys)
     │   └── useResize.ts          # Terminal resize handling
@@ -90,7 +90,7 @@ Core `CraftAgent` class that:
 - Converts SDK's `SDKMessage` events to `AgentEvent` for TUI compatibility
 - **Session management**: `resume` option for conversation continuity
 - **Auto compaction**: SDK compresses long conversations automatically
-- **MCP Proxy**: Persistent connection for performance, HTTP fallback
+- **MCP HTTP mode**: SDK handles MCP connections efficiently (no custom proxy needed)
 - **Tool permissions**: `PreToolUse` hook for bash command approval
 - **AskUserQuestion**: `canUseTool` callback for interactive questions
 - **Preferences tool**: Built-in `update_user_preferences` via in-process MCP server
@@ -126,9 +126,8 @@ Stored in `~/.craft-agent/preferences.json`:
 - Updated via `update_user_preferences` tool
 
 ### MCP Integration (`src/mcp/`)
-- `CraftMcpProxy`: Persistent connection wrapper with tool caching
-- Creates in-process SDK MCP server via `createSdkMcpServer()`
-- Falls back to HTTP mode if proxy not initialized
+- `CraftMcpClient`: Basic MCP client for direct tool calls (used by sub-agent manager)
+- SDK handles MCP connections via HTTP mode configuration
 - `tools.ts`: Registry of 32+ Craft tools for `/tools` command
 
 ### OAuth (`src/auth/oauth.ts`)
@@ -144,7 +143,6 @@ Stored in `~/.craft-agent/preferences.json`:
 - Message persistence
 
 **useAgent hook** - State management:
-- MCP proxy initialization on mount/workspace change
 - 50ms throttled streaming updates
 - Token usage tracking (input, output, cache, cost)
 - Permission and question queue handling
@@ -172,11 +170,10 @@ Includes:
 - Session-wide whitelist for approved base commands
 - Dangerous commands (rm, sudo, git push) never auto-allow
 
-### MCP Proxy Pattern
-- `CraftMcpProxy` maintains persistent MCP connection
-- Caches tools on initialization
-- Exposes `getSdkServer()` for SDK integration
-- Avoids reconnection overhead on each query
+### SDK MCP Integration
+- SDK's HTTP mode handles MCP connections efficiently
+- No custom proxy needed - SDK manages connection pooling
+- Schema conversion handled internally by SDK
 
 ### Session Continuity
 - SDK session IDs stored per workspace
@@ -188,6 +185,21 @@ Includes:
 - Tracks: input tokens, output tokens, cache creation, cache read
 - Context tokens = base + cache for next request
 - Cost calculated by SDK (`total_cost_usd`)
+
+## Debugging
+
+Debug logs are written to `/tmp/craft-debug.log`. Use the `debug()` function from `src/tui/utils/debug.ts` to add log entries.
+
+**Important:** Never trim or truncate log output (e.g., using `.substring()`). Full log content is essential for debugging.
+
+**Two-terminal debugging setup:**
+```bash
+# Terminal 1: Run the app with stderr redirected to debug log
+bun start 2>> /tmp/craft-debug.log
+
+# Terminal 2: Watch the debug log in real-time
+tail -f /tmp/craft-debug.log
+```
 
 ## Tech Stack
 

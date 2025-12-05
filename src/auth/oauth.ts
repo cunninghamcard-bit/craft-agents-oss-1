@@ -385,6 +385,6 @@ export class CraftOAuth {
 
 // Helper to extract the base MCP URL from a full MCP URL
 export function getMcpBaseUrl(mcpUrl: string): string {
-  // Remove /mcp suffix if present
-  return mcpUrl.replace(/\/mcp\/?$/, '');
+  // Remove /mcp or /sse suffix if present
+  return mcpUrl.replace(/\/(mcp|sse)\/?$/, '');
 }

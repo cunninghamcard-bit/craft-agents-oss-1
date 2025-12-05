@@ -1,4 +1,6 @@
 import { formatPreferencesForPrompt } from '../config/preferences.ts';
+import type { SubAgentDefinition } from '../agents/types.ts';
+import { debug } from '../tui/utils/debug.ts';
 
 /**
  * Get the current date/time context string
@@ -24,13 +26,56 @@ Unix timestamp: ${Math.floor(now.getTime() / 1000)}`;
 
 /**
  * Get the full system prompt with current date/time and user preferences
+ * Optionally includes active sub-agent context
  */
-export function getSystemPrompt(): string {
+export function getSystemPrompt(activeAgent?: SubAgentDefinition): string {
   const preferences = formatPreferencesForPrompt();
+  const agentContext = activeAgent ? formatAgentContext(activeAgent) : '';
 
-  return `${getDateTimeContext()}
+  debug('[getSystemPrompt] activeAgent:', activeAgent?.name || 'none');
+  debug('[getSystemPrompt] instructions length:', activeAgent?.instructions?.length || 0);
+  if (activeAgent?.instructions) {
+    debug('[getSystemPrompt] instructions:', activeAgent.instructions);
+  }
 
-${preferences}${CRAFT_ASSISTANT_SYSTEM_PROMPT}`;
+  const fullPrompt = `${getDateTimeContext()}
+
+${preferences}${CRAFT_ASSISTANT_SYSTEM_PROMPT}${agentContext}`;
+
+  debug('[getSystemPrompt] full prompt length:', fullPrompt.length);
+  debug('[getSystemPrompt] agentContext length:', agentContext.length);
+
+  return fullPrompt;
+}
+
+/**
+ * Format sub-agent context for injection into system prompt
+ * Makes clear the agent must ADOPT the persona, not just append instructions
+ */
+function formatAgentContext(agent: SubAgentDefinition): string {
+  return `
+
+---
+## ACTIVE AGENT MODE: ${agent.name}
+
+**IMPORTANT: You are now operating as a different agent. The instructions below OVERRIDE your default "Craft Document Assistant" persona.**
+
+You must:
+1. ADOPT the identity, personality, and behavior defined below
+2. ACT according to these instructions, even if they differ from default behavior
+3. Still use your Craft MCP tools, but through the lens of this agent's purpose
+4. Refer to yourself as "${agent.name}" (not "Craft Agent" or "Craft Assistant")
+
+### Agent Instructions
+${agent.instructions}
+
+### Self-Modification
+You can update your instructions using \`update_agent_instructions\` when you learn something that should persist.
+
+### Return to Main
+User can type \`@main\` or \`/agent clear\` to return to default Craft Assistant.
+---
+`;
 }
 
 export const CRAFT_ASSISTANT_SYSTEM_PROMPT = `

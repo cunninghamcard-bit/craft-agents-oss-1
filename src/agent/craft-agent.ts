@@ -2,16 +2,16 @@ import { query, createSdkMcpServer, tool, AbortError, type Query, type SDKMessag
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources';
 import { z } from 'zod';
 import { getSystemPrompt } from '../prompts/system.ts';
+import type { SubAgentDefinition } from '../agents/types.ts';
 import { isWorkspaceTokenExpired, updateWorkspaceOAuthTokens, type Workspace } from '../config/storage.ts';
 import { updatePreferences, loadPreferences, type UserPreferences } from '../config/preferences.ts';
 import { CraftOAuth, getMcpBaseUrl } from '../auth/oauth.ts';
 import type { FileAttachment } from '../tui/utils/files.ts';
-import type { CraftMcpProxy, McpToolCallEvent, McpToolResultEvent } from '../mcp/client.ts';
+import { debug } from '../tui/utils/debug.ts';
 
 export interface CraftAgentConfig {
   workspace: Workspace;
   mcpToken?: string;           // Override token (for testing)
-  mcpProxy?: CraftMcpProxy;    // Pre-initialized MCP proxy for faster queries
   model?: string;
   enableWebSearch?: boolean;
   enableWebFetch?: boolean;
@@ -66,6 +66,32 @@ interface PendingQuestion {
   questions: Question[];
 }
 
+// Callback for agent instructions update (set by TUI when agent is active)
+let updateAgentInstructionsCallback: ((content: string) => Promise<boolean>) | null = null;
+
+export function setUpdateAgentInstructionsCallback(
+  callback: ((content: string) => Promise<boolean>) | null
+): void {
+  updateAgentInstructionsCallback = callback;
+}
+
+export function getUpdateAgentInstructionsCallback(): ((content: string) => Promise<boolean>) | null {
+  return updateAgentInstructionsCallback;
+}
+
+// Callback for agent instructions reload (set by TUI when agent is active)
+let reloadAgentInstructionsCallback: (() => Promise<boolean>) | null = null;
+
+export function setReloadAgentInstructionsCallback(
+  callback: (() => Promise<boolean>) | null
+): void {
+  reloadAgentInstructionsCallback = callback;
+}
+
+export function getReloadAgentInstructionsCallback(): (() => Promise<boolean>) | null {
+  return reloadAgentInstructionsCallback;
+}
+
 // Handle preferences update (extracted for use in MCP tool)
 function handleUpdatePreferences(input: Record<string, unknown>): string {
   const updates: Partial<UserPreferences> = {};
@@ -118,6 +144,7 @@ function handleUpdatePreferences(input: Record<string, unknown>): string {
   return `Updated user preferences: ${fields.join(', ')}`;
 }
 
+
 // Create the preferences MCP server with the update_user_preferences tool
 // Lazy-initialized singleton
 let preferencesServerInstance: ReturnType<typeof createSdkMcpServer> | null = null;
@@ -155,6 +182,36 @@ function getPreferencesServer() {
             }
           }
         ),
+        tool(
+          'reload_agent_instructions',
+          `Reload the current agent's instructions from the Craft document. Use this when the user asks you to refresh, reload, or update your instructions. This will fetch the latest version of your instructions from the source document.`,
+          {},
+          async () => {
+            const callback = getReloadAgentInstructionsCallback();
+            if (!callback) {
+              return {
+                content: [{ type: 'text', text: 'No agent is currently active. This tool only works when a sub-agent is active.' }],
+              };
+            }
+            try {
+              const success = await callback();
+              return {
+                content: [{
+                  type: 'text',
+                  text: success
+                    ? 'Instructions reloaded successfully from the Craft document. My instructions have been updated.'
+                    : 'Failed to reload instructions. Please try again or use /agent reload.',
+                }],
+              };
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'Unknown error';
+              return {
+                content: [{ type: 'text', text: `Failed to reload instructions: ${message}` }],
+                isError: true,
+              };
+            }
+          }
+        ),
       ],
     });
   }
@@ -171,6 +228,9 @@ export class CraftAgent {
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   private pendingQuestions: Map<string, PendingQuestion> = new Map();
   private alwaysAllowedCommands: Set<string> = new Set(); // Base commands allowed for this session (e.g., "ls", "cat")
+  private activeAgentDefinition: SubAgentDefinition | null = null;
+  // Pre-built MCP server configs for the active agent (includes auth headers)
+  private agentMcpServers: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }> = {};
 
   // Callback for permission requests - set by TUI to receive permission prompts
   public onPermissionRequest: ((request: { requestId: string; toolName: string; command: string; description: string }) => void) | null = null;
@@ -369,36 +429,34 @@ export class CraftAgent {
         disallowedTools.push('BashOutput');
       }
 
-      // Build MCP servers config - use proxy if available, otherwise fall back to HTTP
-      let mcpServers: Options['mcpServers'];
-      if (this.config.mcpProxy?.isInitialized()) {
-        // Use pre-initialized proxy (fast - no connection overhead)
-        mcpServers = {
-          craft: this.config.mcpProxy.getSdkServer(),
-          preferences: getPreferencesServer(),
-        };
-      } else {
-        // Fall back to HTTP config (slow - connects every time)
-        yield { type: 'status', message: 'Connecting to Craft...' };
-        const token = await this.getToken();
+      // Build MCP servers config - always use HTTP (SDK handles connections efficiently)
+      const token = await this.getToken();
 
-        let mcpUrl = this.config.workspace.mcpUrl;
-        mcpUrl = mcpUrl.replace(/\/+$/, '');
+      let mcpUrl = this.config.workspace.mcpUrl;
+      mcpUrl = mcpUrl.replace(/\/+$/, '');
+      if (!mcpUrl.endsWith('/mcp')) {
+        mcpUrl = mcpUrl.replace(/\/sse$/, '/mcp');
         if (!mcpUrl.endsWith('/mcp')) {
-          mcpUrl = mcpUrl.replace(/\/sse$/, '/mcp');
-          if (!mcpUrl.endsWith('/mcp')) {
-            mcpUrl = mcpUrl + '/mcp';
-          }
+          mcpUrl = mcpUrl + '/mcp';
         }
+      }
 
-        mcpServers = {
-          craft: {
-            type: 'http',
-            url: mcpUrl,
-            ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-          },
-          preferences: getPreferencesServer(),
-        };
+      const mcpServers: Options['mcpServers'] = {
+        craft: {
+          type: 'http',
+          url: mcpUrl,
+          ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
+        },
+        preferences: getPreferencesServer(),
+        // Add agent-specific MCP servers if an agent is active
+        ...this.getAgentMcpServers(),
+      };
+
+      // Debug: log active agent before building system prompt
+      debug('[chat] activeAgentDefinition:', this.activeAgentDefinition?.name || 'none');
+      debug('[chat] activeAgentDefinition instructions:', this.activeAgentDefinition?.instructions?.length || 0, 'chars');
+      if (this.activeAgentDefinition?.instructions) {
+        debug('[chat] instructions:', this.activeAgentDefinition.instructions);
       }
 
       // Configure SDK options
@@ -408,10 +466,10 @@ export class CraftAgent {
         systemPrompt: {
           type: 'preset',
           preset: 'claude_code',
-          append: getSystemPrompt(),
+          append: getSystemPrompt(this.activeAgentDefinition ?? undefined),
         },
         // Option B: Custom system prompt (uncomment to use instead)
-        // systemPrompt: getSystemPrompt(),
+        // systemPrompt: getSystemPrompt(this.activeAgentDefinition ?? undefined),
         cwd: process.cwd(),
         includePartialMessages: true,
         // Enable the full Claude Code toolset (includes AskUserQuestion)
@@ -581,84 +639,6 @@ export class CraftAgent {
       // Track emitted tool_starts to avoid duplicate UI updates
       const emittedToolStarts = new Set<string>();
 
-      // Queue for captured MCP events (callbacks can't yield directly)
-      const capturedMcpEvents: AgentEvent[] = [];
-
-      // Set up MCP proxy callbacks to capture tool calls/results
-      // This is needed because SDK doesn't emit user messages for in-process MCP tools
-      if (this.config.mcpProxy?.isInitialized()) {
-        this.config.mcpProxy.setCallbacks({
-          onToolStart: (event: McpToolCallEvent) => {
-            // Find pending SDK tool by matching tool name suffix
-            // SDK names are like mcp__craft__search_documents, proxy emits search_documents
-            for (const [sdkId, pending] of pendingToolUses) {
-              if (pending.name.endsWith(`__${event.toolName}`) && Object.keys(pending.input).length === 0) {
-                // Update input in pending tool
-                pending.input = event.input;
-                // Queue a tool_start event with the full input
-                capturedMcpEvents.push({
-                  type: 'tool_start',
-                  toolName: pending.name,
-                  toolUseId: sdkId,
-                  input: event.input,
-                });
-                this.onDebug?.(`MCP onToolStart: updated input for ${sdkId} (${event.toolName})`);
-                break;
-              }
-            }
-          },
-          onToolResult: (event: McpToolResultEvent) => {
-            // Find pending SDK tool by matching tool name suffix
-            for (const [sdkId, pending] of pendingToolUses) {
-              if (pending.name.endsWith(`__${event.toolName}`)) {
-                // Check if result indicates an error (both from proxy flag and result content)
-                // MCP servers can return error responses without throwing exceptions
-                const isError = event.isError || this.isToolResultError(event.result);
-
-                // Stringify result - extract clean error message if it's an error
-                let resultStr: string;
-                if (typeof event.result === 'string') {
-                  resultStr = event.result;
-                } else if (isError && typeof event.result === 'object' && event.result !== null) {
-                  // Try to extract a clean error message from MCP error response
-                  const obj = event.result as Record<string, unknown>;
-                  if (obj.error && typeof obj.error === 'string') {
-                    resultStr = obj.error;
-                  } else if (Array.isArray(obj.content)) {
-                    // Extract text from error content blocks
-                    const errorTexts = obj.content
-                      .filter((item: unknown) => typeof item === 'object' && item !== null && (item as Record<string, unknown>).type === 'error')
-                      .map((item: unknown) => (item as Record<string, unknown>).text)
-                      .filter((text): text is string => typeof text === 'string');
-                    resultStr = errorTexts.length > 0 ? errorTexts.join('\n') : JSON.stringify(event.result, null, 2);
-                  } else {
-                    resultStr = JSON.stringify(event.result, null, 2);
-                  }
-                } else {
-                  try {
-                    resultStr = JSON.stringify(event.result, null, 2);
-                  } catch {
-                    resultStr = '[Result contains non-serializable data]';
-                  }
-                }
-
-                // Queue a tool_result event
-                capturedMcpEvents.push({
-                  type: 'tool_result',
-                  toolUseId: sdkId,
-                  result: resultStr,
-                  isError,
-                  input: pending.input,
-                });
-                pendingToolUses.delete(sdkId);
-                this.onDebug?.(`MCP onToolResult: captured result for ${sdkId} (${event.toolName}), duration=${event.duration}ms, isError=${isError}`);
-                break;
-              }
-            }
-          },
-        });
-      }
-
       // Process SDK messages and convert to AgentEvents
       let receivedComplete = false;
       try {
@@ -674,12 +654,6 @@ export class CraftAgent {
               receivedComplete = true;
             }
             yield event;
-          }
-
-          // Drain captured MCP events (from proxy callbacks)
-          while (capturedMcpEvents.length > 0) {
-            const mcpEvent = capturedMcpEvents.shift()!;
-            yield mcpEvent;
           }
         }
 
@@ -994,7 +968,7 @@ export class CraftAgent {
 
       case 'auth_status': {
         if (message.error) {
-          events.push({ type: 'error', message: `Auth error: ${message.error}` });
+          events.push({ type: 'error', message: `Auth error: ${message.error}. Try running /auth to re-authenticate.` });
         }
         break;
       }
@@ -1113,6 +1087,32 @@ export class CraftAgent {
 
   setCodeExecutionEnabled(enabled: boolean): void {
     this.codeExecutionEnabled = enabled;
+  }
+
+  getActiveAgentDefinition(): SubAgentDefinition | null {
+    return this.activeAgentDefinition;
+  }
+
+  /**
+   * Set the active agent definition and optionally its pre-built MCP server configs
+   * @param definition The agent definition (or null to deactivate)
+   * @param mcpServers Pre-built MCP server configs with auth headers (from SubAgentManager.buildMcpServerConfig)
+   */
+  setActiveAgentDefinition(
+    definition: SubAgentDefinition | null,
+    mcpServers?: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }>
+  ): void {
+    this.activeAgentDefinition = definition;
+    this.agentMcpServers = mcpServers ?? {};
+  }
+
+  /**
+   * Get SDK-compatible MCP server config for the active agent's custom MCP servers
+   * Returns the pre-built config that was set via setActiveAgentDefinition()
+   * The config is built by SubAgentManager.buildMcpServerConfig() which handles auth
+   */
+  private getAgentMcpServers(): Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }> {
+    return this.agentMcpServers;
   }
 
   async close(): Promise<void> {

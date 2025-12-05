@@ -1,5 +1,6 @@
 import React, { useState, useCallback, memo, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { getCommandHint, getAgentHint, getTabCompletion, type HintData } from '../utils/filtering.ts';
 
 export interface InputProps {
   onSubmit: (input: string) => void;
@@ -13,6 +14,10 @@ export interface InputProps {
   attachmentCount?: number;
   attachmentLabel?: string;
   columns?: number;
+  /** Available sub-agent names for @mention autocomplete */
+  availableAgents?: string[];
+  /** Currently active agent name (for dynamic placeholder) */
+  activeAgentName?: string;
 }
 
 // Simple custom text input without cursor animation
@@ -129,6 +134,8 @@ export const Input: React.FC<InputProps> = ({
   attachmentCount = 0,
   attachmentLabel,
   columns = 80,
+  availableAgents = [],
+  activeAgentName,
 }) => {
   const [value, setValue] = useState('');
   const [historyIndex, setHistoryIndex] = useState(-1);
@@ -147,6 +154,16 @@ export const Input: React.FC<InputProps> = ({
   useInput(
     (input, key) => {
       if (disabled) return;
+
+      // Handle Tab for auto-completion
+      if (key.tab) {
+        const completion = getTabCompletion(value, availableAgents);
+        if (completion) {
+          setValue(completion);
+          setHistoryIndex(-1);
+        }
+        return;
+      }
 
       // Handle up arrow for history
       if (key.upArrow && history.length > 0) {
@@ -196,24 +213,50 @@ export const Input: React.FC<InputProps> = ({
     { isActive: !disabled }
   );
 
-  // Determine placeholder text
+  // Determine placeholder text - dynamic based on active agent
   const placeholderText = disabled
     ? 'Thinking...'
-    : placeholder || 'Message Craft...';
+    : placeholder
+      ? placeholder
+      : activeAgentName
+        ? `Message @${activeAgentName}...`
+        : 'Message Craft...';
 
-  // Memoize command hint to avoid recalculation
-  const commandHint = useMemo(() => {
-    if (!value.startsWith('/')) return null;
-    return getCommandHint(value);
-  }, [value]);
+  // Memoize command/mention hint to avoid recalculation
+  const hintData = useMemo((): HintData | null => {
+    // @mention hints
+    if (value.startsWith('@')) {
+      return getAgentHint(value.slice(1), availableAgents);
+    }
+    // Slash command hints
+    if (value.startsWith('/')) {
+      return getCommandHint(value);
+    }
+    return null;
+  }, [value, availableAgents]);
 
   const lineColor = disabled ? 'gray' : 'blue';
 
+  // Check if we have any hint to show
+  const hasHint = hintData && (hintData.selected || hintData.others.length > 0);
+
   return (
     <Box flexDirection="column" width="100%">
-      {!disabled && commandHint && (
+      {!disabled && hasHint && (
         <Box paddingLeft={2} marginBottom={1}>
-          <Text dimColor>{commandHint}</Text>
+          {hintData.selected ? (
+            // Show selected (highlighted) + description + others
+            <Text>
+              <Text color="blue" bold>{hintData.selected}</Text>
+              {hintData.description && <Text dimColor>: {hintData.description}</Text>}
+              {hintData.others.length > 0 && (
+                <Text dimColor>  {hintData.others.join('  ')}</Text>
+              )}
+            </Text>
+          ) : (
+            // No selection, just show options
+            <Text dimColor>{hintData.others.join('  ')}</Text>
+          )}
         </Box>
       )}
       {/* Top line */}
@@ -241,83 +284,6 @@ export const Input: React.FC<InputProps> = ({
     </Box>
   );
 };
-
-/**
- * Get hint text for slash commands
- * NOTE: Keep in sync with primaryCommands in App.tsx
- */
-function getCommandHint(input: string): string {
-  const cmd = input.toLowerCase().trim();
-
-  if (cmd === '/') {
-    return 'Commands: /help /clear /tools /model /workspace /web /bash /cost /exit';
-  }
-
-  // Commands with subcommands
-  const subcommands: Record<string, Record<string, string>> = {
-    '/workspace': {
-      'add': 'Add a new workspace',
-      'rename': 'Rename current workspace',
-      'remove': 'Remove a workspace',
-    },
-  };
-
-  const commands: Record<string, string> = {
-    '/help': 'Show help and available commands',
-    '/clear': 'Clear conversation history',
-    '/paste': 'Paste files/images from clipboard',
-    '/image': 'Paste files/images from clipboard',
-    '/tools': 'List available Craft MCP tools',
-    '/config': 'Show current configuration',
-    '/prefs': 'Show user preferences',
-    '/setup': 'Reconfigure API keys and MCP settings',
-    '/compact': 'Toggle compact mode for tool output',
-    '/model': 'Show or change the Claude model',
-    '/w': 'Switch workspace (shortcut)',
-    '/workspace': 'Switch workspace (add, rename, remove)',
-    '/cost': 'Show token usage and estimated cost',
-    '/web': 'Toggle web search capability',
-    '/fetch': 'Toggle web fetch capability',
-    '/bash': 'Toggle bash/shell execution',
-    '/debug': 'Show conversation file path',
-    '/exit': 'Exit the application',
-    '/quit': 'Exit the application',
-    '/q': 'Exit the application',
-  };
-
-  // Check for subcommand matching (e.g., "/workspace r" -> "rename")
-  const parts = cmd.split(/\s+/);
-  if (parts.length >= 2 && parts[0]) {
-    const baseCmd = parts[0];
-    const subInput = parts[1] || '';
-    const subs = subcommands[baseCmd];
-
-    if (subs) {
-      const subMatches = Object.entries(subs)
-        .filter(([sub]) => sub.startsWith(subInput))
-        .map(([sub, desc]) => `${baseCmd} ${sub}: ${desc}`);
-
-      if (subMatches.length === 1 && subMatches[0]) {
-        return subMatches[0];
-      } else if (subMatches.length > 1 && subMatches.length <= 4) {
-        return subMatches.map(m => m.split(':')[0] || '').join(' | ');
-      }
-    }
-  }
-
-  // Find matching commands
-  const matches = Object.entries(commands)
-    .filter(([c]) => c.startsWith(cmd))
-    .map(([c, desc]) => `${c}: ${desc}`);
-
-  if (matches.length === 1 && matches[0]) {
-    return matches[0];
-  } else if (matches.length > 1 && matches.length <= 4) {
-    return matches.map(m => m.split(':')[0] || '').join(' | ');
-  }
-
-  return '';
-}
 
 /**
  * Multiline input hint component

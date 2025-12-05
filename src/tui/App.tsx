@@ -1,14 +1,16 @@
 import React, { useCallback, useState, useMemo } from 'react';
 import { Box, useApp, useInput, Text } from 'ink';
-import { Header, WelcomeBanner } from './components/Header.tsx';
+import { Header } from './components/Header.tsx';
 import { Messages, type Message } from './components/Messages.tsx';
 import { Input, InputHint } from './components/Input.tsx';
 import { ModelSelector, type Model } from './components/ModelSelector.tsx';
+import { AgentMenu, type AgentAction } from './components/AgentMenu.tsx';
 import { WorkspaceSelector } from './components/WorkspaceSelector.tsx';
 import { WorkspaceAdd } from './components/WorkspaceAdd.tsx';
 import { WorkspaceRename } from './components/WorkspaceRename.tsx';
 import { ApiKeyChange } from './components/ApiKeyChange.tsx';
 import { AskUserQuestion } from './components/AskUserQuestion.tsx';
+import { McpAuth } from './components/McpAuth.tsx';
 import { useAgent } from './hooks/useAgent.ts';
 import { useHistory } from './hooks/useHistory.ts';
 import { useResize } from './hooks/useResize.ts';
@@ -17,6 +19,8 @@ import { getConfigPath, getWorkspaces, setActiveWorkspace, removeWorkspace, rena
 import { formatPreferencesDisplay, getPreferencesPath } from '../config/preferences.ts';
 import { formatTokens } from './utils/markdown.ts';
 import { processInputWithFiles, readClipboard, type FileAttachment } from './utils/files.ts';
+import { resolveCommand, resolveAgentMention } from './utils/filtering.ts';
+import { debug } from './utils/debug.ts';
 import type { CraftAgentConfig } from '../agent/craft-agent.ts';
 
 export interface AppProps {
@@ -49,6 +53,7 @@ const HELP_TEXT = `
   /web         Toggle web search capability
   /fetch       Toggle web fetch capability
   /bash        Toggle bash/shell execution
+  /auth        Authenticate MCP servers for active agent
   /exit        Exit the application (or Ctrl+C)
 
 **Keyboard Shortcuts**
@@ -80,7 +85,8 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
   const { exit } = useApp();
 
   // Handle terminal resize - clears screen to prevent artifacts
-  const { columns } = useResize();
+  // resetKey increments on resize so Static content gets re-rendered
+  const { columns, resetKey: resizeResetKey } = useResize();
 
   const {
     messages,
@@ -108,14 +114,31 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
     setWebFetchEnabled,
     isCodeExecutionEnabled,
     setCodeExecutionEnabled,
+    // Agent-related
+    availableAgents,
+    activeAgentName,
+    activeAgentMcpServers,
+    activateAgent,
+    deactivateAgent,
+    reloadAgent,
+    resetAgent,
+    refreshAgents,
+    agentsLoading,
+    // MCP auth for sub-agent servers
+    pendingMcpAuth,
+    completeMcpAuth,
+    cancelMcpAuth,
+    triggerMcpAuth,
   } = useAgent(config);
 
   const { history, addToHistory } = useHistory();
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const [compactMode, setCompactMode] = useState(true);
   const [showWelcome, setShowWelcome] = useState(true);
+  const [staticResetKey, setStaticResetKey] = useState(0); // Incremented on /clear to create fresh Static items
   const [pendingAttachments, setPendingAttachments] = useState<FileAttachment[]>([]);
   const [showModelSelector, setShowModelSelector] = useState(false);
+  const [showAgentMenu, setShowAgentMenu] = useState(false);
   const [showWorkspaceSelector, setShowWorkspaceSelector] = useState(false);
   const [showWorkspaceAdd, setShowWorkspaceAdd] = useState(false);
   const [showWorkspaceRename, setShowWorkspaceRename] = useState(false);
@@ -143,6 +166,92 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
 
   const handleModelCancel = useCallback(() => {
     setShowModelSelector(false);
+  }, []);
+
+  // Agent menu handler
+  const handleAgentAction = useCallback(async (action: AgentAction) => {
+    setShowAgentMenu(false);
+
+    switch (action.type) {
+      case 'activate': {
+        const result = await activateAgent(action.name);
+        if (result === true) {
+          addLocalMessage(`Now chatting with @${action.name}`, 'system');
+        } else if (result === 'pending_auth') {
+          // Auth flow started - will complete via McpAuth component
+        } else {
+          addLocalMessage(`Failed to activate agent: ${action.name}`, 'error');
+        }
+        break;
+      }
+      case 'clear':
+        deactivateAgent();
+        addLocalMessage('Returned to main assistant', 'system');
+        break;
+      case 'reload': {
+        if (!activeAgentName) return;
+        const { setTerminalProgressIndeterminate, clearTerminalProgress } = await import('./utils/terminalProgress.ts');
+        setTerminalProgressIndeterminate();
+        try {
+          const success = await reloadAgent();
+          if (success) {
+            addLocalMessage(`Agent @${activeAgentName} instructions reloaded.`, 'system');
+          } else {
+            addLocalMessage(`Failed to reload agent @${activeAgentName}`, 'error');
+          }
+        } finally {
+          clearTerminalProgress();
+        }
+        break;
+      }
+      case 'reset': {
+        if (!activeAgentName) return;
+        const agentToReset = activeAgentName;
+        const { setTerminalProgressIndeterminate, clearTerminalProgress } = await import('./utils/terminalProgress.ts');
+        addLocalMessage(`Fully resetting @${agentToReset}...`, 'status');
+        setTerminalProgressIndeterminate();
+        try {
+          const success = await resetAgent();
+          if (success) {
+            addLocalMessage(`Agent @${agentToReset} fully reset. Re-read instructions from document.`, 'system');
+          } else {
+            addLocalMessage(`Failed to reset agent @${agentToReset}`, 'error');
+          }
+        } finally {
+          clearTerminalProgress();
+        }
+        break;
+      }
+      case 'refresh': {
+        const { setTerminalProgressIndeterminate, clearTerminalProgress } = await import('./utils/terminalProgress.ts');
+        setTerminalProgressIndeterminate();
+        try {
+          const result = await refreshAgents();
+          if ('error' in result) {
+            addLocalMessage(result.error, 'error');
+          } else {
+            const agentList = result.length > 0
+              ? `Found ${result.length} agent${result.length === 1 ? '' : 's'}: ${result.map(a => `@${a}`).join(', ')}`
+              : 'No agents found. Create an "Agents" folder in Craft with agent documents.';
+            addLocalMessage(agentList, 'system');
+          }
+        } finally {
+          clearTerminalProgress();
+        }
+        break;
+      }
+      case 'info':
+        if (activeAgentName) {
+          addLocalMessage(`**Active Agent**: @${activeAgentName}`, 'assistant');
+        } else {
+          addLocalMessage('No sub-agent active. Use @agentname to activate one.', 'status');
+        }
+        break;
+    }
+  }, [activateAgent, deactivateAgent, reloadAgent, resetAgent, refreshAgents, activeAgentName, addLocalMessage]);
+
+  const handleAgentMenuCancel = useCallback(() => {
+    setShowAgentMenu(false);
   }, []);
 
   // Workspace handlers
@@ -278,26 +387,49 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
 
   const handleSubmit = useCallback(
     async (input: string) => {
+      // Handle @mentions
+      if (input.startsWith('@')) {
+        const [mentionInput, ...rest] = input.slice(1).split(/\s+/);
+
+        debug('[App.handleSubmit] @mention input:', mentionInput);
+        debug('[App.handleSubmit] availableAgents:', availableAgents);
+
+        // Resolve partial mention to full agent name
+        const resolvedAgent = mentionInput ? resolveAgentMention(mentionInput, availableAgents) : null;
+        debug('[App.handleSubmit] resolvedAgent:', resolvedAgent);
+
+        if (resolvedAgent === 'main') {
+          deactivateAgent();
+          addLocalMessage('Returned to main assistant', 'system');
+          return;
+        }
+
+        if (resolvedAgent) {
+          const activated = await activateAgent(resolvedAgent);
+          if (activated) {
+            addLocalMessage(`Now chatting with @${resolvedAgent}`, 'system');
+            // If there's text after @agent, send it as a message
+            const remainingText = rest.join(' ').trim();
+            if (remainingText) {
+              addToHistory(input);
+              await sendMessage(remainingText);
+            }
+          } else {
+            addLocalMessage(`Agent not found: @${resolvedAgent}`, 'error');
+          }
+          return;
+        } else if (mentionInput) {
+          addLocalMessage(`Agent not found: @${mentionInput}`, 'error');
+          return;
+        }
+      }
+
       // Handle slash commands
       if (input.startsWith('/')) {
-        const parts = input.toLowerCase().trim().split(/\s+/);
-        let command = parts[0] ?? '';
-
-        // Primary commands for partial matching (order matters for priority)
-        const primaryCommands = [
-          '/help', '/clear', '/paste', '/tools', '/config', '/prefs',
-          '/setup', '/apikey', '/compact', '/cost', '/model', '/workspace', '/web', '/fetch',
-          '/bash', '/debug', '/exit'
-        ];
-
-        // If not an exact match, try partial matching
-        const aliases = ['/?', '/q', '/quit', '/image', '/preferences', '/websearch', '/webfetch', '/w'];
-        if (!primaryCommands.includes(command) && !aliases.includes(command)) {
-          const matches = primaryCommands.filter(cmd => cmd.startsWith(command));
-          if (matches.length === 1 && matches[0]) {
-            command = matches[0];
-          }
-        }
+        // Resolve partial commands to full commands (e.g., "/he" -> "/help", "/w r" -> "/workspace rename")
+        const resolvedInput = resolveCommand(input);
+        const parts = resolvedInput.toLowerCase().trim().split(/\s+/);
+        const command = parts[0] ?? '';
 
         switch (command) {
           case '/exit':
@@ -307,13 +439,15 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             return;
 
           case '/clear':
-            // Clear state first
+            // Clear screen FIRST (before state updates)
+            // This ensures Static renders AFTER the screen is blank
+            process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+            // Then update state - this triggers re-render with fresh Static content
             clearMessages();
             setLocalMessages([]);
             setPendingAttachments([]);
             setShowWelcome(true);
-            // Clear screen and scrollback only - let Ink handle cursor
-            process.stdout.write('\x1b[2J\x1b[3J');
+            setStaticResetKey(k => k + 1);
             return;
 
           case '/paste':
@@ -333,7 +467,24 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             return;
 
           case '/tools':
-            addLocalMessage(formatToolsHelp(), 'assistant');
+            if (activeAgentName && activeAgentMcpServers.length > 0) {
+              // Show sub-agent's MCP servers
+              let toolsHelp = `**@${activeAgentName} MCP Servers**\n\n`;
+              for (const server of activeAgentMcpServers) {
+                toolsHelp += `- **${server.name}**: ${server.url}`;
+                if (server.requiresAuth) {
+                  toolsHelp += ' (requires auth)';
+                }
+                if (server.description) {
+                  toolsHelp += `\n  ${server.description}`;
+                }
+                toolsHelp += '\n';
+              }
+              toolsHelp += '\n_Craft MCP tools are also available._';
+              addLocalMessage(toolsHelp, 'assistant');
+            } else {
+              addLocalMessage(formatToolsHelp(), 'assistant');
+            }
             return;
 
           case '/setup':
@@ -511,6 +662,122 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             return;
           }
 
+          case '/agent': {
+            // Subcommand already resolved by resolveCommand()
+            const subCommand = parts[1] ?? '';
+
+            if (subCommand === 'list') {
+              // List available agents
+              const agentList = availableAgents.length > 0
+                ? availableAgents.map(a => `- @${a}`).join('\n')
+                : '(No agents found. Create an "Agents" folder in Craft.)';
+              addLocalMessage(`**Available Sub-Agents**\n\n${agentList}`, 'assistant');
+              return;
+            }
+
+            if (subCommand === 'clear' || subCommand === 'dismiss') {
+              deactivateAgent();
+              addLocalMessage('Returned to main assistant', 'system');
+              return;
+            }
+
+            if (subCommand === 'refresh') {
+              const { setTerminalProgressIndeterminate, clearTerminalProgress } = await import('./utils/terminalProgress.ts');
+              setTerminalProgressIndeterminate();
+              try {
+                const result = await refreshAgents();
+                if ('error' in result) {
+                  addLocalMessage(result.error, 'error');
+                } else {
+                  const agentList = result.length > 0
+                    ? `Found ${result.length} agent${result.length === 1 ? '' : 's'}: ${result.map(a => `@${a}`).join(', ')}`
+                    : 'No agents found. Create an "Agents" folder in Craft with agent documents.';
+                  addLocalMessage(agentList, 'system');
+                }
+              } finally {
+                clearTerminalProgress();
+              }
+              return;
+            }
+
+            if (subCommand === 'info') {
+              if (activeAgentName) {
+                addLocalMessage(`**Active Agent**: @${activeAgentName}`, 'assistant');
+              } else {
+                addLocalMessage('No sub-agent active. Use @agentname to activate one.', 'status');
+              }
+              return;
+            }
+
+            if (subCommand === 'reload') {
+              if (!activeAgentName) {
+                addLocalMessage('No sub-agent active. Use @agentname to activate one first.', 'error');
+                return;
+              }
+              const { setTerminalProgressIndeterminate, clearTerminalProgress } = await import('./utils/terminalProgress.ts');
+              setTerminalProgressIndeterminate();
+              try {
+                const success = await reloadAgent();
+                if (success) {
+                  addLocalMessage(`Agent @${activeAgentName} instructions reloaded.`, 'system');
+                } else {
+                  addLocalMessage(`Failed to reload agent @${activeAgentName}`, 'error');
+                }
+              } finally {
+                clearTerminalProgress();
+              }
+              return;
+            }
+
+            if (subCommand === 'reset') {
+              if (!activeAgentName) {
+                addLocalMessage('No sub-agent active. Use @agentname to activate one first.', 'error');
+                return;
+              }
+              const agentToReset = activeAgentName;
+              const { setTerminalProgressIndeterminate, clearTerminalProgress } = await import('./utils/terminalProgress.ts');
+              addLocalMessage(`Fully resetting @${agentToReset}...`, 'status');
+              setTerminalProgressIndeterminate();
+              try {
+                const success = await resetAgent();
+                if (success) {
+                  addLocalMessage(`Agent @${agentToReset} fully reset. Re-read instructions from document.`, 'system');
+                } else {
+                  addLocalMessage(`Failed to reset agent @${agentToReset}`, 'error');
+                }
+              } finally {
+                clearTerminalProgress();
+              }
+              return;
+            }
+
+            if (subCommand === 'create') {
+              addLocalMessage('Agent creation not yet implemented. Create a document in your "Agents" folder manually.', 'status');
+              return;
+            }
+
+            if (subCommand) {
+              // Try to activate agent by name
+              const activated = await activateAgent(subCommand);
+              if (activated) {
+                addLocalMessage(`Now chatting with @${subCommand}`, 'system');
+              } else {
+                addLocalMessage(`Agent not found: ${subCommand}`, 'error');
+              }
+              return;
+            }
+
+            // No subcommand - show interactive menu
+            setShowAgentMenu(true);
+            return;
+          }
+
+          case '/auth': {
+            // Trigger MCP server authentication for active agent
+            triggerMcpAuth();
+            return;
+          }
+
           case '/web':
           case '/websearch': {
             const newState = !isWebSearchEnabled();
@@ -602,6 +869,14 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
       isCodeExecutionEnabled,
       setCodeExecutionEnabled,
       pendingAttachments,
+      availableAgents,
+      activeAgentName,
+      activeAgentMcpServers,
+      activateAgent,
+      deactivateAgent,
+      reloadAgent,
+      resetAgent,
+      refreshAgents,
     ]
   );
 
@@ -646,23 +921,10 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
 
   return (
     <Box flexDirection="column" width="100%" minHeight={20}>
-      {/* Welcome banner */}
-      {showWelcome && (
-        <Box flexDirection="column" paddingX={1}>
-          <WelcomeBanner />
-          {allMessages.length === 0 && (
-            <Box marginTop={1}>
-              <Text dimColor>
-                Type a message to get started, or /help for commands.
-              </Text>
-            </Box>
-          )}
-        </Box>
-      )}
-
-      {/* Messages area */}
-      <Box flexDirection="column" paddingX={1}>
+      {/* Messages area (includes welcome banner as static content) */}
+      <Box flexDirection="column">
         <Messages
+          resetKey={staticResetKey + resizeResetKey}
           messages={allMessages}
           isProcessing={isProcessing}
           streamingText={streamingText}
@@ -670,6 +932,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
           processingStartTime={processingStartTime}
           hasExecutingTool={hasExecutingTool}
           compact={compactMode}
+          showWelcome={showWelcome}
         />
       </Box>
 
@@ -680,6 +943,16 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
           currentModelId={model}
           onSelect={handleModelSelect}
           onCancel={handleModelCancel}
+        />
+      )}
+
+      {/* Agent menu overlay */}
+      {showAgentMenu && (
+        <AgentMenu
+          agents={availableAgents}
+          activeAgentName={activeAgentName}
+          onAction={handleAgentAction}
+          onCancel={handleAgentMenuCancel}
         />
       )}
 
@@ -720,6 +993,17 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
         />
       )}
 
+      {/* MCP server authentication for sub-agents */}
+      {pendingMcpAuth && (
+        <McpAuth
+          servers={pendingMcpAuth.servers}
+          workspaceId={workspace.id}
+          agentId={pendingMcpAuth.agentId}
+          onComplete={completeMcpAuth}
+          onCancel={cancelMcpAuth}
+        />
+      )}
+
       {/* Input + Status bar + Header together at bottom */}
       <Box flexDirection="column" width="100%" paddingX={1}>
         {/* Permission prompt */}
@@ -748,7 +1032,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             />
           </Box>
         )}
-        {!showModelSelector && !showWorkspaceSelector && !showWorkspaceAdd && !showWorkspaceRename && !showApiKeyChange && !pendingPermission && !pendingQuestion && (
+        {!showModelSelector && !showWorkspaceSelector && !showWorkspaceAdd && !showWorkspaceRename && !showApiKeyChange && !pendingPermission && !pendingQuestion && !pendingMcpAuth && (
           <Input
             onSubmit={handleSubmit}
             onPaste={handlePaste}
@@ -760,6 +1044,8 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             attachmentCount={pendingAttachments.length}
             attachmentLabel={attachmentLabel}
             columns={columns}
+            availableAgents={availableAgents}
+            activeAgentName={activeAgentName ?? undefined}
           />
         )}
         <Header
@@ -770,6 +1056,8 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
           contextTokens={tokenUsage.contextTokens}
           costUsd={tokenUsage.costUsd}
           authType={getAuthType()}
+          activeAgentName={activeAgentName ?? undefined}
+          agentsLoading={agentsLoading}
         />
       </Box>
     </Box>

@@ -2,6 +2,7 @@ import React, { memo, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { formatTokens } from '../utils/markdown.ts';
 import type { AuthType } from '../../config/storage.ts';
+import { AnimatedSpinner } from './Spinner.tsx';
 
 export interface HeaderProps {
   connected: boolean;
@@ -11,6 +12,8 @@ export interface HeaderProps {
   contextTokens?: number;
   costUsd?: number;
   authType?: AuthType;
+  activeAgentName?: string;
+  agentsLoading?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = memo(({
@@ -21,6 +24,8 @@ export const Header: React.FC<HeaderProps> = memo(({
   contextTokens = 0,
   costUsd = 0,
   authType = 'api_key',
+  activeAgentName,
+  agentsLoading = false,
 }) => {
   // Map model IDs to friendly names
   const modelDisplay = useMemo(() => {
@@ -48,7 +53,17 @@ export const Header: React.FC<HeaderProps> = memo(({
   return (
     <Box justifyContent="space-between">
       <Box>
-        <Text color="magenta" bold>craft</Text>
+        {agentsLoading && (
+          <>
+            <AnimatedSpinner color="magenta" />
+            <Text dimColor> </Text>
+          </>
+        )}
+        {activeAgentName ? (
+          <Text color="magenta" bold>@{activeAgentName.length > 12 ? activeAgentName.slice(0, 12) + '…' : activeAgentName}</Text>
+        ) : (
+          <Text color="magenta" bold>craft</Text>
+        )}
         <Text dimColor> | </Text>
         <Text color={connected ? 'green' : 'red'}>
           {connected ? '●' : '○'}
@@ -98,11 +113,11 @@ export const StatusLine: React.FC<StatusLineProps> = memo(({
     <Box paddingX={1}>
       <Text dimColor>
         {isProcessing ? 'Ctrl+C to interrupt' : 'Ctrl+C to exit'}
-        {' | '}
+        {'  '}
         /help for commands
         {!compact && (
           <>
-            {' | '}
+            {'  '}
             /clear to reset
           </>
         )}
@@ -116,11 +131,15 @@ export const StatusLine: React.FC<StatusLineProps> = memo(({
  */
 export const WelcomeBanner: React.FC<{ version?: string }> = memo(({ version = '1.0.0' }) => {
   const logo = [
+    '                                                      ',
+    '                                                      ',
     '  ████████ █████████    ██████   ██████████ ██████████',
     '██████████ ██████████ ██████████ █████████  ██████████',
     '██████     ██████████ ██████████ ████████   ██████████',
     '██████████ ████████   ██████████ ███████      █████   ',
     '  ████████ ████  ████ ████  ████ █████        █████   ',
+    '                                                      ',
+    '                                                      ',
   ];
 
   return (
