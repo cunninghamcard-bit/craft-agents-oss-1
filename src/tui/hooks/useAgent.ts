@@ -10,6 +10,7 @@ export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   totalTokens: number;
+  costUsd: number;
 }
 
 export interface UseAgentResult {
@@ -44,6 +45,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
+    costUsd: 0,
   });
   const [model, setModelState] = useState(config.model || 'claude-sonnet-4-5-20250929');
 
@@ -215,6 +217,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
                   prev.totalTokens +
                   event.usage!.inputTokens +
                   event.usage!.outputTokens,
+                costUsd: prev.costUsd + (event.usage!.costUsd ?? 0),
               }));
             }
             break;

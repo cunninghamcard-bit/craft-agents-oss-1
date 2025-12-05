@@ -10,7 +10,7 @@ import { useResize } from './hooks/useResize.ts';
 import { formatToolsHelp } from '../mcp/tools.ts';
 import { getConfigPath } from '../config/storage.ts';
 import { formatPreferencesDisplay, getPreferencesPath } from '../config/preferences.ts';
-import { formatTokens, estimateCost } from './utils/markdown.ts';
+import { formatTokens } from './utils/markdown.ts';
 import { processInputWithFiles, readClipboard, type FileAttachment } from './utils/files.ts';
 import type { CraftAgentConfig } from '../agent/craft-agent.ts';
 
@@ -281,14 +281,16 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             return;
 
           case '/cost':
-            const cost = estimateCost(tokenUsage.inputTokens, tokenUsage.outputTokens);
+            const costDisplay = tokenUsage.costUsd < 0.01
+              ? `$${(tokenUsage.costUsd * 100).toFixed(2)}¢`
+              : `$${tokenUsage.costUsd.toFixed(4)}`;
             addLocalMessage(
               `**Token Usage (this session)**
 
 - Input tokens: ${formatTokens(tokenUsage.inputTokens)}
 - Output tokens: ${formatTokens(tokenUsage.outputTokens)}
 - Total tokens: ${formatTokens(tokenUsage.totalTokens)}
-- Estimated cost: ${cost}`,
+- Cost: ${costDisplay}`,
               'assistant'
             );
             return;
@@ -483,6 +485,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
           mcpUrl={config.mcpUrl}
           inputTokens={tokenUsage.inputTokens}
           outputTokens={tokenUsage.outputTokens}
+          costUsd={tokenUsage.costUsd}
         />
       </Box>
     </Box>

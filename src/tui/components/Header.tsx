@@ -1,6 +1,6 @@
 import React, { memo, useMemo } from 'react';
 import { Box, Text } from 'ink';
-import { formatTokens, estimateCost } from '../utils/markdown.ts';
+import { formatTokens } from '../utils/markdown.ts';
 
 export interface HeaderProps {
   connected: boolean;
@@ -8,6 +8,7 @@ export interface HeaderProps {
   mcpUrl?: string;
   inputTokens?: number;
   outputTokens?: number;
+  costUsd?: number;
 }
 
 export const Header: React.FC<HeaderProps> = memo(({
@@ -16,6 +17,7 @@ export const Header: React.FC<HeaderProps> = memo(({
   mcpUrl,
   inputTokens = 0,
   outputTokens = 0,
+  costUsd = 0,
 }) => {
   // Map model IDs to friendly names
   const modelDisplay = useMemo(() => {
@@ -33,7 +35,14 @@ export const Header: React.FC<HeaderProps> = memo(({
     : 'Not connected', [mcpUrl]);
 
   const totalTokens = inputTokens + outputTokens;
-  const cost = useMemo(() => estimateCost(inputTokens, outputTokens), [inputTokens, outputTokens]);
+
+  // Format cost from SDK (already in USD)
+  const costDisplay = useMemo(() => {
+    if (costUsd < 0.01) {
+      return `$${(costUsd * 100).toFixed(2)}¢`;
+    }
+    return `$${costUsd.toFixed(4)}`;
+  }, [costUsd]);
 
   return (
     <Box justifyContent="space-between">
@@ -50,7 +59,7 @@ export const Header: React.FC<HeaderProps> = memo(({
         {totalTokens > 0 && (
           <>
             <Text dimColor>{formatTokens(totalTokens)} tokens</Text>
-            <Text dimColor> ({cost})</Text>
+            <Text dimColor> ({costDisplay})</Text>
             <Text dimColor> | </Text>
           </>
         )}

@@ -23,7 +23,7 @@ export type AgentEvent =
   | { type: 'tool_start'; toolName: string; toolUseId: string; input: Record<string, unknown> }
   | { type: 'tool_result'; toolUseId: string; result: string; isError: boolean; input?: Record<string, unknown> }
   | { type: 'error'; message: string }
-  | { type: 'complete'; usage?: { inputTokens: number; outputTokens: number } };
+  | { type: 'complete'; usage?: { inputTokens: number; outputTokens: number; cacheReadTokens?: number; cacheCreationTokens?: number; costUsd?: number } };
 
 // Handle preferences update (extracted for use in MCP tool)
 function handleUpdatePreferences(input: Record<string, unknown>): string {
@@ -456,26 +456,25 @@ export class CraftAgent {
       }
 
       case 'result': {
-        // Final result - always emit complete with usage if available
+        // Build usage info with all token types
+        // Total input = input_tokens + cache_creation + cache_read
+        const cacheRead = message.usage.cache_read_input_tokens ?? 0;
+        const cacheCreation = message.usage.cache_creation_input_tokens ?? 0;
+        const usage = {
+          inputTokens: message.usage.input_tokens + cacheRead + cacheCreation,
+          outputTokens: message.usage.output_tokens,
+          cacheReadTokens: cacheRead,
+          cacheCreationTokens: cacheCreation,
+          costUsd: message.total_cost_usd,
+        };
+
         if (message.subtype === 'success') {
-          events.push({
-            type: 'complete',
-            usage: {
-              inputTokens: message.usage.input_tokens,
-              outputTokens: message.usage.output_tokens,
-            },
-          });
+          events.push({ type: 'complete', usage });
         } else {
           // Error result - emit error then complete with whatever usage we have
           const errorMsg = 'errors' in message ? message.errors.join(', ') : 'Query failed';
           events.push({ type: 'error', message: errorMsg });
-          events.push({
-            type: 'complete',
-            usage: {
-              inputTokens: message.usage.input_tokens,
-              outputTokens: message.usage.output_tokens,
-            },
-          });
+          events.push({ type: 'complete', usage });
         }
         break;
       }
