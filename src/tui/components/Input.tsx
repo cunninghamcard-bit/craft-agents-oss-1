@@ -129,21 +129,21 @@ const SimpleTextInput: React.FC<{
         if (isActualBackspace) {
           if (sel) {
             const newValue = value.slice(0, sel.start) + value.slice(sel.end);
-            onChange(newValue);
             cursorRef.current = sel.start;
             selectionRef.current = null;
             prevValueRef.current = newValue;
+            onChange(newValue);
           } else if (cursor > 0) {
             const newValue = value.slice(0, cursor - 1) + value.slice(cursor);
-            onChange(newValue);
             cursorRef.current = cursor - 1;
             prevValueRef.current = newValue;
+            onChange(newValue);
           } else if (value.length > 0) {
             // Fallback: cursor is 0 but value has content - delete from end
             const newValue = value.slice(0, -1);
-            onChange(newValue);
             cursorRef.current = newValue.length;
             prevValueRef.current = newValue;
+            onChange(newValue);
           } else if (onBackspaceEmpty) {
             onBackspaceEmpty();
           }
@@ -151,14 +151,14 @@ const SimpleTextInput: React.FC<{
           // Forward delete (only when not at end)
           if (sel) {
             const newValue = value.slice(0, sel.start) + value.slice(sel.end);
-            onChange(newValue);
             cursorRef.current = sel.start;
             selectionRef.current = null;
             prevValueRef.current = newValue;
+            onChange(newValue);
           } else if (cursor < value.length) {
             const newValue = value.slice(0, cursor) + value.slice(cursor + 1);
-            onChange(newValue);
             prevValueRef.current = newValue;
+            onChange(newValue);
           }
         }
         return;
@@ -243,9 +243,9 @@ const SimpleTextInput: React.FC<{
               newValue = value.slice(0, cursor) + printable + value.slice(cursor);
               newCursor = cursor + printable.length;
             }
-            onChange(newValue);
             cursorRef.current = newCursor;
             prevValueRef.current = newValue;
+            onChange(newValue);
           }
         }
       }

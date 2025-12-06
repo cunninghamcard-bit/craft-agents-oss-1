@@ -7,7 +7,7 @@ import { debug } from '../tui/utils/debug.ts';
  */
 export function getDateTimeContext(): string {
   const now = new Date();
-  const options: Intl.DateTimeFormatOptions = {
+  const formatted = now.toLocaleDateString('en-US', {
     weekday: 'long',
     year: 'numeric',
     month: 'long',
@@ -15,13 +15,9 @@ export function getDateTimeContext(): string {
     hour: '2-digit',
     minute: '2-digit',
     timeZoneName: 'short',
-  };
-  const formatted = now.toLocaleDateString('en-US', options);
-  const isoDate = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  });
 
-  return `Current date and time: ${formatted}
-ISO date: ${isoDate}
-Unix timestamp: ${Math.floor(now.getTime() / 1000)}`;
+  return `Current date and time: ${formatted}`;
 }
 
 /**
