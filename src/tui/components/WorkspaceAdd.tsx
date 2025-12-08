@@ -3,9 +3,11 @@ import { Box, Text, useInput } from 'ink';
 import { addWorkspace, type Workspace, type OAuthCredentials } from '../../config/storage.ts';
 import { CraftOAuth, getMcpBaseUrl } from '../../auth/oauth.ts';
 import { getCredentialManager } from '../../credentials/index.ts';
+import { validateMcpConnection, getValidationErrorMessage } from '../../mcp/validation.ts';
 import { TextInput } from './TextInput.tsx';
+import { AnimatedSpinner } from './Spinner.tsx';
 
-type AddStep = 'name' | 'url' | 'checking-auth' | 'no-oauth-options' | 'oauth-auth' | 'bearer-token' | 'complete' | 'error';
+type AddStep = 'name' | 'url' | 'checking-auth' | 'no-oauth-options' | 'oauth-auth' | 'bearer-token' | 'validating' | 'complete' | 'error';
 
 export interface WorkspaceAddProps {
   onComplete: (workspace: Workspace) => void;
@@ -21,6 +23,8 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
   const [isPublicServer, setIsPublicServer] = useState(false);
   const [bearerToken, setBearerToken] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const [pendingAuth, setPendingAuth] = useState<{ oauth: OAuthCredentials | null; isPublic: boolean; token?: string } | null>(null);
   const [oauthClient, setOauthClient] = useState<CraftOAuth | null>(null);
 
   // Handle Ctrl+C and Escape for steps without TextInput
@@ -28,6 +32,20 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
   useInput((input, key) => {
     const textInputSteps = ['name', 'url', 'bearer-token'];
     if (textInputSteps.includes(step)) return;
+
+    // Handle validation step retry/back
+    if (step === 'validating' && validationError && pendingAuth) {
+      if (key.return) {
+        // Retry validation with same credentials
+        saveWorkspace(pendingAuth.oauth, pendingAuth.isPublic, pendingAuth.token);
+      } else if (key.escape) {
+        // Go back to URL step
+        setValidationError(null);
+        setPendingAuth(null);
+        setStep('url');
+      }
+      return;
+    }
 
     if ((key.ctrl && input === 'c') || key.escape) {
       // Cancel OAuth flow if in progress
@@ -134,8 +152,39 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
   }, [step, mcpUrl]);
 
   const saveWorkspace = useCallback(async (oauth: OAuthCredentials | null, isPublic: boolean, token?: string) => {
+    setStep('validating');
+    setValidationError(null);
+    setPendingAuth({ oauth, isPublic, token });
+
     try {
-      // First create the workspace to get its ID
+      // Get Claude credentials from keychain for validation
+      const manager = getCredentialManager();
+      const claudeApiKey = await manager.getApiKey();
+      const claudeOAuthToken = await manager.getClaudeOAuth();
+
+      // Determine MCP access token for validation
+      let mcpAccessToken: string | undefined;
+      if (oauth) {
+        mcpAccessToken = oauth.accessToken;
+      } else if (token) {
+        mcpAccessToken = token;
+      }
+      // For public servers, no token needed
+
+      // Validate MCP connection using SDK
+      const validationResult = await validateMcpConnection({
+        mcpUrl,
+        mcpAccessToken,
+        claudeApiKey: claudeApiKey || undefined,
+        claudeOAuthToken: claudeOAuthToken || undefined,
+      });
+
+      if (!validationResult.success) {
+        setValidationError(getValidationErrorMessage(validationResult));
+        return; // Stay on validating step with error
+      }
+
+      // Validation passed - create workspace
       const workspace = addWorkspace({
         name,
         mcpUrl,
@@ -143,8 +192,6 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
       });
 
       // Save credentials to keychain
-      const manager = getCredentialManager();
-
       if (oauth) {
         await manager.setWorkspaceOAuth(workspace.id, {
           accessToken: oauth.accessToken,
@@ -157,6 +204,7 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
         await manager.setWorkspaceBearer(workspace.id, token);
       }
 
+      setPendingAuth(null);
       setStep('complete');
 
       // Give user a moment to see success message
@@ -259,6 +307,25 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
         </Box>
       )}
 
+      {step === 'validating' && (
+        <Box flexDirection="column">
+          {validationError ? (
+            <>
+              <Text color="red" bold>Connection validation failed</Text>
+              <Box marginY={1}>
+                <Text color="red">{validationError}</Text>
+              </Box>
+              <Text dimColor>Press Enter to retry, Esc to go back</Text>
+            </>
+          ) : (
+            <Box>
+              <AnimatedSpinner />
+              <Text> Validating MCP connection...</Text>
+            </Box>
+          )}
+        </Box>
+      )}
+
       {step === 'complete' && (
         <Box flexDirection="column">
           <Text color="green" bold>Workspace added: {name}</Text>
@@ -288,6 +355,7 @@ function getStepNumber(step: AddStep): number {
     case 'no-oauth-options':
     case 'oauth-auth':
     case 'bearer-token':
+    case 'validating':
     case 'complete':
     case 'error':
       return 3;

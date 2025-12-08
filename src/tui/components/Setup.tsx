@@ -4,9 +4,11 @@ import { saveConfig, getConfigPath, generateWorkspaceId, loadStoredConfig, getAc
 import { CraftOAuth, getMcpBaseUrl } from '../../auth/oauth.ts';
 import { getExistingClaudeToken, isClaudeCliInstalled, runClaudeSetupToken } from '../../auth/claude-token.ts';
 import { getCredentialManager } from '../../credentials/index.ts';
+import { validateMcpConnection, getValidationErrorMessage } from '../../mcp/validation.ts';
 import { TextInput } from './TextInput.tsx';
+import { AnimatedSpinner } from './Spinner.tsx';
 
-type SetupStep = 'welcome' | 'auth-type' | 'api-key' | 'oauth-token' | 'oauth-token-setup' | 'mcp-url' | 'checking-auth' | 'no-oauth-options' | 'oauth-auth' | 'bearer-token' | 'confirm' | 'testing' | 'complete' | 'error';
+type SetupStep = 'welcome' | 'auth-type' | 'api-key' | 'oauth-token' | 'oauth-token-setup' | 'mcp-url' | 'checking-auth' | 'no-oauth-options' | 'oauth-auth' | 'bearer-token' | 'confirm' | 'validating' | 'complete' | 'error';
 
 export interface SetupProps {
   onComplete: (config: StoredConfig) => void;
@@ -63,6 +65,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
   const [isPublicServer, setIsPublicServer] = useState(false);
   const [mcpBearerToken, setMcpBearerToken] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
   const [showOauthToken, setShowOauthToken] = useState(false);
   const [oauthClient, setOauthClient] = useState<CraftOAuth | null>(null);
@@ -95,6 +98,18 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
     if (key.ctrl && input === 'v') {
       if (step === 'api-key') setShowApiKey(!showApiKey);
       if (step === 'oauth-token') setShowOauthToken(!showOauthToken);
+    }
+
+    // Handle validation step retry/back
+    if (step === 'validating' && validationError) {
+      if (key.return) {
+        // Retry validation
+        handleConfirm();
+      } else if (key.escape) {
+        // Go back to confirm step
+        setValidationError(null);
+        setStep('confirm');
+      }
     }
   });
 
@@ -282,10 +297,33 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
       return;
     }
 
-    setStep('testing');
+    setStep('validating');
+    setValidationError(null);
 
     try {
-      // Save credentials to keychain
+      // Determine MCP access token for validation
+      let mcpAccessToken: string | undefined;
+      if (oauthResult) {
+        mcpAccessToken = oauthResult.accessToken;
+      } else if (mcpBearerToken) {
+        mcpAccessToken = mcpBearerToken;
+      }
+      // For public servers, no token needed
+
+      // Validate MCP connection using SDK
+      const validationResult = await validateMcpConnection({
+        mcpUrl,
+        mcpAccessToken,
+        claudeApiKey: authType === 'api_key' ? apiKey : undefined,
+        claudeOAuthToken: authType === 'oauth_token' ? oauthToken : undefined,
+      });
+
+      if (!validationResult.success) {
+        setValidationError(getValidationErrorMessage(validationResult));
+        return; // Stay on validating step with error
+      }
+
+      // Validation passed - save credentials to keychain
       const manager = getCredentialManager();
 
       // Save Claude credentials to keychain
@@ -557,12 +595,22 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
           />
         )}
 
-        {step === 'testing' && (
+        {step === 'validating' && (
           <Box flexDirection="column">
-            <Box>
-              <Text color="cyan">●</Text>
-              <Text> Saving configuration...</Text>
-            </Box>
+            {validationError ? (
+              <>
+                <Text color="red" bold>Connection validation failed</Text>
+                <Box marginY={1}>
+                  <Text color="red">{validationError}</Text>
+                </Box>
+                <Text dimColor>Press Enter to retry, Esc to go back</Text>
+              </>
+            ) : (
+              <Box>
+                <AnimatedSpinner />
+                <Text> Validating MCP connection...</Text>
+              </Box>
+            )}
           </Box>
         )}
 
@@ -607,7 +655,7 @@ function getStepNumber(step: SetupStep, hasExistingMcp: boolean = false): number
       case 'oauth-token': return 2;
       case 'oauth-token-setup': return 2;
       case 'confirm':
-      case 'testing':
+      case 'validating':
       case 'complete':
       case 'error':
         return 3;
@@ -627,7 +675,7 @@ function getStepNumber(step: SetupStep, hasExistingMcp: boolean = false): number
     case 'oauth-auth': return 4;
     case 'bearer-token': return 4;
     case 'confirm':
-    case 'testing':
+    case 'validating':
     case 'complete':
     case 'error':
       return 5;
@@ -647,7 +695,7 @@ function getStepName(step: SetupStep): string {
     case 'oauth-auth': return 'Authorization';
     case 'bearer-token': return 'Bearer Token';
     case 'confirm': return 'Confirm';
-    case 'testing': return 'Saving...';
+    case 'validating': return 'Validating...';
     case 'complete': return 'Complete';
     case 'error': return 'Error';
   }

@@ -6,6 +6,8 @@ import type { McpServerConfig } from '../../agents/types.ts';
 import { AnimatedSpinner } from './Spinner.tsx';
 import { debug } from '../utils/debug.ts';
 import { TextInput } from './TextInput.tsx';
+import { validateMcpConnection, getValidationErrorMessage } from '../../mcp/validation.ts';
+import { getCredentialManager } from '../../credentials/index.ts';
 
 export interface McpAuthProps {
   servers: McpServerConfig[];
@@ -15,7 +17,7 @@ export interface McpAuthProps {
   onCancel: () => void;
 }
 
-type AuthStep = 'confirm' | 'authenticating' | 'bearer-token' | 'complete' | 'error';
+type AuthStep = 'confirm' | 'authenticating' | 'validating' | 'bearer-token' | 'complete' | 'error';
 
 export const McpAuth: React.FC<McpAuthProps> = ({
   servers,
@@ -104,7 +106,30 @@ export const McpAuth: React.FC<McpAuthProps> = ({
 
       if (isCancelledRef.current) return false;
 
-      // Save credentials including clientId for future token refresh (to keychain)
+      // Validate the MCP connection before saving credentials
+      setStep('validating');
+      setStatus(`Validating connection to ${server.name}...`);
+
+      // Get Claude credentials for validation
+      const manager = getCredentialManager();
+      const claudeApiKey = await manager.getApiKey();
+      const claudeOAuthToken = await manager.getClaudeOAuth();
+
+      const validationResult = await validateMcpConnection({
+        mcpUrl: server.url,
+        mcpAccessToken: tokens.accessToken,
+        claudeApiKey: claudeApiKey || undefined,
+        claudeOAuthToken: claudeOAuthToken || undefined,
+      });
+
+      if (!validationResult.success) {
+        debug('[McpAuth] Validation failed for', server.name, ':', validationResult.error);
+        setError(`${server.name}: ${getValidationErrorMessage(validationResult)}`);
+        oauthRef.current = null;
+        return 'oauth-failed' as const;
+      }
+
+      // Validation passed - save credentials including clientId for future token refresh (to keychain)
       debug('[McpAuth] Saving credentials for', server.name, 'clientId:', clientId);
       await saveServerCredentialsAsync(workspaceId, agentId, server.name, {
         accessToken: tokens.accessToken,
@@ -192,9 +217,34 @@ export const McpAuth: React.FC<McpAuthProps> = ({
     const server = servers[currentServerIndex];
     if (!server) return;
 
+    debug('[McpAuth] Validating bearer token for', server.name);
+
+    // Validate the connection before saving
+    setStep('validating');
+    setStatus(`Validating connection to ${server.name}...`);
+
+    // Get Claude credentials for validation
+    const manager = getCredentialManager();
+    const claudeApiKey = await manager.getApiKey();
+    const claudeOAuthToken = await manager.getClaudeOAuth();
+
+    const validationResult = await validateMcpConnection({
+      mcpUrl: server.url,
+      mcpAccessToken: token.trim(),
+      claudeApiKey: claudeApiKey || undefined,
+      claudeOAuthToken: claudeOAuthToken || undefined,
+    });
+
+    if (!validationResult.success) {
+      debug('[McpAuth] Bearer token validation failed for', server.name, ':', validationResult.error);
+      setError(`${server.name}: ${getValidationErrorMessage(validationResult)}`);
+      setStep('bearer-token'); // Go back to token entry
+      return;
+    }
+
     debug('[McpAuth] Saving bearer token for', server.name);
 
-    // Save token as non-expiring access token (to keychain)
+    // Validation passed - save token as non-expiring access token (to keychain)
     await saveServerCredentialsAsync(workspaceId, agentId, server.name, {
       accessToken: token.trim(),
       // No refreshToken, no expiresAt - static bearer token
@@ -241,7 +291,7 @@ export const McpAuth: React.FC<McpAuthProps> = ({
             <Text>
               {completedServers.includes(server.name) ? (
                 <Text color="green">✓ </Text>
-              ) : i === currentServerIndex && step === 'authenticating' ? (
+              ) : i === currentServerIndex && (step === 'authenticating' || step === 'validating') ? (
                 <Text color="yellow">● </Text>
               ) : i === currentServerIndex && (step === 'confirm' || step === 'bearer-token') ? (
                 <Text color="cyan">→ </Text>
@@ -268,6 +318,14 @@ export const McpAuth: React.FC<McpAuthProps> = ({
 
       {/* Authenticating step */}
       {step === 'authenticating' && (
+        <Box marginY={1}>
+          <AnimatedSpinner />
+          <Text> {status}</Text>
+        </Box>
+      )}
+
+      {/* Validating step */}
+      {step === 'validating' && (
         <Box marginY={1}>
           <AnimatedSpinner />
           <Text> {status}</Text>

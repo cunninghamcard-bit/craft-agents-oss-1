@@ -63,7 +63,8 @@ src/
 │       └── env.ts            # Environment variables (server deployment)
 ├── mcp/
 │   ├── client.ts             # MCP client & proxy for persistent connections
-│   └── tools.ts              # Tool registry and help formatting
+│   ├── tools.ts              # Tool registry and help formatting
+│   └── validation.ts         # SDK-based MCP connection validation
 ├── prompts/
 │   └── system.ts             # System prompt with date/time and preferences
 └── tui/
@@ -200,6 +201,26 @@ Stored in `~/.craft-agent/preferences.json`:
 - `CraftMcpClient`: Basic MCP client for direct tool calls (used by sub-agent manager)
 - SDK handles MCP connections via HTTP mode configuration
 - `tools.ts`: Registry of 32+ Craft tools for `/tools` command
+
+### MCP Validation (`src/mcp/validation.ts`)
+Validates MCP connections using the Claude Agent SDK's `mcpServerStatus()` method. This ensures connections work before saving credentials.
+
+**When validation runs:**
+- **Setup.tsx**: After entering MCP URL and credentials, before saving config
+- **WorkspaceAdd.tsx**: After entering workspace URL and credentials, before creating workspace
+- **McpAuth.tsx**: After OAuth or bearer token entry, before marking server as authenticated
+
+**Validation flow:**
+1. Create minimal `query()` with in-memory credentials
+2. Configure MCP server in `mcpServers` option
+3. Call `query.mcpServerStatus()` to get connection status
+4. Abort query immediately after getting status
+5. Return structured result based on status (`connected`, `failed`, `needs-auth`, `pending`)
+
+**On validation failure:**
+- Shows error message with reason
+- Enter to retry, Esc to go back
+- Credentials are preserved for retry
 
 ### Subagent System (`src/agents/`)
 Subagents are specialized agents defined in Craft documents. When activated, they extend the base agent with custom instructions, MCP servers, and REST APIs.
