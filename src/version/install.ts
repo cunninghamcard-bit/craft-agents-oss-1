@@ -1,4 +1,4 @@
-import { exists, mkdir, chmod, writeFile, symlink } from "fs/promises";
+import { exists, mkdir, chmod, writeFile, symlink, unlink } from "fs/promises";
 import { getLatestVersion, getManifest } from "./manifest";
 import { createHash } from "crypto";
 import { homedir } from "os";
@@ -37,6 +37,9 @@ export async function installBinary(params: { binaryData: ArrayBuffer, version: 
 
   await writeFile(actualPath, Buffer.from(binaryData));
   await chmod(actualPath, '755');
+  if (await exists(symlinkPath)) {
+    await unlink(symlinkPath);
+  }
   await symlink(actualPath, symlinkPath);
 }
 
