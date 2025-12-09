@@ -48,6 +48,56 @@ export function getSystemPrompt(
 }
 
 /**
+ * Generate tool priority section for the system prompt
+ * Lists agent-specific tools and provides guidance on when to use them vs Craft tools
+ */
+function generateToolPrioritySection(agent: SubAgentDefinition): string {
+  const toolSections: string[] = [];
+
+  // Collect MCP server tools
+  if (agent.mcpServers) {
+    for (const server of agent.mcpServers) {
+      if (server.tools && server.tools.length > 0) {
+        toolSections.push(`- **${server.name}**: ${server.tools.join(', ')}`);
+      }
+    }
+  }
+
+  // Collect API tools
+  if (agent.apis) {
+    for (const api of agent.apis) {
+      const tools = api.endpoints.map(e => `${api.name}_${e.name}`);
+      if (tools.length > 0) {
+        toolSections.push(`- **${api.name}** (API): ${tools.join(', ')}`);
+      }
+    }
+  }
+
+  if (toolSections.length === 0) {
+    return '';
+  }
+
+  return `
+### Tool Priority
+
+This agent provides the following tools:
+${toolSections.join('\n')}
+
+**IMPORTANT**: When the user asks for operations that match this agent's purpose, prefer using the agent's tools over Craft tools.
+
+Only use Craft MCP tools when:
+1. The user explicitly mentions "Craft", "Craft document", "Craft folder", or similar
+2. The operation is Craft-specific (blocks, daily notes, collections, document editing)
+3. The agent doesn't have a tool for the requested operation
+
+For example:
+- "${agent.name}" agent active + "list my folders" → Use ${agent.name}'s tools
+- "${agent.name}" agent active + "list my Craft folders" → Use Craft's folders_list
+
+`;
+}
+
+/**
  * Format sub-agent context for injection into system prompt
  * Makes clear the agent must ADOPT the persona, not just append instructions
  */
@@ -61,6 +111,8 @@ The user has provided these clarifications during setup. They are NOT yet saved 
 ${temporaryClarifications}
 `
     : '';
+
+  const toolPrioritySection = generateToolPrioritySection(agent);
 
   return `
 
@@ -77,8 +129,7 @@ You must:
 
 ### Agent Instructions
 ${agent.instructions}
-${clarificationsSection}
-### Self-Modification
+${clarificationsSection}${toolPrioritySection}### Self-Modification
 You can update your Instructions document using \`update_agent_instructions\` when you learn something that should persist across conversations. Only add NEW learnings - don't rewrite existing instructions. Use human-friendly references like "this document" instead of IDs.
 
 ### Platform Limitations
