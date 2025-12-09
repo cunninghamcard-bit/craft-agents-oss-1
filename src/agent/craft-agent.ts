@@ -500,6 +500,11 @@ export class CraftAgent {
         }
       }
 
+      const agentMcpServers = this.getAgentMcpServers();
+      const agentApiServers = this.getAgentApiServers();
+      debug('[chat] agentMcpServers:', agentMcpServers);
+      debug('[chat] agentApiServers:', agentApiServers);
+
       const mcpServers: Options['mcpServers'] = {
         craft: {
           type: 'http',
@@ -509,9 +514,9 @@ export class CraftAgent {
         preferences: getPreferencesServer(),
         documentation: getDocumentationServer(),
         // Add agent-specific MCP servers if an agent is active
-        ...this.getAgentMcpServers(),
+        ...agentMcpServers,
         // Add in-process API servers (REST APIs converted to MCP tools)
-        ...this.getAgentApiServers(),
+        ...agentApiServers,
       };
 
       // Debug: log active agent before building system prompt
@@ -520,7 +525,7 @@ export class CraftAgent {
       if (this.activeAgentDefinition?.instructions) {
         debug('[chat] instructions:', this.activeAgentDefinition.instructions);
       }
-
+      
       // Configure SDK options
       const options: Options = {
         model: this.config.model || 'claude-sonnet-4-5-20250929',
