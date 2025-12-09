@@ -1161,7 +1161,8 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     const result = await activateAgent(agentName);
     debug('[useAgent.reloadAgent] Re-activation result:', result);
 
-    return result === true;
+    // 'pending_auth' means reload is proceeding but waiting for user input (review/auth)
+    return result === true || result === 'pending_auth';
   }, [activeAgentDefinition, workspace.id, deactivateAgent, activateAgent]);
 
   // Keep ref updated so the callback can access the latest version
