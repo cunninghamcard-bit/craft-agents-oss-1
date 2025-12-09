@@ -209,12 +209,10 @@ Or if something went wrong:
           if (block.type === 'tool_use') {
             debug('[instruction-updater] Tool call:', block.name, JSON.stringify(block.input));
             // Emit progress event for tool start
-            const progressMessage = formatToolProgressMessage(block.name);
-            debug('[instruction-updater] Emitting progress event:', progressMessage, 'callback exists:', !!onProgress);
             onProgress?.({
               type: 'tool_start',
               toolName: block.name,
-              message: progressMessage,
+              message: formatToolProgressMessage(block.name),
             });
           }
         }

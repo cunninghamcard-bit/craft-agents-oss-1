@@ -450,7 +450,6 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
         return;
       }
 
-      debug('[useAgent] Updating tool message content:', toolMsgId, event.message);
       setMessages((prev) =>
         prev.map((m) =>
           m.id === toolMsgId
@@ -608,7 +607,6 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
           case 'tool_start': {
             const now = Date.now();
             const toolMessageId = `tool-${event.toolUseId}`;
-            debug('[useAgent] tool_start event:', event.toolName, 'toolUseId:', event.toolUseId);
 
             // Mark any previously executing tools as completed
             // (New tool starting means previous tools must have finished)
@@ -638,7 +636,6 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
             // Track update_agent_instructions tool for progress updates
             // Check for exact match or MCP-prefixed version (mcp__preferences__update_agent_instructions)
             if (event.toolName === 'update_agent_instructions' || event.toolName?.includes('update_agent_instructions')) {
-              debug('[useAgent] Setting updateInstructionsToolMsgIdRef:', toolMessageId, 'for tool:', event.toolName);
               updateInstructionsToolMsgIdRef.current = toolMessageId;
             }
 
