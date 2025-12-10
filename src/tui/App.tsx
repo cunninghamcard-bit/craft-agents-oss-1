@@ -423,8 +423,14 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
         debug('[App.handleSubmit] @mention input:', mentionInput);
         debug('[App.handleSubmit] availableAgents:', availableAgents);
 
+        // Just "@" with nothing after - open agent menu
+        if (!mentionInput) {
+          setShowAgentMenu(true);
+          return;
+        }
+
         // Resolve partial mention to full agent name
-        const resolvedAgent = mentionInput ? resolveAgentMention(mentionInput, availableAgents) : null;
+        const resolvedAgent = resolveAgentMention(mentionInput, availableAgents);
         debug('[App.handleSubmit] resolvedAgent:', resolvedAgent);
 
         if (resolvedAgent === 'main') {
@@ -452,7 +458,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup }) => {
             addLocalMessage(`Agent not found: @${resolvedAgent}`, 'error');
           }
           return;
-        } else if (mentionInput) {
+        } else {
           addLocalMessage(`Agent not found: @${mentionInput}`, 'error');
           return;
         }

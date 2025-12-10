@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 
 export type AgentAction =
@@ -86,6 +86,8 @@ export const AgentMenu: React.FC<AgentMenuProps> = ({
   }
 
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [searchBuffer, setSearchBuffer] = useState('');
+  const lastKeystrokeRef = useRef<number>(0);
 
   useInput((input, key) => {
     if (key.upArrow) {
@@ -99,6 +101,37 @@ export const AgentMenu: React.FC<AgentMenuProps> = ({
       }
     } else if (key.escape) {
       onCancel();
+    } else if (input && input.length === 1 && /[a-z0-9/\-]/i.test(input)) {
+      // Type-ahead search for agents
+      const now = Date.now();
+      const timeSinceLastKey = now - lastKeystrokeRef.current;
+      lastKeystrokeRef.current = now;
+
+      // Reset buffer if too much time passed (500ms)
+      const newBuffer = timeSinceLastKey > 500 ? input.toLowerCase() : searchBuffer + input.toLowerCase();
+      setSearchBuffer(newBuffer);
+
+      // Find matching agent - prefer prefix match, fall back to contains
+      const agentItems = menuItems
+        .map((item, idx) => ({ item, idx }))
+        .filter(({ idx }) => idx >= agentStartIndex);
+
+      // First try prefix match
+      const prefixMatch = agentItems.find(({ item }) =>
+        item.label.slice(1).toLowerCase().startsWith(newBuffer)
+      );
+
+      if (prefixMatch) {
+        setSelectedIndex(prefixMatch.idx);
+      } else {
+        // Fall back to contains match (e.g., "wo" matches "test/word-counter")
+        const containsMatch = agentItems.find(({ item }) =>
+          item.label.slice(1).toLowerCase().includes(newBuffer)
+        );
+        if (containsMatch) {
+          setSelectedIndex(containsMatch.idx);
+        }
+      }
     }
   });
 
