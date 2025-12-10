@@ -187,12 +187,37 @@ export function resolveCommand(input: string): string {
 // ============================================
 
 /**
- * Filter agents by prefix for hint display and resolution
+ * Filter agents for hint display and resolution
+ * Prefers prefix matches, falls back to contains matches
  * Includes special entries: 'main' (return to main assistant) and 'agent' (open agent menu)
  */
 export function filterAgents(query: string, agents: string[]): FilterMatch<string> {
   const allAgents = ['main', 'agent', ...agents];
-  return filterByPrefix(allAgents, query, a => a);
+  const lowerQuery = query.toLowerCase();
+
+  // First: prefix matches
+  const prefixMatches = allAgents.filter(a =>
+    a.toLowerCase().startsWith(lowerQuery)
+  );
+
+  if (prefixMatches.length > 0) {
+    return {
+      matches: prefixMatches,
+      singleMatch: prefixMatches.length === 1 ? prefixMatches[0]! : null,
+      query,
+    };
+  }
+
+  // Fallback: contains matches
+  const containsMatches = allAgents.filter(a =>
+    a.toLowerCase().includes(lowerQuery)
+  );
+
+  return {
+    matches: containsMatches,
+    singleMatch: containsMatches.length === 1 ? containsMatches[0]! : null,
+    query,
+  };
 }
 
 /**
