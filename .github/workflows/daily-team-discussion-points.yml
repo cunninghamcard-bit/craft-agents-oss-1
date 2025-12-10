@@ -15,12 +15,6 @@ jobs:
       - name: Install Craft CLI
         run: curl -fsSL https://agents.craft.do/install.sh | bash
 
-      - name: Test cli.js with simple prompt
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.CRAFT_ANTHROPIC_API_KEY }}
-        run: |
-          echo '{"prompt":"say hello","options":{}}' | node ~/.local/share/craft/versions/*/claude-agent-sdk/cli.js 2>&1 | head -50 || echo "cli.js test failed with exit code $?"
-
       - name: Run Daily Team Discussion Points Agent
         timeout-minutes: 10
         env:
