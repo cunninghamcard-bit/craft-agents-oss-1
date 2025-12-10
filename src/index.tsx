@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import React, { useState, useCallback } from 'react';
 import { render } from 'ink';
+import { createHash } from 'crypto';
 import meow from 'meow';
 import { App } from './tui/App.tsx';
 import { Setup } from './tui/components/Setup.tsx';
@@ -20,6 +21,15 @@ import {
 import type { CraftAgentConfig } from './agent/craft-agent.ts';
 import { enableDebug } from './tui/utils/debug.ts';
 import { install } from './version/install.ts';
+
+/**
+ * Generate a deterministic workspace ID from a URL.
+ * Same URL always produces the same ID (for caching), different URLs get different IDs.
+ */
+function generateUrlWorkspaceId(url: string): string {
+  const hash = createHash('sha256').update(url).digest('hex').substring(0, 12);
+  return `cli-ws-url-${hash}`;
+}
 
 const cli = meow(
   `
@@ -218,9 +228,9 @@ const Root: React.FC<RootProps> = ({ initialConfig, cliFlags, forceSetup, initia
   let workspace: Workspace;
   let workspaceError: string | undefined;
   if (cliFlags.url) {
-    // URL override creates a temporary workspace
+    // URL override creates a temporary workspace with deterministic ID from URL
     workspace = {
-      id: 'cli-override',
+      id: generateUrlWorkspaceId(cliFlags.url),
       name: 'CLI Override',
       mcpUrl: cliFlags.url,
       isPublic: true, // Assume public for CLI override
@@ -312,9 +322,9 @@ async function main() {
     // Get workspace: -w flag > --url override > active workspace
     let workspace: Workspace | null = null;
     if (cli.flags.url) {
-      // URL override creates a temporary workspace
+      // URL override creates a temporary workspace with deterministic ID from URL
       workspace = {
-        id: 'cli-override',
+        id: generateUrlWorkspaceId(cli.flags.url),
         name: 'CLI Override',
         mcpUrl: cli.flags.url,
         isPublic: true,
