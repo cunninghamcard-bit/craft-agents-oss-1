@@ -74,10 +74,17 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
   const [hasClaudeCli, setHasClaudeCli] = useState(false);
   const [existingClaudeToken, setExistingClaudeToken] = useState<string | null>(null);
   const [isRunningSetupToken, setIsRunningSetupToken] = useState(false);
+  const [envApiKey, setEnvApiKey] = useState<string | null>(null);
 
-  // Check for Claude CLI on mount (don't check token yet - wait until user selects Claude Max)
+  // Check for Claude CLI and ANTHROPIC_API_KEY env var on mount
   useEffect(() => {
     setHasClaudeCli(isClaudeCliInstalled());
+
+    // Check for ANTHROPIC_API_KEY environment variable
+    const apiKeyFromEnv = process.env.ANTHROPIC_API_KEY;
+    if (apiKeyFromEnv && apiKeyFromEnv.startsWith('sk-ant-')) {
+      setEnvApiKey(apiKeyFromEnv);
+    }
   }, []);
 
   // Handle Ctrl+C to cancel
@@ -195,6 +202,18 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
       setStep('mcp-url-type');
     }
   }, [hasExistingMcp]);
+
+  const handleUseEnvKey = useCallback(() => {
+    if (envApiKey) {
+      setAuthType('api_key');
+      setApiKey(envApiKey);
+      if (hasExistingMcp) {
+        setStep('confirm');
+      } else {
+        setStep('mcp-url-type');
+      }
+    }
+  }, [envApiKey, hasExistingMcp]);
 
   const handleMcpUrlTypeSelect = useCallback((method: McpUrlMethod) => {
     if (method === 'paste') {
@@ -520,6 +539,8 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
           <AuthTypeStep
             onSelect={handleAuthTypeSelect}
             onBack={handleBack}
+            envApiKey={envApiKey}
+            onUseEnvKey={handleUseEnvKey}
           />
         )}
 
@@ -809,18 +830,46 @@ const WelcomeStep: React.FC<WelcomeStepProps> = ({ onContinue, hasExistingMcp })
 interface AuthTypeStepProps {
   onSelect: (type: AuthType) => void;
   onBack: () => void;
+  envApiKey?: string | null;
+  onUseEnvKey?: () => void;
 }
 
-const AuthTypeStep: React.FC<AuthTypeStepProps> = ({ onSelect, onBack }) => {
+const AuthTypeStep: React.FC<AuthTypeStepProps> = ({ onSelect, onBack, envApiKey, onUseEnvKey }) => {
   const [selected, setSelected] = useState<number>(0);
 
+  // Build options dynamically based on whether env var is available
+  const options: { id: string; label: string; desc: string; action: () => void }[] = [];
+
+  if (envApiKey) {
+    options.push({
+      id: 'env',
+      label: 'Use ANTHROPIC_API_KEY from environment',
+      desc: `Found: ${envApiKey.slice(0, 12)}...${envApiKey.slice(-4)}`,
+      action: () => onUseEnvKey?.(),
+    });
+  }
+
+  options.push({
+    id: 'api_key',
+    label: 'API Key',
+    desc: 'Pay-as-you-go billing (console.anthropic.com)',
+    action: () => onSelect('api_key'),
+  });
+
+  options.push({
+    id: 'oauth',
+    label: 'Claude Max Token',
+    desc: "Use your Max subscription (run 'claude setup-token')",
+    action: () => onSelect('oauth_token'),
+  });
+
   useInput((input, key) => {
-    if (key.upArrow) {
-      setSelected(0);
-    } else if (key.downArrow) {
-      setSelected(1);
+    if (key.upArrow && selected > 0) {
+      setSelected(s => s - 1);
+    } else if (key.downArrow && selected < options.length - 1) {
+      setSelected(s => s + 1);
     } else if (key.return) {
-      onSelect(selected === 0 ? 'api_key' : 'oauth_token');
+      options[selected]?.action();
     } else if (key.escape) {
       onBack();
     }
@@ -829,29 +878,29 @@ const AuthTypeStep: React.FC<AuthTypeStepProps> = ({ onSelect, onBack }) => {
   return (
     <Box flexDirection="column">
       <Text bold>Choose Authentication Method</Text>
+
+      {envApiKey && (
+        <Box marginY={1}>
+          <Text color="green">✓ Found ANTHROPIC_API_KEY in environment</Text>
+        </Box>
+      )}
+
       <Box marginY={1}>
         <Text dimColor>How would you like to authenticate with Claude?</Text>
       </Box>
 
       <Box flexDirection="column" marginY={1}>
-        <Box>
-          <Text color={selected === 0 ? 'green' : undefined}>
-            {selected === 0 ? '❯ ' : '  '}
-          </Text>
-          <Text color={selected === 0 ? 'green' : undefined} bold={selected === 0}>
-            API Key
-          </Text>
-          <Text dimColor> - Pay-as-you-go billing (console.anthropic.com)</Text>
-        </Box>
-        <Box>
-          <Text color={selected === 1 ? 'green' : undefined}>
-            {selected === 1 ? '❯ ' : '  '}
-          </Text>
-          <Text color={selected === 1 ? 'green' : undefined} bold={selected === 1}>
-            Claude Max Token
-          </Text>
-          <Text dimColor> - Use your Max subscription (run 'claude setup-token')</Text>
-        </Box>
+        {options.map((opt, i) => (
+          <Box key={opt.id}>
+            <Text color={selected === i ? 'green' : undefined}>
+              {selected === i ? '❯ ' : '  '}
+            </Text>
+            <Text color={selected === i ? 'green' : undefined} bold={selected === i}>
+              {opt.label}
+            </Text>
+            <Text dimColor> - {opt.desc}</Text>
+          </Box>
+        ))}
       </Box>
 
       <Box marginTop={1}>

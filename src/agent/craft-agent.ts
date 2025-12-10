@@ -771,6 +771,7 @@ export class CraftAgent {
 
                 // Ask for permission
                 const requestId = `perm-${input.tool_use_id}`;
+                debug(`[PreToolUse] Requesting permission for Bash command: ${commandStr}`);
 
                 const permissionPromise = new Promise<boolean>((resolve) => {
                   this.pendingPermissions.set(requestId, {
