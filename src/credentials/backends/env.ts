@@ -9,7 +9,7 @@
  *   CRAFT_CLAUDE_OAUTH_TOKEN - Claude OAuth token
  *
  * Note: Workspace and agent-scoped credentials are not supported
- * via environment variables - use keychain for those.
+ * via environment variables - use file backend for those.
  */
 
 import type { CredentialBackend } from './types.ts';
@@ -22,7 +22,7 @@ const ENV_MAP: Record<string, string> = {
 
 export class EnvironmentBackend implements CredentialBackend {
   readonly name = 'environment';
-  readonly priority = 110; // Higher than keytar (100) so env vars override keychain
+  readonly priority = 110; // Higher than file (100) so env vars override file storage
 
   async isAvailable(): Promise<boolean> {
     // Always available, but only provides read access to global credentials

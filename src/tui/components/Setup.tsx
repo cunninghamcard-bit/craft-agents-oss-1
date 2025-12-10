@@ -41,7 +41,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
         setMcpUrl(activeWorkspace.mcpUrl);
         setIsPublicServer(activeWorkspace.isPublic ?? false);
 
-        // Load OAuth from keychain
+        // Load OAuth from credential store
         const manager = getCredentialManager();
         const oauth = await manager.getWorkspaceOAuth(activeWorkspace.id);
         if (oauth) {
@@ -75,10 +75,9 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
   const [existingClaudeToken, setExistingClaudeToken] = useState<string | null>(null);
   const [isRunningSetupToken, setIsRunningSetupToken] = useState(false);
 
-  // Check for Claude CLI and existing token on mount
+  // Check for Claude CLI on mount (don't check token yet - wait until user selects Claude Max)
   useEffect(() => {
     setHasClaudeCli(isClaudeCliInstalled());
-    setExistingClaudeToken(getExistingClaudeToken());
   }, []);
 
   // Handle Ctrl+C to cancel
@@ -102,7 +101,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
       if (step === 'oauth-token') setShowOauthToken(!showOauthToken);
     }
 
-    // Handle validation step retry/back
+    // Handle validation step retry/back/edit
     if (step === 'validating' && validationError) {
       if (key.return) {
         // Retry validation
@@ -111,6 +110,13 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
         // Go back to confirm step
         setValidationError(null);
         setStep('confirm');
+      } else if (input.toLowerCase() === 'e') {
+        // Edit MCP connection - go back to MCP URL step
+        setValidationError(null);
+        setOauthResult(null);
+        setIsPublicServer(false);
+        setMcpBearerToken('');
+        setStep('mcp-url');
       }
     }
   });
@@ -339,10 +345,10 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
         return; // Stay on validating step with error
       }
 
-      // Validation passed - save credentials to keychain
+      // Validation passed - save credentials to credential store
       const manager = getCredentialManager();
 
-      // Save Claude credentials to keychain
+      // Save Claude credentials to credential store
       if (authType === 'api_key' && apiKey) {
         await manager.setApiKey(apiKey);
       } else if (authType === 'oauth_token' && oauthToken) {
@@ -369,7 +375,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
         };
       }
 
-      // Save workspace credentials to keychain (not in config)
+      // Save workspace credentials to credential store (not in config)
       if (oauthResult) {
         await manager.setWorkspaceOAuth(workspaceId, {
           accessToken: oauthResult.accessToken,
@@ -396,7 +402,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
         updatedWorkspaces = [...existingWorkspaces.filter(w => w.id !== workspaceId), workspace];
       }
 
-      // Build config (credentials stored in keychain, not here)
+      // Build config (credentials stored in credential store, not here)
       const config: StoredConfig = {
         authType,
         workspaces: updatedWorkspaces,
@@ -637,7 +643,8 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel }) => {
                 <Box marginY={1}>
                   <Text color="red">{validationError}</Text>
                 </Box>
-                <Text dimColor>Press Enter to retry, Esc to go back</Text>
+                <Text dimColor>Press Enter to retry, Esc to go back, </Text>
+                <Text color="cyan">E to edit MCP connection</Text>
               </>
             ) : (
               <Box>

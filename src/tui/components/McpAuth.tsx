@@ -198,7 +198,7 @@ export const McpAuth: React.FC<McpAuthProps> = ({
         debug('[McpAuth] Stored', validationResult.tools.length, 'tools for', server.name);
       }
 
-      // Validation passed - save credentials including clientId for future token refresh (to keychain)
+      // Validation passed - save credentials including clientId for future token refresh (to credential store)
       debug('[McpAuth] Saving credentials for', server.name, 'clientId:', clientId);
       await saveServerCredentialsAsync(workspaceId, agentId, server.name, {
         accessToken: tokens.accessToken,
@@ -206,7 +206,7 @@ export const McpAuth: React.FC<McpAuthProps> = ({
         expiresAt: tokens.expiresAt,
         clientId,
       });
-      debug('[McpAuth] Credentials saved to keychain for', server.name);
+      debug('[McpAuth] Credentials saved to credential store for', server.name);
 
       oauthRef.current = null;
       return true;
@@ -375,7 +375,7 @@ export const McpAuth: React.FC<McpAuthProps> = ({
 
     debug('[McpAuth] Saving bearer token for', server.name);
 
-    // Validation passed - save token as non-expiring access token (to keychain)
+    // Validation passed - save token as non-expiring access token (to credential store)
     await saveServerCredentialsAsync(workspaceId, agentId, server.name, {
       accessToken: token.trim(),
       // No refreshToken, no expiresAt - static bearer token

@@ -6,7 +6,7 @@ import { getCredentialManager } from '../credentials/index.ts';
 
 /**
  * OAuth credentials from a fresh authentication flow.
- * Used for temporary state in UI components before saving to keychain.
+ * Used for temporary state in UI components before saving to credential store.
  *
  * Note: `clientId` is required here because OAuth flows always return it.
  * This differs from `StoredCredential` where `clientId` is optional since
@@ -31,12 +31,13 @@ export interface Workspace {
 
 export type AuthType = 'api_key' | 'oauth_token';
 
-// Config stored in JSON file (credentials stored in OS keychain, not here)
+// Config stored in JSON file (credentials stored in encrypted file, not here)
 export interface StoredConfig {
   authType?: AuthType;
   workspaces: Workspace[];
   activeWorkspaceId: string | null;
   model?: string;
+  extendedCacheTtl?: boolean;  // Extended cache TTL: true=1h all, false=5m all, undefined=auto (Opus only)
 }
 
 const CONFIG_DIR = join(homedir(), '.craft-agent');
@@ -75,7 +76,31 @@ export function loadStoredConfig(): StoredConfig | null {
 }
 
 /**
- * Check if config has valid credentials in keychain
+ * Get extended cache TTL configuration.
+ * @returns true (force 1h), false (force 5m), or null (auto: 1h for Opus only)
+ */
+export function getExtendedCacheTtlConfig(): boolean | null {
+  const config = loadStoredConfig();
+  if (config && typeof config.extendedCacheTtl === 'boolean') {
+    return config.extendedCacheTtl;
+  }
+  return null; // Auto mode
+}
+
+/**
+ * Check if extended cache TTL should be used for the given model.
+ * Auto mode enables 1h cache for Opus models only (cost-effective).
+ */
+export function shouldUseExtendedCacheTtl(model: string): boolean {
+  const config = getExtendedCacheTtlConfig();
+  if (config === true) return true;
+  if (config === false) return false;
+  // Auto mode: only for Opus models
+  return model.includes('opus');
+}
+
+/**
+ * Check if config has valid credentials in credential store
  */
 export async function hasValidCredentials(): Promise<boolean> {
   const config = loadStoredConfig();
@@ -89,7 +114,7 @@ export async function hasValidCredentials(): Promise<boolean> {
 }
 
 /**
- * Get the Anthropic API key from keychain
+ * Get the Anthropic API key from credential store
  */
 export async function getAnthropicApiKey(): Promise<string | null> {
   const manager = getCredentialManager();
@@ -97,7 +122,7 @@ export async function getAnthropicApiKey(): Promise<string | null> {
 }
 
 /**
- * Get the Claude OAuth token from keychain
+ * Get the Claude OAuth token from credential store
  */
 export async function getClaudeOAuthToken(): Promise<string | null> {
   const manager = getCredentialManager();
@@ -116,7 +141,7 @@ export async function isWorkspaceTokenExpiredAsync(workspaceId: string): Promise
 }
 
 
-// Get access token for a specific workspace from keychain
+// Get access token for a specific workspace from credential store
 export async function getWorkspaceAccessTokenAsync(workspaceId: string): Promise<string | null> {
   const config = loadStoredConfig();
   const workspace = config?.workspaces.find(w => w.id === workspaceId);
@@ -127,17 +152,17 @@ export async function getWorkspaceAccessTokenAsync(workspaceId: string): Promise
 
   const manager = getCredentialManager();
 
-  // Check keychain for bearer token
+  // Check credential store for bearer token
   const bearer = await manager.getWorkspaceBearer(workspaceId);
   if (bearer) return bearer;
 
-  // Check keychain for OAuth
+  // Check credential store for OAuth
   const oauth = await manager.getWorkspaceOAuth(workspaceId);
   return oauth?.accessToken || null;
 }
 
 
-// Update OAuth tokens for a specific workspace (saves to keychain)
+// Update OAuth tokens for a specific workspace (saves to credential store)
 export async function updateWorkspaceOAuthTokensAsync(
   workspaceId: string,
   accessToken: string,
@@ -166,7 +191,7 @@ export async function updateApiKey(newApiKey: string): Promise<boolean> {
   const config = loadStoredConfig();
   if (!config) return false;
 
-  // Save API key to keychain
+  // Save API key to credential store
   const manager = getCredentialManager();
   await manager.setApiKey(newApiKey);
 
@@ -268,7 +293,7 @@ export async function removeWorkspace(workspaceId: string): Promise<boolean> {
 
   saveConfig(config);
 
-  // Clean up keychain credentials for this workspace
+  // Clean up credential store credentials for this workspace
   const manager = getCredentialManager();
   await manager.deleteWorkspaceCredentials(workspaceId);
 

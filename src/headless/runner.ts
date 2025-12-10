@@ -192,7 +192,7 @@ export class HeadlessRunner {
         }
       }
 
-      // Get token from keychain
+      // Get token from credential store
       const token = await getWorkspaceAccessTokenAsync(this.config.workspace.id);
 
       debug('[HeadlessRunner] Connecting to MCP:', mcpUrl, 'hasToken:', !!token);

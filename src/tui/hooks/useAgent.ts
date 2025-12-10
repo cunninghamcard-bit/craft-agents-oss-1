@@ -281,7 +281,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       return null;
     }
 
-    // Get token from keychain (handles bearer token, OAuth, and legacy config fallback)
+    // Get token from credential store (handles bearer token, OAuth, and legacy config fallback)
     const token = await getWorkspaceAccessTokenAsync(workspace.id);
     if (!token) {
       return null;
@@ -290,7 +290,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     // Check if token is expired and refresh if needed
     const isExpired = await isWorkspaceTokenExpiredAsync(workspace.id);
     if (isExpired) {
-      // Get full OAuth credentials from keychain for refresh
+      // Get full OAuth credentials from credential store for refresh
       const manager = getCredentialManager();
       const oauthCreds = await manager.getWorkspaceOAuth(workspace.id);
 
@@ -306,7 +306,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
             oauthCreds.clientId
           );
 
-          // Save refreshed tokens to keychain
+          // Save refreshed tokens to credential store
           await updateWorkspaceOAuthTokensAsync(
             workspace.id,
             newTokens.accessToken,
@@ -353,7 +353,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
           }
         }
 
-        // Get token from keychain
+        // Get token from credential store
         const token = await getMcpToken();
 
         // Create MCP client
@@ -1247,9 +1247,9 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     invalidateDefinition(workspace.id, agentMeta.id);
     debug('[useAgent.resetAgent] Definition cache cleared for agent:', agentMeta.id);
 
-    // Clear all credentials for this agent from keychain
+    // Clear all credentials for this agent from credential store
     await clearAgentCredentialsAsync(workspace.id, agentMeta.id);
-    debug('[useAgent.resetAgent] Credentials cleared from keychain');
+    debug('[useAgent.resetAgent] Credentials cleared from credential store');
 
     // Deactivate and return to main (don't re-activate - user can re-select to restart setup)
     deactivateAgent();

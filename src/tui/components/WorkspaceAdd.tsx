@@ -157,7 +157,7 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
     setPendingAuth({ oauth, isPublic, token });
 
     try {
-      // Get Claude credentials from keychain for validation
+      // Get Claude credentials from credential store for validation
       const manager = getCredentialManager();
       const claudeApiKey = await manager.getApiKey();
       const claudeOAuthToken = await manager.getClaudeOAuth();
@@ -191,7 +191,7 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
         isPublic,
       });
 
-      // Save credentials to keychain
+      // Save credentials to credential store
       if (oauth) {
         await manager.setWorkspaceOAuth(workspace.id, {
           accessToken: oauth.accessToken,

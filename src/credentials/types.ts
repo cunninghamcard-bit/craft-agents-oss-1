@@ -1,12 +1,11 @@
 /**
  * Credential Storage Types
  *
- * Defines the types for secure credential storage using OS keychains.
+ * Defines the types for secure credential storage using AES-256-GCM encryption.
  * Supports global, workspace-scoped, and agent-scoped credentials.
  *
- * Keychain entry naming:
- *   Service: "craft-tui-agent"
- *   Account: "{type}::{scope...}"
+ * Credential key naming:
+ *   Format: "{type}::{scope...}"
  *
  * Examples:
  *   - anthropic_api_key::global
@@ -43,7 +42,7 @@ function isValidCredentialType(type: string): type is CredentialType {
   return VALID_CREDENTIAL_TYPES.includes(type as CredentialType);
 }
 
-/** Credential identifier - determines keychain entry name */
+/** Credential identifier - determines credential store entry key */
 export interface CredentialId {
   type: CredentialType;
   /** For workspace-scoped credentials */
@@ -55,7 +54,7 @@ export interface CredentialId {
 }
 
 /**
- * Stored credential value in keychain.
+ * Stored credential value in encrypted file.
  *
  * This is a generic type for all credential types (OAuth, bearer tokens, API keys).
  * All fields except `value` are optional since not all credential types use them.
@@ -81,7 +80,7 @@ export interface StoredCredential {
 // could contain "/" (e.g., URLs like "https://api.example.com")
 const CREDENTIAL_DELIMITER = '::';
 
-/** Convert CredentialId to keychain account string */
+/** Convert CredentialId to credential store account string */
 export function credentialIdToAccount(id: CredentialId): string {
   const parts: string[] = [id.type];
 
@@ -100,7 +99,7 @@ export function credentialIdToAccount(id: CredentialId): string {
   return parts.join(CREDENTIAL_DELIMITER);
 }
 
-/** Parse keychain account string back to CredentialId. Returns null if invalid. */
+/** Parse credential store account string back to CredentialId. Returns null if invalid. */
 export function accountToCredentialId(account: string): CredentialId | null {
   const parts = account.split(CREDENTIAL_DELIMITER);
   const typeStr = parts[0];

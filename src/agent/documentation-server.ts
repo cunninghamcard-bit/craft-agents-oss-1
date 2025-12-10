@@ -77,7 +77,7 @@ https://example.com/mcp
 - Only HTTP/HTTPS URLs supported (NOT npx/stdio commands)
 - Set requiresAuth: true for OAuth-protected servers
 - First activation prompts for OAuth login
-- Credentials stored in OS keychain (not config files)
+- Credentials stored in encrypted file (not config files)
 - DO NOT mention ~/.claude/settings.json or Claude Code MCP setup`,
 
     rest_apis: `## Adding REST APIs in Craft TUI Agent
@@ -106,7 +106,7 @@ curl -X POST https://api.exa.ai/search \\
 
 ### Important:
 - First activation prompts for API keys
-- Keys stored in OS keychain (not environment variables)
+- Keys stored in encrypted file (not environment variables)
 - Include endpoint descriptions for better tool usage
 - Mention pagination/limit params to avoid large responses`,
 
@@ -131,12 +131,12 @@ Agents are defined in Craft documents (not code files).
 
     authentication: `## Authentication in Craft TUI Agent
 
-All credentials stored in OS keychain (NOT config files or env vars).
+All credentials stored in AES-256-GCM encrypted file at ~/.craft-agent/credentials.enc.
 
 ### Credential storage:
-- **macOS:** Keychain Access
-- **Linux:** Secret Service (GNOME Keyring/KWallet)
-- **Windows:** Credential Manager
+- Encrypted file with machine-derived key (PBKDF2)
+- Cross-platform: macOS, Linux, Windows
+- No system keychain prompts required
 
 ### MCP server auth:
 - OAuth 2.0 with PKCE (dynamic client registration)
@@ -146,7 +146,7 @@ All credentials stored in OS keychain (NOT config files or env vars).
 ### REST API auth:
 - API keys prompted on first use
 - Supports header, bearer, or query param auth
-- Keys saved per-agent in keychain
+- Keys saved per-agent in encrypted file
 
 ### Re-authenticate:
 - \`/auth\` command to re-enter credentials
@@ -165,7 +165,7 @@ All credentials stored in OS keychain (NOT config files or env vars).
 |---------|-----------------|-------------|
 | Config dir | ~/.craft-agent/ | ~/.claude/ |
 | MCP servers | Craft documents | settings.json |
-| API keys | OS keychain | env variables |
+| API keys | encrypted file | env variables |
 | Agents | Craft documents | code files |
 | Sessions | Workspaces | sessions |
 

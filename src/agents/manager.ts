@@ -405,7 +405,7 @@ export class SubAgentManager {
                 );
                 const newTokens = await oauth.refreshAccessToken(creds.refreshToken, creds.clientId);
 
-                // Save refreshed credentials to keychain
+                // Save refreshed credentials to credential store
                 await saveServerCredentialsAsync(this.workspaceId, this.activeAgent.agentId, name, {
                   accessToken: newTokens.accessToken,
                   refreshToken: newTokens.refreshToken || creds.refreshToken,
@@ -496,7 +496,7 @@ export class SubAgentManager {
       // No auth needed for this API
       if (!api.auth) continue;
 
-      // Check if we have stored credentials in keychain
+      // Check if we have stored credentials in credential store
       const apiKey = await getApiKeyCredentialAsync(
         this.workspaceId,
         this.activeAgent.agentId!,
@@ -532,7 +532,7 @@ export class SubAgentManager {
         continue;
       }
 
-      // Get API key from keychain (either stored or not needed)
+      // Get API key from credential store (either stored or not needed)
       let apiKey = '';
       if (api.auth) {
         const storedKey = await getApiKeyCredentialAsync(

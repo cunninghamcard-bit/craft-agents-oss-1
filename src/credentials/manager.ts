@@ -5,13 +5,13 @@
  * available backend and provides convenience methods for common operations.
  *
  * Backend priority:
- *   1. keytar (native cross-platform keychain access)
- *   2. Environment variables (server deployment, read-only)
+ *   1. Environment variables (server deployment, read-only)
+ *   2. Encrypted file storage (cross-platform, no OS keychain prompts)
  */
 
 import type { CredentialBackend } from './backends/types.ts';
 import type { CredentialId, CredentialType, StoredCredential } from './types.ts';
-import { KeytarBackend } from './backends/keytar.ts';
+import { SecureStorageBackend } from './backends/secure-storage.ts';
 import { EnvironmentBackend } from './backends/env.ts';
 import { debug } from '../tui/utils/debug.ts';
 
@@ -52,9 +52,9 @@ export class CredentialManager {
   }
 
   private async _doInitialize(): Promise<void> {
-    // Register backends in priority order (keytar + environment only)
+    // Register backends in priority order (secure storage + environment)
     const potentialBackends: CredentialBackend[] = [
-      new KeytarBackend(),
+      new SecureStorageBackend(),
       new EnvironmentBackend(),
     ];
 
@@ -75,7 +75,7 @@ export class CredentialManager {
     if (this.writeBackend) {
       debug(`[CredentialManager] Using write backend: ${this.writeBackend.name}`);
     } else {
-      debug(`[CredentialManager] WARNING: No writable backend available. Install keytar or set environment variables.`);
+      debug(`[CredentialManager] WARNING: No writable backend available.`);
     }
 
     this.initialized = true;

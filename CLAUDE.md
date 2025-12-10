@@ -59,7 +59,7 @@ src/
 │   ├── manager.ts            # CredentialManager - main API
 │   └── backends/
 │       ├── types.ts          # CredentialBackend interface
-│       ├── keytar.ts         # Primary: keytar (cross-platform native)
+│       ├── secure-storage.ts # Primary: AES-256-GCM encrypted file storage
 │       └── env.ts            # Environment variables (server deployment)
 ├── mcp/
 │   ├── client.ts             # MCP client for persistent connections
@@ -142,18 +142,18 @@ interface Workspace {
 }
 ```
 - Workspace conversations stored in `~/.craft-agent/workspaces/{id}/conversation.json`
-- **Credentials stored in OS keychain** (not in config.json)
+- **Credentials stored in encrypted file** at `~/.craft-agent/credentials.enc`
 
 ### Credential Storage (`src/credentials/`)
-All sensitive credentials are stored in OS native secure storage:
-- **macOS**: Keychain Access
-- **Linux**: Secret Service (GNOME Keyring / KWallet)
-- **Windows**: Credential Manager
+All sensitive credentials are stored in an AES-256-GCM encrypted file:
+- **Location**: `~/.craft-agent/credentials.enc`
+- **Encryption**: AES-256-GCM with machine-derived key (PBKDF2)
+- **Cross-platform**: Works on macOS, Linux, Windows, and server environments
+- **No OS prompts**: Unlike keychain, no security dialogs are shown to users
 
-**Keychain naming convention:**
+**Credential naming convention:**
 ```
-Service: "craft-tui-agent"
-Account: "{type}::{scope...}"
+Key format: "{type}::{scope...}"
 
 Examples:
 - anthropic_api_key::global             # Anthropic API key
@@ -169,7 +169,7 @@ Note: Using "::" as delimiter to avoid conflicts with "/" in URLs or paths.
 
 **Backend priority:**
 1. Environment variables - For server deployment (`CRAFT_ANTHROPIC_API_KEY`, `CRAFT_CLAUDE_OAUTH_TOKEN`)
-2. `keytar` - Cross-platform native module (uses N-API)
+2. Encrypted file - AES-256-GCM with machine-derived key
 
 **Usage:**
 ```typescript
@@ -275,9 +275,9 @@ API responses can be huge (e.g., full web page content). To prevent context over
 5. Falls back to simple truncation if summarization fails
 
 **Credential storage:**
-- Stored in OS keychain via `CredentialManager` (see Credential Storage section)
-- MCP OAuth: `mcp_oauth/{workspaceId}/{agentId}/{serverName}`
-- API keys: `api_key/{workspaceId}/{agentId}/{apiName}`
+- Stored in encrypted file via `CredentialManager` (see Credential Storage section)
+- MCP OAuth: `mcp_oauth::{workspaceId}::{agentId}::{serverName}`
+- API keys: `api_key::{workspaceId}::{agentId}::{apiName}`
 
 ### OAuth (`src/auth/oauth.ts`)
 - Dynamic client registration (no pre-registration)
@@ -334,6 +334,36 @@ Includes:
 - Tracks: input tokens, output tokens, cache creation, cache read
 - Context tokens = base + cache for next request
 - Cost calculated by SDK (`total_cost_usd`)
+
+### Extended Prompt Cache TTL (`src/cache-ttl-interceptor.ts`)
+Extends Anthropic's prompt cache from 5 minutes to 1 hour for longer conversations.
+
+**How it works:**
+1. Imported as FIRST import in `index.tsx` (patches fetch before SDK loads)
+2. Also loaded via `bunfig.toml` preload for dev mode (belt-and-suspenders)
+3. Patches `globalThis.fetch` before the SDK captures the reference
+4. Intercepts Anthropic API requests and adds `ttl: "1h"` to `cache_control` blocks
+5. Beta header in `craft-agent.ts` conditionally added based on config/model
+
+**Why first import matters:**
+- ES modules capture references at load time
+- The interceptor must patch fetch before SDK imports evaluate
+- Direct import works in compiled binaries (preload doesn't)
+- Preload still helps in dev mode as extra safety
+
+**Configuration (`~/.craft-agent/config.json`):**
+- Not set (default): Auto mode - 1h for Opus models, 5m for others
+- `extendedCacheTtl: true`: Force 1h for all models
+- `extendedCacheTtl: false`: Force 5m for all models
+
+**Why Opus only by default:**
+Opus is expensive ($15/MTok input vs $3/MTok for Sonnet). The 2x cache write cost is negligible compared to Opus base cost, but significant for cheaper models.
+
+**Pricing impact:**
+| Cache Type | Write Cost | Read Cost |
+|------------|------------|-----------|
+| 5-minute (default) | 1.25x base | 0.1x base |
+| 1-hour (extended) | 2x base | 0.1x base |
 
 ### Keyboard Input Layer (`src/tui/keyboard/`)
 
@@ -445,6 +475,6 @@ tail -f /tmp/craft-debug.log
 - **TUI**: Ink 4.x (React for CLIs)
 - **AI**: @anthropic-ai/claude-agent-sdk
 - **MCP**: @modelcontextprotocol/sdk (via Agent SDK)
-- **Credentials**: keytar (cross-platform OS keychain access)
+- **Credentials**: AES-256-GCM encrypted file storage (no OS keychain)
 - **Markdown**: marked + marked-terminal + Shiki syntax highlighting
 - **CLI**: meow for argument parsing

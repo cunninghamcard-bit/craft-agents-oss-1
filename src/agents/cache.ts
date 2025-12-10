@@ -2,7 +2,7 @@
  * Agent caching layer
  *
  * Caches agent definitions and registry locally for performance.
- * Credentials are stored in OS keychain (not in files).
+ * Credentials are stored in encrypted file (not in cache files).
  *
  * Cache structure:
  * ~/.craft-agent/agents/{workspaceId}/
@@ -172,13 +172,13 @@ export function invalidateDefinition(workspaceId: string, agentId: string): void
 }
 
 // ============================================================
-// MCP Credentials Cache (Keychain-based)
+// MCP Credentials Cache (Encrypted file storage)
 // ============================================================
 
 import { getCredentialManager } from '../credentials/index.ts';
 
 /**
- * Get MCP server credentials from keychain
+ * Get MCP server credentials from credential store
  */
 export async function getServerCredentialsAsync(
   workspaceId: string,
@@ -190,7 +190,7 @@ export async function getServerCredentialsAsync(
 }
 
 /**
- * Save MCP server credentials to keychain
+ * Save MCP server credentials to credential store
  */
 export async function saveServerCredentialsAsync(
   workspaceId: string,
@@ -204,7 +204,7 @@ export async function saveServerCredentialsAsync(
 }
 
 /**
- * Get API key for an agent from keychain
+ * Get API key for an agent from credential store
  */
 export async function getApiKeyCredentialAsync(
   workspaceId: string,
@@ -216,7 +216,7 @@ export async function getApiKeyCredentialAsync(
 }
 
 /**
- * Save API key for an agent to keychain
+ * Save API key for an agent to credential store
  */
 export async function saveApiKeyCredentialAsync(
   workspaceId: string,

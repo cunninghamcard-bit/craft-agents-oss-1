@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { getSystemPrompt, getDateTimeContext } from '../prompts/system.ts';
 import type { SubAgentDefinition } from '../agents/types.ts';
 import { updateAgentInstructions as agenticUpdateInstructions, type UpdateInstructionsContext, type UpdateInstructionsResult, type UpdateInstructionsProgressEvent } from '../agents/instruction-updater.ts';
-import { getWorkspaceAccessTokenAsync, isWorkspaceTokenExpiredAsync, updateWorkspaceOAuthTokensAsync, type Workspace } from '../config/storage.ts';
+import { getWorkspaceAccessTokenAsync, isWorkspaceTokenExpiredAsync, updateWorkspaceOAuthTokensAsync, shouldUseExtendedCacheTtl, type Workspace } from '../config/storage.ts';
 import { getCredentialManager } from '../credentials/index.ts';
 import { updatePreferences, loadPreferences, type UserPreferences } from '../config/preferences.ts';
 import { CraftOAuth, getMcpBaseUrl } from '../auth/oauth.ts';
@@ -593,7 +593,7 @@ export class CraftAgent {
       return null;
     }
 
-    // Get token from keychain (handles bearer token, OAuth, and legacy config fallback)
+    // Get token from credential store (handles bearer token, OAuth, and legacy config fallback)
     const token = await getWorkspaceAccessTokenAsync(workspace.id);
     if (!token) {
       throw new Error('No authentication credentials found for workspace. Please re-add the workspace.');
@@ -602,7 +602,7 @@ export class CraftAgent {
     // Check if token is expired and needs refresh
     const isExpired = await isWorkspaceTokenExpiredAsync(workspace.id);
     if (isExpired) {
-      // Get full OAuth credentials from keychain for refresh
+      // Get full OAuth credentials from credential store for refresh
       const manager = getCredentialManager();
       const oauthCreds = await manager.getWorkspaceOAuth(workspace.id);
 
@@ -618,7 +618,7 @@ export class CraftAgent {
             oauthCreds.clientId
           );
 
-          // Save refreshed tokens to keychain
+          // Save refreshed tokens to credential store
           await updateWorkspaceOAuthTokensAsync(
             workspace.id,
             newTokens.accessToken,
@@ -704,9 +704,14 @@ export class CraftAgent {
       }
       
       // Configure SDK options
+      const model = this.config.model || 'claude-sonnet-4-5-20250929';
+      const useExtendedCache = shouldUseExtendedCacheTtl(model);
       const options: Options = {
         ...getDefaultOptions(),
-        model: this.config.model || 'claude-sonnet-4-5-20250929',
+        model,
+        // Enable extended prompt cache TTL (1 hour instead of 5 minutes) when configured
+        // The actual TTL injection happens in src/cache-ttl-interceptor.ts
+        ...(useExtendedCache ? { betas: ['extended-cache-ttl-2025-04-11'] as any } : {}),
         // Option A: Append to Claude Code's system prompt (recommended by docs)
         systemPrompt: {
           type: 'preset',

@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Cache TTL interceptor - MUST be first import (patches fetch before SDK loads)
+// Works in both dev (bunfig.toml preload) and compiled mode (direct import)
+import './cache-ttl-interceptor.ts';
+
 import React, { useState, useCallback } from 'react';
 import { render } from 'ink';
 import { createHash } from 'crypto';
@@ -177,14 +181,14 @@ interface RootProps {
 }
 
 const Root: React.FC<RootProps> = ({ initialConfig, cliFlags, forceSetup, initialCredentials, initialHasValidCredentials, initialAgent, initialPrompt }) => {
-  // Show setup if: forced, no config, or no valid credentials in keychain
+  // Show setup if: forced, no config, or no valid credentials in credential store
   const [showSetup, setShowSetup] = useState(forceSetup || !initialConfig || !initialHasValidCredentials);
   const [config, setConfig] = useState<StoredConfig | null>(initialConfig);
   const [credentials, setCredentials] = useState(initialCredentials);
 
   const handleSetupComplete = useCallback(async (newConfig: StoredConfig) => {
     setConfig(newConfig);
-    // Reload credentials from keychain after setup
+    // Reload credentials from credential store after setup
     try {
       const apiKey = await getAnthropicApiKey();
       const oauthToken = await getClaudeOAuthToken();
@@ -274,7 +278,7 @@ const Root: React.FC<RootProps> = ({ initialConfig, cliFlags, forceSetup, initia
   };
 
   // Set authentication in environment for the SDK based on auth type
-  // Credentials are now loaded from keychain (passed in from main())
+  // Credentials are now loaded from credential store (passed in from main())
   const authType: AuthType = config.authType || 'api_key';
   if (authType === 'oauth_token' && credentials?.oauthToken) {
     // Use Claude Max subscription via OAuth token
@@ -353,7 +357,7 @@ async function main() {
       process.exit(1);
     }
 
-    // Get credentials (from env vars or keychain)
+    // Get credentials (from env vars or credential store)
     const apiKey = await getAnthropicApiKey();
     const oauthToken = await getClaudeOAuthToken();
 
@@ -434,7 +438,7 @@ async function main() {
   const forceSetup = cli.flags.setup;
   const initialHasValidCredentials = await hasValidCredentials();
 
-  // Load actual credentials from keychain (needed for env vars later)
+  // Load actual credentials from credential store (needed for env vars later)
   let initialCredentials: { apiKey: string | null; oauthToken: string | null } | null = null;
   if (storedConfig) {
     const apiKey = await getAnthropicApiKey();

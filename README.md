@@ -61,10 +61,7 @@ The wizard will ask for:
 
 Configuration is saved to `~/.craft-agent/config.json`
 
-**Security**: All sensitive credentials (API keys, OAuth tokens) are stored securely in your operating system's native keychain:
-- **macOS**: Keychain Access
-- **Linux**: Secret Service (GNOME Keyring / KWallet)
-- **Windows**: Credential Manager
+**Security**: All sensitive credentials (API keys, OAuth tokens) are stored in an AES-256-GCM encrypted file at `~/.craft-agent/credentials.enc`. The encryption key is derived from your machine identity using PBKDF2, providing the same security model as OS keychains without requiring system keychain prompts.
 
 ## Usage
 
@@ -230,6 +227,25 @@ bun dev
 craft --debug
 ```
 
+## Extended Prompt Cache
+
+The app can extend Anthropic's prompt cache TTL from 5 minutes to 1 hour, beneficial for longer conversations where you may not respond within 5 minutes.
+
+**Default behavior:** 1-hour cache is enabled for **Opus models only**. Other models use the standard 5-minute cache.
+
+**Pricing:**
+- 5-minute cache: 1.25x write cost, 0.1x read cost
+- 1-hour cache: 2x write cost, 0.1x read cost
+
+The 2x write cost is negligible for expensive Opus models but significant for cheaper models like Sonnet.
+
+**To override:**
+Add to `~/.craft-agent/config.json`:
+```json
+{ "extendedCacheTtl": true }   // Force 1h for all models
+{ "extendedCacheTtl": false }  // Force 5m for all models
+```
+
 ## Trace Viewer & Langsmith Upload
 
 A standalone utility to view SDK session transcripts and upload them to Langsmith for analysis.
@@ -269,7 +285,7 @@ Session transcripts are stored by the Claude Agent SDK at:
 - **AI**: [@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)
 - **TUI**: [Ink](https://github.com/vadimdemedes/ink) (React for CLIs)
 - **MCP**: HTTP transport via Agent SDK
-- **Credentials**: [keytar](https://www.npmjs.com/package/keytar) (cross-platform OS keychain access)
+- **Credentials**: AES-256-GCM encrypted file storage
 
 ## License
 

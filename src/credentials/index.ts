@@ -1,7 +1,7 @@
 /**
  * Credential Storage Module
  *
- * Provides secure credential storage using OS keychains.
+ * Provides secure credential storage using AES-256-GCM encrypted file.
  * All methods auto-initialize, so explicit initialize() calls are optional.
  *
  * Usage:

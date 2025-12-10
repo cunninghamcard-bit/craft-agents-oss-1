@@ -37,7 +37,7 @@ export const ApiAuth: React.FC<ApiAuthProps> = ({
 
     debug('[ApiAuth] Saving API key for', api.name);
 
-    // Save the API key to keychain
+    // Save the API key to credential store
     await saveApiKeyCredentialAsync(workspaceId, agentId, api.name, key.trim());
 
     setCompletedApis(prev => [...prev, api.name]);
