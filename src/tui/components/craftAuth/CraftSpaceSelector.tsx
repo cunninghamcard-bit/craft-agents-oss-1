@@ -1,7 +1,7 @@
-
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { CraftApi } from '../../../clients/craftApi';
+import { getCredentialManager } from '../../../credentials';
 
 export interface CraftSpaceSelectorProps {
   token: string;
@@ -51,16 +51,22 @@ export const CraftSpaceSelector: React.FC<CraftSpaceSelectorProps> = ({ token, o
     const craftApi = new CraftApi('https://api.craft.do');
     setLoading("Loading MCP URL");
     const workflowLinks = await craftApi.getWorkflowLinks({ authToken: token, spaceId });
-    console.log(workflowLinks);
     const spaceWorkflowLink = workflowLinks.find(link => link.type === 'mcp' && link.scope === 'fullSpace' && link.enabled && link.name === MCP_LINK_NAME);
-    if (spaceWorkflowLink?.urls?.mcp != null) {
+    
+    const completeWithMcpUrl = async (mcpUrl: string) => {
+      // Save the Craft OAuth token to secure storage
+      const credentialManager = getCredentialManager();
+      await credentialManager.setCraftOAuth(token);
       setLoading(null);
-      onComplete(spaceWorkflowLink.urls.mcp);
+      onComplete(mcpUrl);
+    };
+    
+    if (spaceWorkflowLink?.urls?.mcp != null) {
+      await completeWithMcpUrl(spaceWorkflowLink.urls.mcp);
     } else {
       const link = await craftApi.createSpaceWorkflowLink({ authToken: token, spaceId, name: 'Craft TUI MCP', type: 'mcp', scope: 'fullSpace' });
       if (link.urls?.mcp != null) {
-        setLoading(null);
-        onComplete(link.urls.mcp);
+        await completeWithMcpUrl(link.urls.mcp);
       } else {
         setLoading(null);
         throw new Error('Failed to create MCP link');

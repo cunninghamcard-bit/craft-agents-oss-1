@@ -201,6 +201,17 @@ export class CredentialManager {
     await this.set({ type: 'claude_oauth' }, { value: token });
   }
 
+  /** Get Craft OAuth token */
+  async getCraftOAuth(): Promise<string | null> {
+    const cred = await this.get({ type: 'craft_oauth' });
+    return cred?.value || null;
+  }
+
+  /** Set Craft OAuth token */
+  async setCraftOAuth(token: string): Promise<void> {
+    await this.set({ type: 'craft_oauth' }, { value: token });
+  }
+
   /** Get workspace OAuth credentials */
   async getWorkspaceOAuth(
     workspaceId: string

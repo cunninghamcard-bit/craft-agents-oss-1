@@ -21,6 +21,7 @@
 export type CredentialType =
   | 'anthropic_api_key'
   | 'claude_oauth'
+  | 'craft_oauth'
   | 'workspace_oauth'
   | 'workspace_bearer'
   | 'mcp_oauth'
@@ -30,6 +31,7 @@ export type CredentialType =
 const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
   'anthropic_api_key',
   'claude_oauth',
+  'craft_oauth',
   'workspace_oauth',
   'workspace_bearer',
   'mcp_oauth',

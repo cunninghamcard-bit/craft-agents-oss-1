@@ -158,6 +158,7 @@ Account: "{type}::{scope...}"
 Examples:
 - anthropic_api_key::global             # Anthropic API key
 - claude_oauth::global                  # Claude Max OAuth token
+- craft_oauth::global                   # Craft API OAuth token
 - workspace_oauth::{workspaceId}        # Workspace MCP server OAuth
 - workspace_bearer::{workspaceId}       # Workspace bearer token
 - mcp_oauth::{wsId}::{agentId}::{name}  # Subagent MCP server OAuth

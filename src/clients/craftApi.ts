@@ -21,7 +21,6 @@ export class CraftApi {
                 url.searchParams.set(key, value);
             }
         }
-        console.log(url.toString());
 
         // Build headers
         const requestHeaders: Record<string, string> = {
