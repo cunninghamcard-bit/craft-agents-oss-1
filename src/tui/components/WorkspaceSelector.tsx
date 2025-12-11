@@ -134,7 +134,7 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
 
       <Box marginTop={1}>
         <Text dimColor>
-          Enter select | Esc cancel | 1-{workspaces.length} quick | 'a' add | 'r' rename | 'd' remove
+          {['Enter select', 'Esc cancel', ...(workspaces.length > 1 ? [`1-${workspaces.length} quick select`] : []), 'a add', 'r rename', 'd remove'].join(' | ')}
         </Text>
       </Box>
     </Box>
