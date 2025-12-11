@@ -4,8 +4,8 @@
  * Read-only backend for server/container deployments.
  * Reads credentials from environment variables.
  *
- * Supported variables:
- *   CRAFT_ANTHROPIC_API_KEY - Anthropic API key
+ * Supported variables (in priority order):
+ *   CRAFT_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY - Anthropic API key
  *   CRAFT_CLAUDE_OAUTH_TOKEN - Claude OAuth token
  *
  * Note: Workspace and agent-scoped credentials are not supported
@@ -15,10 +15,22 @@
 import type { CredentialBackend } from './types.ts';
 import type { CredentialId, StoredCredential } from '../types.ts';
 
-const ENV_MAP: Record<string, string> = {
-  anthropic_api_key: 'CRAFT_ANTHROPIC_API_KEY',
-  claude_oauth: 'CRAFT_CLAUDE_OAUTH_TOKEN',
+// Maps credential type to env var names (in priority order - first found wins)
+const ENV_MAP: Record<string, string[]> = {
+  anthropic_api_key: ['CRAFT_ANTHROPIC_API_KEY', 'ANTHROPIC_API_KEY'],
+  claude_oauth: ['CRAFT_CLAUDE_OAUTH_TOKEN'],
 };
+
+/** Find the first env var that has a value */
+function getEnvValue(envVars: string[]): string | undefined {
+  for (const envVar of envVars) {
+    const value = process.env[envVar];
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
 
 export class EnvironmentBackend implements CredentialBackend {
   readonly name = 'environment';
@@ -35,12 +47,12 @@ export class EnvironmentBackend implements CredentialBackend {
       return null;
     }
 
-    const envVar = ENV_MAP[id.type];
-    if (!envVar) {
+    const envVars = ENV_MAP[id.type];
+    if (!envVars) {
       return null;
     }
 
-    const value = process.env[envVar];
+    const value = getEnvValue(envVars);
     if (!value) {
       return null;
     }
@@ -61,8 +73,8 @@ export class EnvironmentBackend implements CredentialBackend {
   async list(_filter?: Partial<CredentialId>): Promise<CredentialId[]> {
     const ids: CredentialId[] = [];
 
-    for (const [type, envVar] of Object.entries(ENV_MAP)) {
-      if (process.env[envVar]) {
+    for (const [type, envVars] of Object.entries(ENV_MAP)) {
+      if (getEnvValue(envVars)) {
         ids.push({ type: type as CredentialId['type'] });
       }
     }

@@ -102,15 +102,22 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
   const [hasClaudeCli, setHasClaudeCli] = useState(false);
   const [existingClaudeToken, setExistingClaudeToken] = useState<string | null>(null);
   const [envApiKey, setEnvApiKey] = useState<string | null>(null);
+  const [envApiKeyVar, setEnvApiKeyVar] = useState<string | null>(null);
 
   // Check for Claude CLI and ANTHROPIC_API_KEY env var on mount
   useEffect(() => {
     setHasClaudeCli(isClaudeCliInstalled());
 
-    // Check for ANTHROPIC_API_KEY environment variable
-    const apiKeyFromEnv = process.env.ANTHROPIC_API_KEY;
-    if (apiKeyFromEnv && apiKeyFromEnv.startsWith('sk-ant-')) {
-      setEnvApiKey(apiKeyFromEnv);
+    // Check for API key environment variables (CRAFT_ prefix takes priority)
+    const craftApiKey = process.env.CRAFT_ANTHROPIC_API_KEY;
+    const standardApiKey = process.env.ANTHROPIC_API_KEY;
+
+    if (craftApiKey && craftApiKey.startsWith('sk-ant-')) {
+      setEnvApiKey(craftApiKey);
+      setEnvApiKeyVar('CRAFT_ANTHROPIC_API_KEY');
+    } else if (standardApiKey && standardApiKey.startsWith('sk-ant-')) {
+      setEnvApiKey(standardApiKey);
+      setEnvApiKeyVar('ANTHROPIC_API_KEY');
     }
   }, []);
 
@@ -412,7 +419,12 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
       // No additional credentials needed - go straight to save
       saveConfiguration(method);
     } else if (method === 'api_key') {
-      setStep('api-key-entry');
+      // If ANTHROPIC_API_KEY is in environment, skip to save (env backend will provide it)
+      if (envApiKey) {
+        saveConfiguration(method);
+      } else {
+        setStep('api-key-entry');
+      }
     } else {
       // oauth_token - check for existing Claude token first
       const existing = getExistingClaudeToken();
@@ -421,7 +433,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
       }
       setStep('oauth-token-entry');
     }
-  }, [saveConfiguration]);
+  }, [saveConfiguration, envApiKey]);
 
   // API key entered -> Save
   const handleApiKeySubmit = useCallback((value: string) => {
@@ -617,6 +629,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
             onSelect={handleBillingMethodSelect}
             onBack={handleBack}
             envApiKey={envApiKey}
+            envApiKeyVar={envApiKeyVar}
           />
         )}
 
@@ -783,9 +796,10 @@ interface BillingMethodStepProps {
   onSelect: (method: AuthType) => void;
   onBack: () => void;
   envApiKey?: string | null;
+  envApiKeyVar?: string | null;
 }
 
-const BillingMethodStep: React.FC<BillingMethodStepProps> = ({ onSelect, onBack, envApiKey }) => {
+const BillingMethodStep: React.FC<BillingMethodStepProps> = ({ onSelect, onBack, envApiKey, envApiKeyVar }) => {
   const [selected, setSelected] = useState<number>(0);
 
   const options: { id: AuthType; label: string; desc: string }[] = [
@@ -796,8 +810,8 @@ const BillingMethodStep: React.FC<BillingMethodStepProps> = ({ onSelect, onBack,
     },
     {
       id: 'api_key',
-      label: 'API Key',
-      desc: 'Pay-as-you-go via Anthropic',
+      label: envApiKey ? `Use ${envApiKeyVar} from env` : 'API Key',
+      desc: envApiKey ? 'Use the API key from your environment' : 'Pay-as-you-go via Anthropic',
     },
     {
       id: 'oauth_token',
@@ -823,9 +837,9 @@ const BillingMethodStep: React.FC<BillingMethodStepProps> = ({ onSelect, onBack,
     <Box flexDirection="column">
       <Text dimColor>How would you like to pay for AI usage?</Text>
 
-      {envApiKey && (
+      {envApiKey && envApiKeyVar && (
         <Box marginTop={1}>
-          <Text color="green">✓ Found ANTHROPIC_API_KEY in environment</Text>
+          <Text color="green">✓ Found {envApiKeyVar} in environment</Text>
         </Box>
       )}
 

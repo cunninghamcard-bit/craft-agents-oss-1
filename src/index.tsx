@@ -370,7 +370,7 @@ async function main() {
     const oauthToken = await getClaudeOAuthToken();
 
     if (!apiKey && !oauthToken) {
-      console.error('Error: No Anthropic credentials found. Set CRAFT_ANTHROPIC_API_KEY env var, or run `craft --setup`.');
+      console.error('Error: No Anthropic credentials found. Set ANTHROPIC_API_KEY or CRAFT_ANTHROPIC_API_KEY env var, or run `craft --setup`.');
       process.exit(1);
     }
 

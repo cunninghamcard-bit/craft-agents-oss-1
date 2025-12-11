@@ -198,7 +198,7 @@ Note: Using "::" as delimiter to avoid conflicts with "/" in URLs or paths.
 ```
 
 **Backend priority:**
-1. Environment variables - For server deployment (`CRAFT_ANTHROPIC_API_KEY`, `CRAFT_CLAUDE_OAUTH_TOKEN`)
+1. Environment variables - For server deployment (`CRAFT_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`, `CRAFT_CLAUDE_OAUTH_TOKEN`)
 2. Encrypted file - AES-256-GCM with machine-derived key
 
 **Usage:**
