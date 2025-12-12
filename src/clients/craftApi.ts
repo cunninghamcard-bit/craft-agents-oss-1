@@ -225,6 +225,17 @@ const stripeCheckoutResponseSchema = z.object({
 export type ProfileResponse = z.infer<typeof profileResponseSchema>;
 
 export function getTeamIdFromProfile(profile: ProfileResponse): string | null {
-    const team = profile.teams.find(t => t.isPrivate && t.role === 'admin');
-    return team?.id ?? null;
+    // First try: find a private team where user is admin
+    const privateTeam = profile.teams.find(t => t.isPrivate && t.role === 'admin');
+    if (privateTeam) {
+        return privateTeam.id;
+    }
+
+    // Fallback: find team via personal space (where spaceId === userId)
+    const personalSpace = profile.spaces.find(s => s.id === profile.userId);
+    if (personalSpace?.teamId) {
+        return personalSpace.teamId;
+    }
+
+    return null;
 }
