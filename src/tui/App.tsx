@@ -466,7 +466,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup, initialAgent, 
     try {
       const success = await updateApiKey(newApiKey);
       if (success) {
-        addLocalMessage('API key saved. AI usage mode set to API Key. Restart the app for changes to take effect.', 'system');
+        addLocalMessage('API key saved. Please exit (Ctrl+C) and restart the app for changes to take effect.', 'warning');
       } else {
         addLocalMessage('Failed to update API key.', 'error');
       }
@@ -485,7 +485,7 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup, initialAgent, 
       const manager = getCredentialManager();
       await manager.setClaudeOAuth(token);
       setAuthType('oauth_token');
-      addLocalMessage('Claude Max token saved. AI usage mode set to Claude Max. Restart the app for changes to take effect.', 'system');
+      addLocalMessage('Claude Max token saved. Please exit (Ctrl+C) and restart the app for changes to take effect.', 'warning');
     } catch {
       addLocalMessage('Failed to save Claude Max token.', 'error');
     }
@@ -518,8 +518,8 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup, initialAgent, 
         if (action.mode === 'craft_credits') {
           setAuthType('craft_credits');
           addLocalMessage(
-            'AI usage mode changed to: Craft Credits. Restart the app for changes to take effect.',
-            'system'
+            'Switched to Craft Credits. Please exit (Ctrl+C) and restart the app for changes to take effect.',
+            'warning'
           );
           return;
         }
@@ -531,8 +531,8 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup, initialAgent, 
           if (existingKey) {
             setAuthType('api_key');
             addLocalMessage(
-              'AI usage mode changed to: API Key. Restart the app for changes to take effect.',
-              'system'
+              'Switched to API Key. Please exit (Ctrl+C) and restart the app for changes to take effect.',
+              'warning'
             );
           } else {
             // Show API key entry modal
@@ -548,8 +548,8 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup, initialAgent, 
           if (existingToken) {
             setAuthType('oauth_token');
             addLocalMessage(
-              'AI usage mode changed to: Claude Max. Restart the app for changes to take effect.',
-              'system'
+              'Switched to Claude Max. Please exit (Ctrl+C) and restart the app for changes to take effect.',
+              'warning'
             );
           } else {
             // Show Claude Max auth modal

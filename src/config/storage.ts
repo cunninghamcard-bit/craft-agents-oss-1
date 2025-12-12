@@ -506,7 +506,7 @@ export function updateWorkspaceSessionId(workspaceId: string, sessionId: string 
 // Stored message format (simplified for persistence)
 export interface StoredMessage {
   id: string;
-  type: 'user' | 'assistant' | 'tool' | 'error' | 'status' | 'system' | 'info';
+  type: 'user' | 'assistant' | 'tool' | 'error' | 'status' | 'system' | 'info' | 'warning';
   content: string;
   timestamp?: number;
   toolName?: string;
