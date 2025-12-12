@@ -1,3 +1,5 @@
+import { debug } from "../tui/utils/debug";
+
 const VERSIONS_URL = 'https://agents.craft.do';
 
 export async function getLatestVersion(): Promise<string | null> {
@@ -6,11 +8,12 @@ export async function getLatestVersion(): Promise<string | null> {
       const data = await response.json();
       const version = (data as { version?: string }).version;
       if (typeof version !== 'string') {
-        console.error('Latest version is not a valid string');
+        debug('[manifest] Latest version is not a valid string');
+        return null;
       }
       return version ?? null;
     } catch (error) {
-      console.error('Failed to get latest version:', error);
+      debug(`[manifest] Failed to get latest version: ${error}`);
     }
     return null;
 }
@@ -18,12 +21,12 @@ export async function getLatestVersion(): Promise<string | null> {
 export async function getManifest(version: string): Promise<VersionManifest | null> {
     try {
         const url = `${VERSIONS_URL}/${version}/manifest.json`;
-        console.log(`Getting manifest for version: ${url}`);
+        debug(`[manifest] Getting manifest for version: ${url}`);
         const response = await fetch(url);
         const data = await response.json();
         return data as VersionManifest;
     } catch (error) {
-        console.error('Failed to get manifest:', error);
+        debug(`[manifest] Failed to get manifest: ${error}`);
     }
     return null;
 }

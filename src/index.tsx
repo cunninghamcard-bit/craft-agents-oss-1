@@ -309,7 +309,14 @@ async function main() {
   // Handle install command
   if (cli.input[0] === 'install') {
     const version = cli.input[1] || 'latest';
-    await install(version);
+    console.log(`Installing Craft Agent ${version === 'latest' ? '(latest)' : `v${version}`}...`);
+    const result = await install(version);
+    if (result.success) {
+      console.log('Installation complete. Restart to use the new version.');
+    } else {
+      console.error(`Installation failed: ${result.error}`);
+      process.exit(1);
+    }
     process.exit(0);
   }
 

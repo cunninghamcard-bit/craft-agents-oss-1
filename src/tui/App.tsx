@@ -31,6 +31,7 @@ import { resolveCommand, resolveAgentMention } from './utils/filtering.ts';
 import { debug, isDebugEnabled } from './utils/debug.ts';
 import type { CraftAgentConfig } from '../agent/craft-agent.ts';
 import { getCurrentVersion } from '../version/version.ts';
+import { checkAndUpdate } from '../version/install.ts';
 
 export interface AppProps {
   config: CraftAgentConfig;
@@ -233,6 +234,11 @@ export const App: React.FC<AppProps> = ({ config, onRequestSetup, initialAgent, 
     setStaticResetKey(k => k + 1);
   }, []);
   const { columns: terminalColumns } = useResize(handleTerminalResize);
+
+  // Check for updates and auto-update in the background when the app starts
+  useEffect(() => {
+    checkAndUpdate();
+  }, []);
 
 
   const addLocalMessage = useCallback((content: string, type: Message['type'] = 'system') => {
