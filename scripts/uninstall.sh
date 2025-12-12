@@ -52,24 +52,44 @@ else
     info "No ~/.craft-agent directory"
 fi
 
-# 4. Remove PATH from shell configs
+# 4. Remove SDK and support files from versioned directories
+VERSIONS_DIR="$HOME/.local/share/craft/versions"
+if [ -d "$VERSIONS_DIR" ]; then
+    rm -rf "$VERSIONS_DIR"
+    success "Removed $VERSIONS_DIR (SDK files)"
+else
+    info "No versioned SDK files"
+fi
+
+# 6. Remove PATH from shell configs (removes ALL .local/bin references)
 remove_path_from_config() {
     local config_file="$1"
     local config_name="$2"
 
     if [ -f "$config_file" ]; then
-        if grep -q "# Added by Craft Agent installer" "$config_file" 2>/dev/null; then
+        # Check for any .local/bin references
+        if grep -q "\.local/bin" "$config_file" 2>/dev/null; then
             # macOS sed requires '' after -i, Linux doesn't
             if [[ "$OSTYPE" == "darwin"* ]]; then
+                # Remove Craft installer lines
                 sed -i '' '/# Added by Craft Agent installer/d' "$config_file"
-                sed -i '' '/export PATH="\$HOME\/.local\/bin:\$PATH"/d' "$config_file"
+                # Remove any export PATH with .local/bin
+                sed -i '' '/export PATH=.*\.local\/bin/d' "$config_file"
+                # Remove any source/. of .local/bin/env
+                sed -i '' '/\. .*\.local\/bin\/env/d' "$config_file"
+                sed -i '' '/source .*\.local\/bin\/env/d' "$config_file"
+                # Remove fish_add_path for .local/bin
+                sed -i '' '/fish_add_path.*\.local\/bin/d' "$config_file"
             else
                 sed -i '/# Added by Craft Agent installer/d' "$config_file"
-                sed -i '/export PATH="\$HOME\/.local\/bin:\$PATH"/d' "$config_file"
+                sed -i '/export PATH=.*\.local\/bin/d' "$config_file"
+                sed -i '/\. .*\.local\/bin\/env/d' "$config_file"
+                sed -i '/source .*\.local\/bin\/env/d' "$config_file"
+                sed -i '/fish_add_path.*\.local\/bin/d' "$config_file"
             fi
-            success "Removed PATH from $config_name"
+            success "Removed .local/bin PATH entries from $config_name"
         else
-            info "No Craft PATH entry in $config_name"
+            info "No .local/bin entries in $config_name"
         fi
     fi
 }
@@ -79,7 +99,13 @@ remove_path_from_config "$HOME/.bashrc" ".bashrc"
 remove_path_from_config "$HOME/.bash_profile" ".bash_profile"
 remove_path_from_config "$HOME/.profile" ".profile"
 
-# 5. Clear command hash
+# Also remove the env file if it exists (created by some installers)
+if [ -f "$HOME/.local/bin/env" ]; then
+    rm -f "$HOME/.local/bin/env"
+    success "Removed ~/.local/bin/env"
+fi
+
+# 7. Clear command hash
 hash -r 2>/dev/null || true
 
 echo ""

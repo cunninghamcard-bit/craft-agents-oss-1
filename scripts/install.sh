@@ -192,10 +192,33 @@ mkdir -p "$INSTALL_DIR"
 mv "$binary_path" "$INSTALL_DIR/craft"
 chmod +x "$INSTALL_DIR/craft"
 
+success "Binary installed to $INSTALL_DIR/craft"
+
+# Install SDK and support files to versioned directory
+# The compiled binary expects these at ~/.local/share/craft/versions/{version}/
+VERSION_DIR="$HOME/.local/share/craft/versions/$version"
+info "Installing SDK files to $VERSION_DIR..."
+rm -rf "$VERSION_DIR"
+mkdir -p "$VERSION_DIR"
+
+# Copy claude-agent-sdk folder (required for subprocess spawning)
+if [ -d "$extract_dir/claude-agent-sdk" ]; then
+    cp -r "$extract_dir/claude-agent-sdk" "$VERSION_DIR/"
+    success "Installed claude-agent-sdk"
+else
+    warn "claude-agent-sdk not found in archive"
+fi
+
+# Copy cache-ttl-interceptor.ts (for extended prompt cache TTL)
+if [ -f "$extract_dir/cache-ttl-interceptor.ts" ]; then
+    cp "$extract_dir/cache-ttl-interceptor.ts" "$VERSION_DIR/"
+    success "Installed cache-ttl-interceptor.ts"
+else
+    warn "cache-ttl-interceptor.ts not found in archive"
+fi
+
 # Clean up
 rm -rf "$tarball_path" "$extract_dir"
-
-success "Binary installed to $INSTALL_DIR/craft"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PATH Configuration
@@ -385,11 +408,6 @@ echo ""
 success "Installation complete!"
 echo ""
 
-# Verify installation
-if command -v craft >/dev/null 2>&1; then
-    printf "%b\n" "  Run ${BOLD}craft${NC} to get started."
-elif [ -x "$INSTALL_DIR/craft" ]; then
-    printf "%b\n" "  Run ${BOLD}$INSTALL_DIR/craft${NC} to get started."
-    printf "%b\n" "  (After configuring PATH, you can just use ${BOLD}craft${NC})"
-fi
+# Simple instruction - new terminal will have PATH configured
+printf "%b\n" "  Open a ${BOLD}new terminal${NC} and run ${BOLD}craft${NC} to get started."
 echo ""
