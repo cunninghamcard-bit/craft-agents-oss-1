@@ -1,81 +1,58 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { TextInput } from './TextInput.tsx';
-import { AnimatedSpinner } from './Spinner.tsx';
-import { getExistingClaudeToken, isClaudeCliInstalled, runClaudeSetupToken } from '../../auth/claude-token.ts';
+import { execSync } from 'child_process';
 
 export interface ClaudeMaxAuthProps {
   onSubmit: (token: string) => void;
   onCancel: () => void;
 }
 
-type ViewMode = 'loading' | 'select' | 'manual' | 'running-setup';
+/**
+ * Try to detect existing Claude OAuth token from Claude CLI keychain.
+ * Claude CLI stores tokens in macOS Keychain with service "claude.ai".
+ * Returns null if not found or on non-macOS platforms.
+ */
+function detectClaudeToken(): string | null {
+  if (process.platform !== 'darwin') {
+    return null;
+  }
+
+  try {
+    // Claude CLI stores OAuth token in keychain with service "claude.ai"
+    const result = execSync(
+      'security find-generic-password -s "claude.ai" -a "oauth_token" -w 2>/dev/null',
+      { encoding: 'utf-8', timeout: 5000 }
+    );
+    const token = result.trim();
+    return token || null;
+  } catch {
+    // Token not found or security command failed
+    return null;
+  }
+}
+
+type ViewMode = 'loading' | 'detected' | 'manual';
 
 export const ClaudeMaxAuth: React.FC<ClaudeMaxAuthProps> = ({
   onSubmit,
   onCancel,
 }) => {
   const [mode, setMode] = useState<ViewMode>('loading');
-  const [existingToken, setExistingToken] = useState<string | null>(null);
-  const [hasClaudeCli, setHasClaudeCli] = useState(false);
+  const [detectedToken, setDetectedToken] = useState<string | null>(null);
   const [manualValue, setManualValue] = useState('');
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [setupStatus, setSetupStatus] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [selectedOption, setSelectedOption] = useState(0);
 
-  // Check for existing token and CLI on mount
+  // Try to detect existing token on mount
   useEffect(() => {
-    const token = getExistingClaudeToken();
-    const cliInstalled = isClaudeCliInstalled();
-
-    setExistingToken(token);
-    setHasClaudeCli(cliInstalled);
-    setMode('select');
-  }, []);
-
-  // Build options based on what's available
-  const options: { id: string; label: string; desc: string; action: () => void }[] = [];
-
-  if (existingToken) {
-    options.push({
-      id: 'existing',
-      label: 'Use existing token',
-      desc: `Found: ${existingToken.slice(0, 20)}...`,
-      action: () => onSubmit(existingToken),
-    });
-  }
-
-  if (hasClaudeCli) {
-    options.push({
-      id: 'setup',
-      label: 'Run claude setup-token',
-      desc: 'Opens browser to authenticate',
-      action: () => handleRunSetupToken(),
-    });
-  }
-
-  options.push({
-    id: 'manual',
-    label: 'Enter token manually',
-    desc: 'Paste a token you already have',
-    action: () => setMode('manual'),
-  });
-
-  const handleRunSetupToken = useCallback(async () => {
-    setMode('running-setup');
-    setError(null);
-
-    const result = await runClaudeSetupToken((status) => {
-      setSetupStatus(status);
-    });
-
-    if (result.success && result.token) {
-      onSubmit(result.token);
+    const token = detectClaudeToken();
+    if (token) {
+      setDetectedToken(token);
+      setMode('detected');
     } else {
-      setError(result.error || 'Failed to get token');
-      setMode('select');
+      setMode('manual');
     }
-  }, [onSubmit]);
+  }, []);
 
   const handleManualSubmit = useCallback((input: string) => {
     const trimmed = input.trim();
@@ -84,20 +61,24 @@ export const ClaudeMaxAuth: React.FC<ClaudeMaxAuthProps> = ({
     }
   }, [onSubmit]);
 
-  // Handle keyboard navigation in select mode
+  // Handle keyboard navigation in detected mode
   useInput((input, key) => {
-    if (mode !== 'select') return;
+    if (mode !== 'detected') return;
 
-    if (key.upArrow && selectedIndex > 0) {
-      setSelectedIndex(selectedIndex - 1);
-    } else if (key.downArrow && selectedIndex < options.length - 1) {
-      setSelectedIndex(selectedIndex + 1);
+    if (key.upArrow || key.downArrow) {
+      setSelectedOption(prev => (prev === 0 ? 1 : 0));
     } else if (key.return) {
-      options[selectedIndex]?.action();
+      if (selectedOption === 0 && detectedToken) {
+        // Use detected token
+        onSubmit(detectedToken);
+      } else {
+        // Switch to manual entry
+        setMode('manual');
+      }
     } else if (key.escape) {
       onCancel();
     }
-  }, { isActive: mode === 'select' });
+  });
 
   if (mode === 'loading') {
     return (
@@ -107,101 +88,78 @@ export const ClaudeMaxAuth: React.FC<ClaudeMaxAuthProps> = ({
     );
   }
 
-  if (mode === 'running-setup') {
-    return (
-      <Box flexDirection="column" paddingX={1}>
-        <Box marginBottom={1}>
-          <Text bold>Claude Max Authentication</Text>
-        </Box>
-        <Box marginY={1}>
-          <AnimatedSpinner />
-          <Text> {setupStatus || 'Opening browser...'}</Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text dimColor>Complete authentication in your browser</Text>
-        </Box>
-      </Box>
-    );
-  }
+  if (mode === 'detected') {
+    const maskedToken = detectedToken
+      ? `${detectedToken.substring(0, 8)}...${detectedToken.substring(detectedToken.length - 4)}`
+      : '';
 
-  if (mode === 'manual') {
     return (
       <Box flexDirection="column" paddingX={1}>
         <Box marginBottom={1}>
           <Text bold>Claude Max Authentication</Text>
         </Box>
 
-        <Text dimColor>Paste your Claude Max OAuth token:</Text>
+        <Text>Found existing Claude CLI token:</Text>
+        <Text dimColor>{maskedToken}</Text>
 
-        <Box marginY={1}>
-          <Text color="cyan">› </Text>
-          <TextInput
-            value={manualValue}
-            onChange={setManualValue}
-            onSubmit={handleManualSubmit}
-            onCancel={() => {
-              setMode('select');
-              setManualValue('');
-            }}
-            placeholder="sk-ant-oat01-..."
-            mask="•"
-            maskReveal={{ first: 12 }}
-          />
+        <Box marginTop={1} flexDirection="column">
+          <Box>
+            <Text
+              color={selectedOption === 0 ? 'blue' : undefined}
+              bold={selectedOption === 0}
+              inverse={selectedOption === 0}
+            >
+              {' '}Use this token{' '}
+            </Text>
+          </Box>
+          <Box>
+            <Text
+              color={selectedOption === 1 ? 'blue' : undefined}
+              bold={selectedOption === 1}
+              inverse={selectedOption === 1}
+            >
+              {' '}Enter different token{' '}
+            </Text>
+          </Box>
         </Box>
 
         <Box marginTop={1}>
-          <Text dimColor>↵ confirm • Esc back</Text>
+          <Text dimColor>
+            ↑↓ select | Enter confirm | Esc cancel
+          </Text>
         </Box>
       </Box>
     );
   }
 
-  // Select mode
+  // Manual entry mode
   return (
     <Box flexDirection="column" paddingX={1}>
       <Box marginBottom={1}>
         <Text bold>Claude Max Authentication</Text>
       </Box>
 
-      <Text dimColor>Choose how to provide your Claude Max token:</Text>
+      <Text dimColor>Enter your Claude Max OAuth token.</Text>
+      <Text dimColor>Get this from claude.ai → Settings → Developer.</Text>
 
-      {error && (
-        <Box marginTop={1}>
-          <Text color="red">{error}</Text>
-        </Box>
-      )}
-
-      <Box flexDirection="column" marginY={1}>
-        {options.map((opt, i) => (
-          <Box key={opt.id} flexDirection="column">
-            <Box>
-              <Text color={selectedIndex === i ? 'cyan' : undefined}>
-                {selectedIndex === i ? '› ' : '  '}
-              </Text>
-              <Text color={selectedIndex === i ? 'cyan' : 'white'} bold={selectedIndex === i}>
-                {opt.label}
-              </Text>
-            </Box>
-            {selectedIndex === i && (
-              <Box marginLeft={4}>
-                <Text dimColor>{opt.desc}</Text>
-              </Box>
-            )}
-          </Box>
-        ))}
+      <Box marginTop={1}>
+        <Text>Token: </Text>
+        <TextInput
+          value={manualValue}
+          onChange={setManualValue}
+          onSubmit={handleManualSubmit}
+          onCancel={onCancel}
+          placeholder="sk-ant-..."
+          mask="•"
+          maskReveal={{ last: 4 }}
+        />
       </Box>
 
       <Box marginTop={1}>
-        <Text dimColor>↑↓ navigate • ↵ select • Esc cancel</Text>
+        <Text dimColor>
+          Enter confirm | Esc cancel | ←→ navigate | Ctrl+U clear
+        </Text>
       </Box>
-
-      {!hasClaudeCli && (
-        <Box marginTop={1}>
-          <Text color="yellow" dimColor>
-            Note: Claude CLI not found for automatic setup.
-          </Text>
-        </Box>
-      )}
     </Box>
   );
 };

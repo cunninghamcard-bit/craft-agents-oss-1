@@ -8,7 +8,7 @@ import { renderMarkdown } from '../utils/markdown.ts';
 
 export interface Message {
   id: string;
-  type: 'user' | 'assistant' | 'tool' | 'error' | 'status' | 'system' | 'info' | 'warning';
+  type: 'user' | 'assistant' | 'tool' | 'error' | 'status' | 'system' | 'info';
   content: string;
   toolName?: string;
   toolInput?: Record<string, unknown>;
@@ -192,9 +192,6 @@ const MessageItem: React.FC<MessageItemProps> = memo(({ message, compact = true 
     case 'info':
       return <InfoMessage content={message.content} />;
 
-    case 'warning':
-      return <WarningMessage content={message.content} />;
-
     default:
       return null;
   }
@@ -261,16 +258,6 @@ const InfoMessage: React.FC<{ content: string }> = memo(({ content }) => {
     <Box marginTop={1}>
       <Text color="cyan">ℹ </Text>
       <Text>{content}</Text>
-    </Box>
-  );
-});
-
-// Warning message (requires user action - yellow with icon)
-const WarningMessage: React.FC<{ content: string }> = memo(({ content }) => {
-  return (
-    <Box marginTop={1}>
-      <Text color="yellow" bold>⚠ </Text>
-      <Text color="yellow">{content}</Text>
     </Box>
   );
 });
