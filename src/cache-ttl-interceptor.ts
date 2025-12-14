@@ -80,10 +80,7 @@ function addCacheTtl(obj: unknown): unknown {
 }
 
 function isAnthropicMessagesUrl(url: string): boolean {
-  // Check for both direct Anthropic API and Craft AI Gateway
-  const isAnthropicDirect = url.includes('api.anthropic.com') && url.includes('/messages');
-  const isCraftGateway = url.includes('api.craft.do/ai-gateway/anthropic') && url.includes('/messages');
-  return isAnthropicDirect || isCraftGateway;
+  return url.includes('api.anthropic.com') && url.includes('/messages');
 }
 
 const originalFetch = globalThis.fetch.bind(globalThis);
@@ -141,7 +138,6 @@ async function logResponse(response: Response, url: string, startTime: number): 
   if (!DEBUG) return response;
 
   const duration = Date.now() - startTime;
-
   debugLog(`\n← RESPONSE ${response.status} ${response.statusText} (${duration}ms)`);
   debugLog(`  URL: ${url}`);
 
