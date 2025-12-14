@@ -118,11 +118,39 @@ const ERROR_DEFINITIONS: Record<ErrorCode, Omit<AgentError, 'code' | 'originalEr
 };
 
 /**
+ * Extract all error messages from an error object, including nested causes.
+ */
+function extractErrorMessages(error: unknown): string {
+  const messages: string[] = [];
+
+  if (error instanceof Error) {
+    messages.push(error.message);
+
+    // Check for nested cause (ES2022 Error.cause)
+    if ('cause' in error && error.cause) {
+      messages.push(extractErrorMessages(error.cause));
+    }
+
+    // Check for stdout/stderr (common in subprocess errors)
+    const anyError = error as unknown as Record<string, unknown>;
+    if (typeof anyError.stdout === 'string') messages.push(anyError.stdout);
+    if (typeof anyError.stderr === 'string') messages.push(anyError.stderr);
+    if (typeof anyError.output === 'string') messages.push(anyError.output);
+  } else {
+    messages.push(String(error));
+  }
+
+  return messages.join(' ');
+}
+
+/**
  * Parse an error and return a typed AgentError with user-friendly info
  */
 export function parseError(error: unknown): AgentError {
+  // Extract all error messages including nested causes and subprocess output
+  const fullErrorText = extractErrorMessages(error);
   const errorMessage = error instanceof Error ? error.message : String(error);
-  const lowerMessage = errorMessage.toLowerCase();
+  const lowerMessage = fullErrorText.toLowerCase();
 
   // Detect error type from message/status
   let code: ErrorCode = 'unknown_error';
@@ -145,6 +173,14 @@ export function parseError(error: unknown): AgentError {
     code = 'network_error';
   } else if (lowerMessage.includes('mcp') && (lowerMessage.includes('auth') || lowerMessage.includes('401'))) {
     code = 'mcp_auth_required';
+  } else if (lowerMessage.includes('exited with code') || lowerMessage.includes('process exited')) {
+    // SDK subprocess crashed - likely auth/setup issue
+    // Check if the error contains more specific info
+    if (lowerMessage.includes('api') || lowerMessage.includes('key') || lowerMessage.includes('credential')) {
+      code = 'invalid_api_key';
+    } else {
+      code = 'service_error';
+    }
   }
 
   const definition = ERROR_DEFINITIONS[code];
