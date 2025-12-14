@@ -10,7 +10,7 @@ import { getDefaultOptions } from '../agent/options.ts';
 import { CraftMcpClient } from './client.js';
 import { debug } from '@/tui/utils/debug.js';
 import { DEFAULT_MODEL } from '../config/models.ts';
-import { parseError, parseSDKErrorText, type AgentError } from '../agent/errors.ts';
+import { parseError, type AgentError } from '../agent/errors.ts';
 
 export interface InvalidProperty {
   toolName: string;
