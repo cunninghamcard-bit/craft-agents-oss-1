@@ -409,5 +409,3 @@ debugLog(
       ? 'disabled (5m for all models)'
       : 'auto (1h for Opus, 5m for others)'
 );
-
-// Named exports (LastApiError, getLastApiError, clearLastApiError) are above
