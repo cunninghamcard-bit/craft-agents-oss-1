@@ -10,7 +10,7 @@
  * - false: Force 5m for all models
  */
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,6 +21,78 @@ type HeadersInitType = Headers | Record<string, string> | string[][];
 const DEBUG = process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1';
 const LOG_FILE = '/tmp/craft-debug.log';
 const CONFIG_FILE = join(homedir(), '.craft-agent', 'config.json');
+
+/**
+ * Store the last API error for the error handler to access.
+ * This allows us to capture the actual HTTP status code (e.g., 402 Payment Required)
+ * before the SDK wraps it in a generic error message.
+ *
+ * Uses file-based storage to reliably share across process boundaries
+ * (the SDK may run in a subprocess with separate memory space).
+ */
+export interface LastApiError {
+  status: number;
+  statusText: string;
+  message: string;
+  timestamp: number;
+}
+
+// File-based storage for cross-process sharing
+const ERROR_FILE = join(homedir(), '.craft-agent', 'api-error.json');
+const MAX_ERROR_AGE_MS = 5 * 60 * 1000; // 5 minutes
+
+function getStoredError(): LastApiError | null {
+  try {
+    if (!existsSync(ERROR_FILE)) return null;
+    const content = readFileSync(ERROR_FILE, 'utf-8');
+    const error = JSON.parse(content) as LastApiError;
+    // Pop: delete after reading
+    try {
+      unlinkSync(ERROR_FILE);
+      debugLog(`[getStoredError] Popped error file`);
+    } catch {
+      // Ignore delete errors
+    }
+    return error;
+  } catch {
+    return null;
+  }
+}
+
+function setStoredError(error: LastApiError | null): void {
+  try {
+    if (error) {
+      writeFileSync(ERROR_FILE, JSON.stringify(error));
+      debugLog(`[setStoredError] Wrote error to file: ${error.status} ${error.message}`);
+    } else {
+      // Clear the file
+      try {
+        unlinkSync(ERROR_FILE);
+      } catch {
+        // File might not exist
+      }
+    }
+  } catch (e) {
+    debugLog(`[setStoredError] Failed to write: ${e}`);
+  }
+}
+
+export function getLastApiError(): LastApiError | null {
+  const error = getStoredError();
+  if (error) {
+    const age = Date.now() - error.timestamp;
+    if (age < MAX_ERROR_AGE_MS) {
+      debugLog(`[getLastApiError] Found error (age ${age}ms): ${error.status}`);
+      return error;
+    }
+    debugLog(`[getLastApiError] Error too old (${age}ms > ${MAX_ERROR_AGE_MS}ms)`);
+  }
+  return null;
+}
+
+export function clearLastApiError(): void {
+  setStoredError(null);
+}
 
 /**
  * Check if extended cache TTL is explicitly configured.
@@ -79,8 +151,20 @@ function addCacheTtl(obj: unknown): unknown {
   return result;
 }
 
+/**
+ * Check if URL is Anthropic API (for cache TTL modification)
+ */
 function isAnthropicMessagesUrl(url: string): boolean {
   return url.includes('api.anthropic.com') && url.includes('/messages');
+}
+
+/**
+ * Check if URL should have API errors captured (includes Craft Gateway)
+ */
+function shouldCaptureApiErrors(url: string): boolean {
+  const isAnthropicDirect = url.includes('api.anthropic.com') && url.includes('/messages');
+  const isCraftGateway = url.includes('api.craft.do/ai-gateway/anthropic') && url.includes('/messages');
+  return isAnthropicDirect || isCraftGateway;
 }
 
 const originalFetch = globalThis.fetch.bind(globalThis);
@@ -132,12 +216,55 @@ function toCurl(url: string, init?: RequestInit): string {
 }
 
 /**
- * Clone response and log its body (handles streaming responses)
+ * Clone response and log its body (handles streaming responses).
+ * Also captures API errors (4xx/5xx) for the error handler.
  */
 async function logResponse(response: Response, url: string, startTime: number): Promise<Response> {
+  const duration = Date.now() - startTime;
+
+  // Capture API errors (runs regardless of DEBUG mode)
+  if (shouldCaptureApiErrors(url) && response.status >= 400) {
+    debugLog(`  [Attempting to capture error for ${response.status} response]`);
+    // Clone to read body without consuming the original
+    const errorClone = response.clone();
+    try {
+      const errorText = await errorClone.text();
+      let errorMessage = response.statusText;
+
+      // Try to parse JSON error response
+      try {
+        const errorJson = JSON.parse(errorText);
+        if (errorJson.error?.message) {
+          errorMessage = errorJson.error.message;
+        } else if (errorJson.message) {
+          errorMessage = errorJson.message;
+        }
+      } catch {
+        // Use raw text if not JSON
+        if (errorText) errorMessage = errorText;
+      }
+
+      setStoredError({
+        status: response.status,
+        statusText: response.statusText,
+        message: errorMessage,
+        timestamp: Date.now(),
+      });
+      debugLog(`  [Captured API error: ${response.status} ${errorMessage}]`);
+    } catch (e) {
+      // Still capture basic info even if body read fails
+      debugLog(`  [Error reading body, capturing basic info: ${e}]`);
+      setStoredError({
+        status: response.status,
+        statusText: response.statusText,
+        message: response.statusText,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
   if (!DEBUG) return response;
 
-  const duration = Date.now() - startTime;
   debugLog(`\n← RESPONSE ${response.status} ${response.statusText} (${duration}ms)`);
   debugLog(`  URL: ${url}`);
 
@@ -283,4 +410,4 @@ debugLog(
       : 'auto (1h for Opus, 5m for others)'
 );
 
-export {};
+// Named exports (LastApiError, getLastApiError, clearLastApiError) are above
