@@ -73,10 +73,15 @@ export async function writeStreamingOutput(
 
   // Safety check: if we never received a complete event, something went wrong
   if (!receivedComplete) {
-    console.error(`{"type":"error","message":"No complete event received - generator ended unexpectedly"}`);
+    const errorMsg = 'No complete event received - generator ended unexpectedly';
+    if (format === 'text') {
+      console.error(`Error: ${errorMsg}`);
+    } else {
+      console.error(`{"type":"error","message":"${errorMsg}"}`);
+    }
     if (result.success) {
       // This shouldn't happen, but just in case
-      result = { success: false, error: { code: 'execution_error', message: 'No complete event received' } };
+      result = { success: false, error: { code: 'execution_error', message: errorMsg } };
     }
   }
 

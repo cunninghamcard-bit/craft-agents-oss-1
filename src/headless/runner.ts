@@ -2,7 +2,7 @@ import { CraftAgent, type CraftAgentConfig } from '../agent/craft-agent.ts';
 import { CraftMcpClient } from '../mcp/client.ts';
 import { SubAgentManager } from '../agents/manager.ts';
 import type { SubAgentDefinition } from '../agents/types.ts';
-import { getWorkspaceAccessTokenAsync, listSessions } from '../config/storage.ts';
+import { getWorkspaceAccessTokenAsync, listSessions, loadSession } from '../config/storage.ts';
 import { debug } from '../tui/utils/debug.ts';
 import { DEFAULT_MODEL } from '../config/models.ts';
 import type {
@@ -354,9 +354,15 @@ export class HeadlessRunner {
     // Set session ID based on flags
     // Default: fresh session (don't set any - SDK will create new)
     if (this.config.sessionId) {
-      // --session: explicit session for external workflow management
-      debug('[HeadlessRunner] Using explicit session ID:', this.config.sessionId);
-      this.agent.setSessionId(this.config.sessionId);
+      // --session: load session and use its SDK session ID
+      const session = loadSession(this.config.sessionId);
+      if (session?.sdkSessionId) {
+        debug('[HeadlessRunner] Resuming session:', this.config.sessionId, 'SDK session:', session.sdkSessionId);
+        this.agent.setSessionId(session.sdkSessionId);
+      } else {
+        debug('[HeadlessRunner] Session not found or has no SDK session ID:', this.config.sessionId);
+        // Fall through to fresh session
+      }
     } else if (this.config.sessionResume) {
       // --session-resume: continue the last session for this workspace
       const sessions = listSessions(this.config.workspace.id);
