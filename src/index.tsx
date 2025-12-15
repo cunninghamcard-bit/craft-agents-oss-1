@@ -81,12 +81,11 @@ const cli = meow(
     --workspace, -w <name>  Select workspace by name, ID, or MCP server URL (http/https)
     --model, -m <model>     Claude model to use (default: ${DEFAULT_MODEL})
     --debug                 Enable debug logging to /tmp/craft-debug.log
-    --session <id>          resume (or create) a specific session by ID
-    --new                   Start a new session (default in headless mode, opt in for interactive mode)
-    --session-resume        Resume the last session (default in interactive mode, opt in for headless mode)
+    --session <id>          resume (or create) a specific session by ID (only within given workspace, if provided)
     
   Interactive Mode Options
-    --list-sessions      List available sessions and exit
+    --new                Start a new session (instead of resuming)
+    --list-sessions      List available sessions and exit (sessions of the specified workspace, or if not specified, of the last used workspace)
     --token, -t          Bearer token for MCP authentication (overrides saved config)
     --help               Show this help message
     --version            Show version number
@@ -95,6 +94,7 @@ const cli = meow(
     --print, -p <query>     Execute prompt and exit (non-interactive)
     --output-format <fmt>   Output format: text, json, stream-json (default: text)
     --permission-policy     Permission handling: deny-all, allow-safe, allow-all (default: deny-all)
+    --session-resume        Resume the last session (in the given workspace, if provided) (default: fresh session)
 
   First Run
     On first run, you'll be guided through an interactive setup to configure
