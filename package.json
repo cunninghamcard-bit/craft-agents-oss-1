@@ -5,21 +5,26 @@
   "module": "src/index.tsx",
   "type": "module",
   "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
   "bin": {
-    "craft": "./src/index.tsx"
+    "craft": "./apps/tui/src/index.tsx"
   },
   "scripts": {
-    "start": "bun run src/index.tsx",
-    "dev": "bun --watch run src/index.tsx",
+    "start": "bun run apps/tui/src/index.tsx",
+    "dev": "bun --watch run apps/tui/src/index.tsx",
     "typecheck": "tsc --noEmit",
+    "typecheck:all": "bun run typecheck && cd packages/core && bun run tsc --noEmit && cd ../session-manager && bun run tsc --noEmit",
     "link": "bun link",
-    "electron:build:main": "esbuild electron-app/src/main/index.ts --bundle --platform=node --format=cjs --outfile=electron-app/dist/main.js --external:electron",
-    "electron:build:preload": "esbuild electron-app/src/preload/index.ts --bundle --platform=node --format=cjs --outfile=electron-app/dist/preload.js --external:electron",
-    "electron:build:renderer": "vite build --config electron-app/vite.config.ts",
-    "electron:build:resources": "cp -r electron-app/resources electron-app/dist/",
+    "electron:build:main": "esbuild apps/electron/src/main/index.ts --bundle --platform=node --format=cjs --outfile=apps/electron/dist/main.cjs --external:electron",
+    "electron:build:preload": "esbuild apps/electron/src/preload/index.ts --bundle --platform=node --format=cjs --outfile=apps/electron/dist/preload.cjs --external:electron",
+    "electron:build:renderer": "vite build --config apps/electron/vite.config.ts",
+    "electron:build:resources": "cp -r apps/electron/resources apps/electron/dist/",
     "electron:build": "bun run electron:build:main && bun run electron:build:preload && bun run electron:build:renderer && bun run electron:build:resources",
-    "electron:start": "bun run electron:build && electron electron-app",
-    "electron:dev": "vite dev --config electron-app/vite.config.ts"
+    "electron:start": "bun run electron:build && electron apps/electron",
+    "electron:dev": "vite dev --config apps/electron/vite.config.ts"
   },
   "devDependencies": {
     "@aws-sdk/client-s3": "^3.947.0",

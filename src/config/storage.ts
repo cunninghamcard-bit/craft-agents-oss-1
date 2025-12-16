@@ -722,6 +722,10 @@ export interface Session {
   name?: string;                 // Optional user-defined name
   createdAt: number;
   lastUsedAt: number;
+  // Inbox/Archive/Agent features
+  agentId?: string;              // Assigned agent ID (for filtering)
+  agentName?: string;            // Cached agent name for display
+  isArchived?: boolean;          // Whether this session is archived
 }
 
 // Stored session with conversation data
@@ -844,6 +848,10 @@ export interface SessionMetadata {
   messageCount: number;
   preview?: string;  // Preview of first user message
   sdkSessionId?: string;
+  // Inbox/Archive/Agent features
+  agentId?: string;        // Assigned agent ID (for filtering)
+  agentName?: string;      // Cached agent name for display (e.g., "work/coder")
+  isArchived?: boolean;    // Whether this session is archived
 }
 
 // List sessions, optionally filtered by workspace
@@ -872,6 +880,9 @@ export function listSessions(workspaceId?: string): SessionMetadata[] {
           messageCount: session.messages?.length ?? 0,
           preview,
           sdkSessionId: session.sdkSessionId,
+          agentId: session.agentId,
+          agentName: session.agentName,
+          isArchived: session.isArchived,
         });
       }
     } catch {
@@ -944,6 +955,51 @@ export function updateSessionSdkId(sessionId: string, sdkSessionId: string): voi
     session.sdkSessionId = sdkSessionId;
     saveSession(session);
   }
+}
+
+// Update session metadata (agentId, agentName, isArchived, name)
+export function updateSessionMetadata(
+  sessionId: string,
+  updates: Partial<Pick<Session, 'agentId' | 'agentName' | 'isArchived' | 'name'>>
+): void {
+  const session = loadSession(sessionId);
+  if (session) {
+    if (updates.agentId !== undefined) session.agentId = updates.agentId;
+    if (updates.agentName !== undefined) session.agentName = updates.agentName;
+    if (updates.isArchived !== undefined) session.isArchived = updates.isArchived;
+    if (updates.name !== undefined) session.name = updates.name;
+    saveSession(session);
+  }
+}
+
+// Archive a session
+export function archiveSession(sessionId: string): void {
+  updateSessionMetadata(sessionId, { isArchived: true });
+}
+
+// Unarchive a session
+export function unarchiveSession(sessionId: string): void {
+  updateSessionMetadata(sessionId, { isArchived: false });
+}
+
+// Assign agent to a session
+export function assignAgentToSession(sessionId: string, agentId: string, agentName?: string): void {
+  updateSessionMetadata(sessionId, { agentId, agentName });
+}
+
+// List archived sessions for a workspace
+export function listArchivedSessions(workspaceId?: string): SessionMetadata[] {
+  return listSessions(workspaceId).filter(s => s.isArchived === true);
+}
+
+// List non-archived sessions (inbox) for a workspace
+export function listInboxSessions(workspaceId?: string): SessionMetadata[] {
+  return listSessions(workspaceId).filter(s => !s.isArchived);
+}
+
+// List sessions by agent for a workspace
+export function listSessionsByAgent(workspaceId: string, agentId: string): SessionMetadata[] {
+  return listSessions(workspaceId).filter(s => s.agentId === agentId);
 }
 
 // Clean up old workspace-based conversations (replaced by session-based storage)

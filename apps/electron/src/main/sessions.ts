@@ -1,0 +1,339 @@
+import { BrowserWindow, app } from 'electron'
+import { join } from 'path'
+import { CraftAgent, type AgentEvent } from '../../../../src/agent/craft-agent'
+import { loadStoredConfig, getWorkspaces, getWorkspaceByNameOrId, type Workspace } from '../../../../src/config/storage'
+import { getAuthState } from '../../../../src/auth/state'
+import { setAnthropicOptionsEnv, setPathToClaudeCodeExecutable } from '../../../../src/agent/options'
+import { getCraftToken } from '../../../../src/auth/craft-token'
+import { type Session, type Message, type SessionEvent, IPC_CHANNELS, generateMessageId } from '../shared/types'
+
+interface ManagedSession {
+  id: string
+  workspace: Workspace
+  agent: CraftAgent
+  messages: Message[]
+  isProcessing: boolean
+  lastMessageAt: number
+  streamingText: string
+  abortController?: AbortController
+  // Track tool_use_id -> toolName mapping (since tool_result only has toolUseId)
+  pendingTools: Map<string, string>
+  // Inbox/Archive features
+  agentId?: string
+  agentName?: string
+  isArchived: boolean
+}
+
+export class SessionManager {
+  private sessions: Map<string, ManagedSession> = new Map()
+  private mainWindow: BrowserWindow | null = null
+
+  setMainWindow(window: BrowserWindow): void {
+    this.mainWindow = window
+  }
+
+  async initialize(): Promise<void> {
+    // Set path to Claude Code executable (cli.js from SDK)
+    // This is critical because the bundled SDK can't auto-detect the path
+    const cliPath = join(process.cwd(), 'node_modules', '@anthropic-ai', 'claude-agent-sdk', 'cli.js')
+    console.log('[SessionManager] Setting pathToClaudeCodeExecutable:', cliPath)
+    setPathToClaudeCodeExecutable(cliPath)
+
+    // Set up authentication environment variables (critical for SDK to work)
+    try {
+      const authState = await getAuthState()
+      const { billing } = authState
+
+      console.log('[SessionManager] Initializing with billing type:', billing.type)
+
+      if (billing.type === 'craft_credits') {
+        const token = await getCraftToken()
+        setAnthropicOptionsEnv({
+          USE_CRAFT_AI_GATEWAY: 'true',
+          CRAFT_API_GATEWAY_TOKEN: token,
+        })
+        // Set placeholder API key so SDK starts
+        process.env.ANTHROPIC_API_KEY = 'craft-credits-placeholder'
+        console.log('[SessionManager] Set Craft API Gateway Token')
+      } else if (billing.type === 'oauth_token' && billing.claudeOAuthToken) {
+        // Use Claude Max subscription via OAuth token
+        process.env.CLAUDE_CODE_OAUTH_TOKEN = billing.claudeOAuthToken
+        delete process.env.ANTHROPIC_API_KEY
+        delete process.env.USE_CRAFT_AI_GATEWAY
+        delete process.env.CRAFT_API_GATEWAY_TOKEN
+        console.log('[SessionManager] Set Claude Max OAuth Token')
+      } else if (billing.apiKey) {
+        // Use API key (pay-as-you-go)
+        process.env.ANTHROPIC_API_KEY = billing.apiKey
+        delete process.env.CLAUDE_CODE_OAUTH_TOKEN
+        delete process.env.USE_CRAFT_AI_GATEWAY
+        delete process.env.CRAFT_API_GATEWAY_TOKEN
+        console.log('[SessionManager] Set Anthropic API Key')
+      } else {
+        console.error('[SessionManager] No authentication configured!')
+      }
+    } catch (error) {
+      console.error('[SessionManager] Failed to initialize auth:', error)
+    }
+  }
+
+  getWorkspaces(): Workspace[] {
+    return getWorkspaces()
+  }
+
+  getSessions(): Session[] {
+    return Array.from(this.sessions.values())
+      .map(m => ({
+        id: m.id,
+        workspaceId: m.workspace.id,
+        workspaceName: m.workspace.name,
+        lastMessageAt: m.lastMessageAt,
+        messages: m.messages,
+        isProcessing: m.isProcessing,
+        agentId: m.agentId,
+        agentName: m.agentName,
+        isArchived: m.isArchived
+      }))
+      .sort((a, b) => b.lastMessageAt - a.lastMessageAt)
+  }
+
+  async createSession(workspaceId: string, agentId?: string, agentName?: string): Promise<Session> {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} not found`)
+    }
+
+    const sessionId = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const config = loadStoredConfig()
+
+    // CraftAgent expects the full workspace object, not just the ID
+    const agent = new CraftAgent({
+      workspace,
+      model: config?.model
+    })
+
+    const managed: ManagedSession = {
+      id: sessionId,
+      workspace,
+      agent,
+      messages: [],
+      isProcessing: false,
+      lastMessageAt: Date.now(),
+      streamingText: '',
+      pendingTools: new Map(),
+      agentId,
+      agentName,
+      isArchived: false
+    }
+
+    this.sessions.set(sessionId, managed)
+
+    return {
+      id: sessionId,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      lastMessageAt: managed.lastMessageAt,
+      messages: [],
+      isProcessing: false,
+      agentId,
+      agentName,
+      isArchived: false
+    }
+  }
+
+  async archiveSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.isArchived = true
+    }
+  }
+
+  async unarchiveSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.isArchived = false
+    }
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      // Cancel any ongoing processing
+      if (managed.abortController) {
+        managed.abortController.abort()
+      }
+      this.sessions.delete(sessionId)
+    }
+  }
+
+  async sendMessage(sessionId: string, message: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      throw new Error(`Session ${sessionId} not found`)
+    }
+
+    if (managed.isProcessing) {
+      throw new Error('Session is already processing')
+    }
+
+    // Add user message
+    const userMessage: Message = {
+      id: generateMessageId(),
+      role: 'user',
+      content: message,
+      timestamp: Date.now()
+    }
+    managed.messages.push(userMessage)
+    managed.lastMessageAt = Date.now()
+    managed.isProcessing = true
+    managed.streamingText = ''
+    managed.abortController = new AbortController()
+
+    try {
+      console.log('[SessionManager] Starting chat for session:', sessionId)
+      console.log('[SessionManager] Workspace:', JSON.stringify(managed.workspace, null, 2))
+      console.log('[SessionManager] Message:', message)
+      console.log('[SessionManager] Agent model:', managed.agent.getModel())
+      console.log('[SessionManager] process.cwd():', process.cwd())
+
+      // Process the message through the agent
+      console.log('[SessionManager] Calling agent.chat()...')
+      const chatIterator = managed.agent.chat(message)
+      console.log('[SessionManager] Got chat iterator, starting iteration...')
+
+      for await (const event of chatIterator) {
+        console.log('[SessionManager] Got event:', event.type)
+        if (managed.abortController?.signal.aborted) {
+          console.log('[SessionManager] Aborted')
+          break
+        }
+        this.processEvent(managed, event)
+      }
+      console.log('[SessionManager] Chat completed')
+    } catch (error) {
+      console.error('[SessionManager] Error in chat:', error)
+      console.error('[SessionManager] Error message:', error instanceof Error ? error.message : String(error))
+      console.error('[SessionManager] Error stack:', error instanceof Error ? error.stack : 'No stack')
+      this.sendEvent({
+        type: 'error',
+        sessionId,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      })
+    } finally {
+      managed.isProcessing = false
+      managed.abortController = undefined
+      this.sendEvent({ type: 'complete', sessionId })
+    }
+  }
+
+  async cancelProcessing(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed?.abortController) {
+      managed.abortController.abort()
+    }
+  }
+
+  private processEvent(managed: ManagedSession, event: AgentEvent): void {
+    const sessionId = managed.id
+
+    switch (event.type) {
+      case 'text_delta':
+        // AgentEvent uses `text` not `delta`
+        managed.streamingText += event.text
+        this.sendEvent({ type: 'text_delta', sessionId, delta: event.text })
+        break
+
+      case 'text_complete':
+        const assistantMessage: Message = {
+          id: generateMessageId(),
+          role: 'assistant',
+          content: event.text,
+          timestamp: Date.now()
+        }
+        managed.messages.push(assistantMessage)
+        managed.streamingText = ''
+        this.sendEvent({ type: 'text_complete', sessionId, text: event.text })
+        break
+
+      case 'tool_start':
+        // Track tool_use_id -> toolName mapping for later use in tool_result
+        managed.pendingTools.set(event.toolUseId, event.toolName)
+        this.sendEvent({
+          type: 'tool_start',
+          sessionId,
+          toolName: event.toolName,
+          toolUseId: event.toolUseId,
+          toolInput: event.input
+        })
+        break
+
+      case 'tool_result':
+        // AgentEvent tool_result only has toolUseId, look up the toolName
+        const toolName = managed.pendingTools.get(event.toolUseId) || 'unknown'
+        managed.pendingTools.delete(event.toolUseId)
+
+        const toolMessage: Message = {
+          id: generateMessageId(),
+          role: 'tool',
+          content: event.result || '',
+          timestamp: Date.now(),
+          toolName: toolName,
+          toolUseId: event.toolUseId,
+          toolResult: event.result
+        }
+        managed.messages.push(toolMessage)
+        this.sendEvent({
+          type: 'tool_result',
+          sessionId,
+          toolUseId: event.toolUseId,
+          toolName: toolName,
+          result: event.result || ''
+        })
+        break
+
+      case 'status':
+        this.sendEvent({ type: 'status', sessionId, message: event.message })
+        break
+
+      case 'error':
+        // AgentEvent uses `message` not `error`
+        const errorMessage: Message = {
+          id: generateMessageId(),
+          role: 'error',
+          content: event.message,
+          timestamp: Date.now()
+        }
+        managed.messages.push(errorMessage)
+        this.sendEvent({ type: 'error', sessionId, error: event.message })
+        break
+
+      case 'typed_error':
+        // Typed errors have structured information - send both formats for compatibility
+        const typedErrorMessage: Message = {
+          id: generateMessageId(),
+          role: 'error',
+          content: event.error.message || event.error.title || 'An error occurred',
+          timestamp: Date.now()
+        }
+        managed.messages.push(typedErrorMessage)
+        // Send typed_error event with full structure for renderer to handle
+        this.sendEvent({
+          type: 'typed_error',
+          sessionId,
+          error: {
+            code: event.error.code,
+            title: event.error.title,
+            message: event.error.message,
+            canRetry: event.error.canRetry
+          }
+        })
+        break
+    }
+  }
+
+  private sendEvent(event: SessionEvent): void {
+    if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+      this.mainWindow.webContents.send(IPC_CHANNELS.SESSION_EVENT, event)
+    }
+  }
+}
