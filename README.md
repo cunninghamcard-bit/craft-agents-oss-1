@@ -367,38 +367,43 @@ What tasks do I have due this week?
 
 ## Architecture
 
+This is a Bun-based monorepo with shared business logic and multiple interfaces:
+
 ```
-src/
-├── index.tsx           # Entry point with CLI + setup flow
-├── agent/
-│   └── craft-agent.ts  # Claude Agent SDK wrapper
-├── agents/
-│   ├── manager.ts      # Subagent management
-│   ├── extractor.ts    # Extract agent definitions from docs
-│   ├── api-tools.ts    # Dynamic MCP server factory for REST APIs
-│   └── cache.ts        # Agent definition cache
-├── credentials/
-│   ├── manager.ts      # Keychain credential management
-│   └── backends/       # Platform-specific backends
-├── mcp/
-│   └── tools.ts        # Tool registry
-├── tui/
-│   ├── App.tsx         # Main application
-│   ├── components/
-│   │   ├── Setup.tsx   # Setup wizard
-│   │   ├── Header.tsx  # Status bar
-│   │   ├── Messages.tsx
-│   │   ├── Input.tsx
-│   │   ├── ToolCall.tsx
-│   │   └── Spinner.tsx
-│   └── hooks/
-│       ├── useAgent.ts
-│       └── useHistory.ts
-├── prompts/
-│   └── system.ts       # System prompt
-└── config/
-    ├── env.ts          # Environment validation
-    └── storage.ts      # Persistent config (~/.craft-agent/)
+craft-tui-agent/
+├── apps/
+│   ├── electron/              # Desktop GUI app
+│   │   └── src/
+│   │       ├── main/          # Electron main process
+│   │       ├── preload/       # Context bridge
+│   │       └── renderer/      # React UI (Vite + shadcn)
+│   └── tui/                   # Terminal interface (CLI)
+│       └── src/
+│           ├── components/    # Ink/React components (PlanMenu, PlanReview, etc.)
+│           ├── hooks/         # useAgent, useAgentState, useCommands
+│           ├── keyboard/      # Keyboard handling
+│           └── utils/         # Terminal utilities
+├── packages/
+│   ├── core/                  # Shared types (Workspace, Session, Message)
+│   └── session-manager/       # Event-driven session orchestration
+└── src/                       # Shared business logic
+    ├── agent/
+    │   ├── craft-agent.ts     # Claude Agent SDK wrapper
+    │   └── plan-tools.ts      # Plan mode tools
+    ├── agents/
+    │   ├── types.ts           # SubAgentDefinition, AgentStatus
+    │   ├── plan-types.ts      # Plan, PlanStep interfaces
+    │   ├── agent-state.ts     # AgentStateManager - activation state machine
+    │   ├── manager.ts         # SubAgentManager
+    │   ├── extractor.ts       # Extract agent definitions from docs
+    │   └── api-tools.ts       # Dynamic REST API tools
+    ├── credentials/
+    │   ├── manager.ts         # Credential management
+    │   └── backends/          # AES-256-GCM encrypted storage
+    ├── config/
+    │   └── storage.ts         # Persistent config (~/.craft-agent/)
+    └── prompts/
+        └── system.ts          # System prompt
 ```
 
 ## Development

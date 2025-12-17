@@ -15,19 +15,27 @@ bun run electron:start   # Build and run
 ```
 apps/electron/
 ├── src/
-│   ├── main/           # Electron main process
-│   │   ├── index.ts    # Window creation, app lifecycle
-│   │   ├── ipc.ts      # IPC handler registration
-│   │   └── sessions.ts # Session management, CraftAgent integration
-│   ├── preload/        # Context bridge (main ↔ renderer)
-│   │   └── index.ts    # Exposes electronAPI to renderer
-│   ├── renderer/       # React UI
-│   │   ├── App.tsx     # Main app, event handling
-│   │   └── components/ # UI components
+│   ├── main/              # Electron main process
+│   │   ├── index.ts       # Window creation, app lifecycle
+│   │   ├── ipc.ts         # IPC handler registration
+│   │   ├── menu.ts        # Application menu (File, Edit, View, Help)
+│   │   ├── sessions.ts    # Session management, CraftAgent integration
+│   │   └── agent-service.ts # Agent listing, caching, auth checking
+│   ├── preload/           # Context bridge (main ↔ renderer)
+│   │   └── index.ts       # Exposes electronAPI to renderer
+│   ├── renderer/          # React UI
+│   │   ├── App.tsx        # Main app, event handling
+│   │   ├── components/
+│   │   │   ├── chat/      # Chat UI (ChatInput, ChatDisplay, PermissionBanner)
+│   │   │   ├── markdown/  # Markdown renderer with Shiki
+│   │   │   └── ui/        # shadcn/ui components
+│   │   ├── hooks/
+│   │   │   └── useAgentState.ts  # Agent activation state machine
+│   │   └── playground/    # Component development playground
 │   └── shared/
-│       └── types.ts    # Shared TypeScript interfaces
-├── dist/               # Build output
-└── resources/          # App icons
+│       └── types.ts       # Shared TypeScript interfaces
+├── dist/                  # Build output
+└── resources/             # App icons
 ```
 
 ## Key Learnings & Gotchas
@@ -149,9 +157,7 @@ DevTools opens automatically (configured in `index.ts`). Remove `mainWindow.webC
 
 ## Current Limitations
 
-1. **No permission handling** - Bash commands execute without approval
-2. **No AskUserQuestion UI** - Agent can't ask clarifying questions
-3. **In development only** - No electron-builder config for distribution
+1. **In development only** - No electron-builder config for distribution
 
 ## Implemented Features
 
@@ -160,6 +166,10 @@ DevTools opens automatically (configured in `index.ts`). Remove `mainWindow.webC
 - **AI-generated titles** - Sessions get automatic titles after first exchange
 - **Subagent support** - Load and apply agent definitions from Craft documents
 - **Shell integration** - Open URLs in browser, open files in default apps
+- **Permission handling** - PermissionBanner component for bash command approval
+- **Agent state machine** - useAgentState hook manages activation flow (extracting → review → auth → active)
+- **Application menu** - Standard macOS/Windows menus with keyboard shortcuts
+- **Component playground** - Development tool for testing UI components in isolation
 
 ## File Overview
 
@@ -168,12 +178,16 @@ DevTools opens automatically (configured in `index.ts`). Remove `mainWindow.webC
 | `main/index.ts` | App entry, window creation |
 | `main/sessions.ts` | CraftAgent wrapper, event processing, subagent integration |
 | `main/ipc.ts` | IPC channel handlers (sessions, files, shell) |
+| `main/menu.ts` | Application menu (File, Edit, View, Help) |
 | `main/agent-service.ts` | Agent listing, caching, auth checking |
 | `preload/index.ts` | Context bridge API |
 | `renderer/App.tsx` | React root, state management |
+| `renderer/hooks/useAgentState.ts` | Agent activation state machine (IPC-based) |
 | `renderer/components/chat/Chat.tsx` | Main chat layout with resizable panels |
 | `renderer/components/chat/ChatInput.tsx` | Message input with file attachments |
 | `renderer/components/chat/ChatDisplay.tsx` | Message list with markdown rendering |
+| `renderer/components/chat/PermissionBanner.tsx` | Bash command approval UI |
 | `renderer/components/chat/SessionList.tsx` | Session sidebar with rename support |
 | `renderer/components/chat/AttachmentPreview.tsx` | File attachment bubbles |
+| `renderer/playground/` | Component development playground |
 | `shared/types.ts` | IPC channels, Message/Session/FileAttachment types |
