@@ -21,6 +21,9 @@ export interface HeaderProps {
   tokenDisplay?: TokenDisplayMode;
   showCost?: boolean;
   version?: string;
+  planMode?: boolean;
+  /** Show "Press Ctrl+C again to exit" warning */
+  exitWarning?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = memo(({
@@ -38,6 +41,8 @@ export const Header: React.FC<HeaderProps> = memo(({
   tokenDisplay = 'hidden',
   showCost = true,
   version,
+  planMode = false,
+  exitWarning = false,
 }) => {
   // Map model IDs to friendly names
   const modelDisplay = useMemo(() => getModelDisplayName(model), [model]);
@@ -69,6 +74,12 @@ export const Header: React.FC<HeaderProps> = memo(({
         ) : (
           <Text color="magenta" bold>craft</Text>
         )}
+        {planMode && (
+          <>
+            <Text dimColor> </Text>
+            <Text backgroundColor="#006400" color="white" bold> PLAN </Text>
+          </>
+        )}
         <Text dimColor> | </Text>
         <Text color={connected ? 'green' : 'red'}>
           {connected ? '●' : '○'}
@@ -82,6 +93,12 @@ export const Header: React.FC<HeaderProps> = memo(({
           <>
             <Text dimColor> | </Text>
             <Text dimColor>v{version}</Text>
+          </>
+        )}
+        {exitWarning && (
+          <>
+            <Text dimColor> | </Text>
+            <Text color="yellow">Press Ctrl+C again to exit</Text>
           </>
         )}
       </Box>
@@ -119,26 +136,32 @@ export interface StatusLineProps {
   isProcessing: boolean;
   connected: boolean;
   compact?: boolean;
+  exitWarning?: boolean;
 }
 
 export const StatusLine: React.FC<StatusLineProps> = memo(({
   isProcessing,
   connected,
   compact = false,
+  exitWarning = false,
 }) => {
   return (
     <Box paddingX={1}>
-      <Text dimColor>
-        {isProcessing ? 'Ctrl+C to interrupt' : 'Ctrl+C to exit'}
-        {'  '}
-        /help for commands
-        {!compact && (
-          <>
-            {'  '}
-            /clear to reset
-          </>
-        )}
-      </Text>
+      {exitWarning ? (
+        <Text color="yellow">Press Ctrl+C again to exit</Text>
+      ) : (
+        <Text dimColor>
+          {isProcessing ? 'Ctrl+C to interrupt' : 'Ctrl+C to exit'}
+          {'  '}
+          /help for commands
+          {!compact && (
+            <>
+              {'  '}
+              /clear to reset
+            </>
+          )}
+        </Text>
+      )}
     </Box>
   );
 });

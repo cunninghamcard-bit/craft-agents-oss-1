@@ -37,6 +37,7 @@ export function filterByPrefix<T>(
 
 export type CommandCategory =
   | 'General'
+  | 'Planning Mode'
   | 'AI & Billing'
   | 'Configuration'
   | 'Workspace'
@@ -58,12 +59,14 @@ export interface CommandDefinition {
 export const COMMANDS: CommandDefinition[] = [
   // Heavy/common commands first (for tab completion priority)
   { command: '/agent', description: 'Manage sub-agents (list, info, refresh, clear)', category: 'Sub-Agents' },
+  { command: '/plan', description: 'Enter planning mode for complex tasks', category: 'Planning Mode' },
   { command: '/workspace', description: 'Switch workspace (add, rename, remove)', category: 'Workspace' },
   { command: '/model', description: 'Show or change model (e.g., /model opus)', category: 'AI & Billing' },
 
   // General
   { command: '/help', description: 'Show help and available commands', category: 'General' },
   { command: '/clear', description: 'Clear conversation history', category: 'General' },
+  { command: '/resume', description: 'View and resume previous sessions', category: 'General' },
   { command: '/exit', description: 'Exit the application (or Ctrl+C)', category: 'General' },
 
   // AI & Billing
@@ -86,6 +89,7 @@ export const COMMANDS: CommandDefinition[] = [
 /** Category display order for HelpPanel */
 export const CATEGORY_ORDER: CommandCategory[] = [
   'General',
+  'Planning Mode',
   'AI & Billing',
   'Configuration',
   'Workspace',
@@ -137,6 +141,13 @@ export const SUBCOMMANDS: Record<string, Record<string, string>> = {
     'reset': 'Clear all data and exit (re-select to restart setup)',
     'refresh': 'Re-scan Agents folder',
     'info': 'Show active agent details',
+  },
+  '/plan': {
+    'start': 'Start planning a complex task',
+    'plans': 'View, load, or delete saved plans',
+    'view': 'View current plan',
+    'approve': 'Approve and execute current plan',
+    'cancel': 'Cancel current plan',
   },
 };
 

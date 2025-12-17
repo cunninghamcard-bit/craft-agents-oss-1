@@ -110,7 +110,8 @@ This directory contains the shared business logic used by both TUI and Electron 
 ```
 src/
 ├── agent/
-│   └── craft-agent.ts        # Claude Agent SDK wrapper
+│   ├── craft-agent.ts        # Claude Agent SDK wrapper
+│   └── plan-tools.ts         # Plan mode tools and state management
 ├── agents/
 │   ├── types.ts              # SubAgentDefinition, ApiConfig interfaces
 │   ├── manager.ts            # SubAgentManager - list, activate, deactivate
@@ -136,6 +137,11 @@ src/
 │   └── validation.ts         # SDK-based MCP connection validation
 ├── prompts/
 │   └── system.ts             # System prompt with date/time and preferences
+├── headless/
+│   ├── index.ts              # Public exports
+│   ├── runner.ts             # HeadlessRunner - non-interactive execution
+│   ├── types.ts              # HeadlessConfig, HeadlessResult, HeadlessEvent
+│   └── output.ts             # Output formatting (text, json, stream-json)
 └── utils/
     ├── debug.ts              # Debug logging to /tmp/craft-debug.log
     ├── files.ts              # File attachment processing (shared with TUI)
@@ -170,10 +176,10 @@ apps/
 │       └── shared/           # IPC types
 └── tui/                      # @craft-agent/tui
     └── src/
-        ├── components/       # Ink/React terminal components
+        ├── components/       # Ink/React terminal components (including PlanMenu, PlanReview, TodoList)
         ├── hooks/            # TUI-specific hooks
         ├── keyboard/         # Keyboard handling
-        └── utils/            # Terminal utilities
+        └── utils/            # Terminal utilities (including gradient.ts for ultrathink)
 ```
 
 ## Architecture
@@ -329,6 +335,55 @@ Validates MCP connections using the Claude Agent SDK's `mcpServerStatus()` metho
 - Enter to retry, Esc to go back
 - Credentials are preserved for retry
 
+### Headless Mode (`src/headless/`)
+Non-interactive execution mode for scripts, CI/CD pipelines, and automation workflows.
+
+**Key files:**
+- `runner.ts` - `HeadlessRunner` class for query execution
+- `types.ts` - `HeadlessConfig`, `HeadlessResult`, `HeadlessEvent` interfaces
+- `output.ts` - Output formatting (text, json, stream-json)
+
+**CLI flags:**
+```bash
+craft --print "query"           # Execute and exit
+craft --output-format json      # Output: text, json, stream-json
+craft --permission-policy X     # Bash: deny-all, allow-safe, allow-all
+craft --session-resume          # Resume last session
+craft --session <id>            # Use explicit session ID
+```
+
+**HeadlessConfig interface:**
+```typescript
+interface HeadlessConfig {
+  prompt: string;
+  workspace: Workspace;
+  agentName?: string;
+  model?: string;
+  outputFormat?: 'text' | 'json' | 'stream-json';
+  permissionPolicy?: 'deny-all' | 'allow-safe' | 'allow-all';
+  sessionId?: string;
+  sessionResume?: boolean;
+}
+```
+
+**Plan mode disabled in headless:**
+When `isHeadless: true` is passed to CraftAgent:
+1. Prompts are wrapped in `<headless_mode>` XML tags to signal intent
+2. PreToolUse hook blocks plan mode tools:
+   - `EnterCraftAgentsPlanMode`
+   - `ExitCraftAgentsPlanMode`
+   - `CraftAskUserQuestion`
+3. Agent executes tasks directly without planning phases
+
+This defense-in-depth approach ensures plan mode is never triggered in automation contexts.
+
+**Permission handling:**
+- `deny-all` (default): Block all bash commands
+- `allow-safe`: Allow read-only commands (ls, cat, grep, find, etc.)
+- `allow-all`: Allow all commands (use with caution)
+
+Questions (from `AskUserQuestion` tool) return empty answers in headless mode.
+
 ### Subagent System (`src/agents/`)
 Subagents are specialized agents defined in Craft documents. When activated, they extend the base agent with custom instructions, MCP servers, and REST APIs.
 
@@ -482,6 +537,91 @@ Includes:
 - Session failures clear and start fresh
 - Replayed messages skipped via `isReplay` flag
 
+### Plan Mode (`src/agent/plan-tools.ts`)
+
+Plan Mode is a structured approach for complex multi-step tasks. Instead of immediately executing actions, the agent first creates a plan, gets user approval, then executes.
+
+**Key Files:**
+- `src/agent/plan-tools.ts` - Custom plan mode tools and state management
+- `src/agents/plan-types.ts` - Plan, PlanStep, PlanState interfaces
+- `src/tui/components/PlanReview.tsx` - User approval UI
+- `src/tui/components/TodoList.tsx` - Task visualization
+
+**Custom Tools (in-process MCP):**
+- `EnterCraftAgentsPlanMode` - Enters planning mode with task description
+- `ExitCraftAgentsPlanMode` - Exits with structured plan for user review
+- `CraftAskUserQuestion` - Interactive clarification during planning
+
+**CraftAskUserQuestion "Other" Option:**
+Every question automatically includes an "Other" option at the end, allowing users to provide custom text responses instead of selecting from predefined options.
+
+- Navigate to "Other" with arrow keys or number key (last number)
+- Press Space or Enter to select and start typing custom response
+- Type response, then Enter to confirm or Esc to cancel editing
+- Selected text shows in green: `(●) 4. Other: my custom answer`
+- Works with both single-select and multi-select questions
+
+**State Management:**
+```typescript
+interface CraftPlanModeState {
+  isActive: boolean;
+  plan: Plan | null;
+  onStateChange?: (state: CraftPlanModeState) => void;
+}
+
+// Global state accessed via:
+setPlanModeState(state)  // Set by CraftAgent
+getPlanModeState()       // Read by PreToolUse hook
+enterCraftPlanMode()     // Programmatic entry (SHIFT+TAB)
+exitCraftPlanMode()      // Programmatic exit
+```
+
+**PreToolUse Hook Blocking:**
+When plan mode is active, the hook blocks external operations:
+```typescript
+// BLOCKED in plan mode:
+- api_* tools (all REST API calls)
+- Bash, Write, Edit
+- Task, TaskOutput
+- MCP write tools (blocks_add, blocks_update, etc.)
+
+// ALLOWED in plan mode:
+- Read, Glob, Grep (local file exploration)
+- WebFetch, WebSearch (use sparingly - quick lookups only)
+- MCP read tools (blocks_get, document_search, etc.)
+- CraftAskUserQuestion
+- TodoWrite
+```
+
+**UI Integration:**
+- SHIFT+TAB toggles plan mode (uses `enterCraftPlanMode()`/`exitCraftPlanMode()`)
+- `/plan` slash commands: `start`, `plans`, `view`, `approve`, `cancel`
+- Header shows `PLAN` indicator when active (dark green bg, white text)
+- TodoList component displays task progress from TodoWrite calls
+- PlanSelector provides unified view for loading/deleting saved plans
+
+**Plan Selector (`PlanSelector.tsx`):**
+- `↑↓` - Navigate plan list
+- `Enter` - Load selected plan as attachment
+- `Space` - Toggle selection for multi-delete
+- `D/d` - Delete selected plans (shows Y/N confirmation)
+- `Esc` - Clear selections first, then close modal
+
+**Flow:**
+1. User presses SHIFT+TAB or types `/plan start`
+2. System message sent to agent with `EnterCraftAgentsPlanMode` instruction
+3. Agent can read files, query MCP, ask questions via `CraftAskUserQuestion`
+4. Agent calls `ExitCraftAgentsPlanMode` with structured plan
+5. User reviews via PlanReview component (approve/refine/cancel)
+6. On approval, plan executes with full tool access
+
+**Why we block SDK's EnterPlanMode/ExitPlanMode:**
+- SDK's plan mode is generic; ours is Craft-specific
+- We allow read-only MCP operations during planning
+- We block ALL external API calls (not just writes)
+- Better integration with Craft's UI components (PlanReview, CraftAskUserQuestion)
+- SDK tools are blocked via `disallowedTools` and PreToolUse hook redirects to Craft versions
+
 ### Token Counting
 - Tracks: input tokens, output tokens, cache creation, cache read
 - Context tokens = base + cache for next request
@@ -515,6 +655,37 @@ Opus is expensive ($15/MTok input vs $3/MTok for Sonnet). The 2x cache write cos
 |------------|------------|-----------|
 | 5-minute (default) | 1.25x base | 0.1x base |
 | 1-hour (extended) | 2x base | 0.1x base |
+
+### Ultrathink Mode
+
+Extended thinking mode triggered by the "ultrathink" keyword in user messages.
+
+**How it works:**
+1. `useAgent.sendMessage()` detects "ultrathink" keyword (case-insensitive)
+2. Keyword is stripped from message sent to Claude (but kept in UI display)
+3. `agent.setUltrathinkMode(true)` sets `maxThinkingTokens` based on model for the SDK query
+4. ThinkingIndicator shows gradient-colored "ultrathink" label during processing
+5. Mode auto-resets after query completes (single-shot)
+
+**Thinking tokens by model:**
+| Model | maxThinkingTokens |
+|-------|-------------------|
+| Opus | 64,000 |
+| Sonnet | 64,000 |
+| Haiku | 8,000 |
+
+**Files involved:**
+- `apps/tui/src/utils/gradient.ts` - `containsUltrathink()`, `stripUltrathink()`, `renderUltrathinkGradient()`
+- `src/agent/craft-agent.ts` - `ultrathinkMode` property, `setUltrathinkMode()` method
+- `apps/tui/src/hooks/core/useAgent.ts` - Detection, state management, agent configuration
+- `apps/tui/src/components/TextInput.tsx` - Live gradient coloring while typing
+- `apps/tui/src/components/Spinner.tsx` - ThinkingIndicator gradient display
+
+**Gradient specification (cyan → magenta → cyan):**
+```
+ANSI 256: [51, 45, 39, 129, 201, 201, 129, 39, 45, 51]
+Hex:      ['#00ffff', '#00d7ff', '#00afff', '#af00ff', '#ff00ff', ...]
+```
 
 ### Keyboard Input Layer (`apps/tui/src/keyboard/`)
 
