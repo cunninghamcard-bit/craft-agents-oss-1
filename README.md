@@ -9,6 +9,7 @@ A Claude Code-like agent for Craft documents using the Anthropic SDK and Craft M
 - **Subagents**: Define specialized agents in Craft documents with custom instructions, MCP servers, and REST APIs
 - **Dynamic API Integration**: Automatically extract REST APIs from documentation and create flexible tools
 - **Rich Terminal UI**: Built with Ink (React for CLIs)
+- **Ultrathink Mode**: Type "ultrathink" in your message for extended thinking
 - **Command History**: Navigate previous inputs with arrow keys
 - **Slash Commands**: `/help`, `/tools`, `/setup`, `/clear`, `/agent`, `/info`, `/exit`
 - **Interactive Setup**: First-run wizard to configure API keys and MCP connection
@@ -335,6 +336,34 @@ When handling Ctrl+key shortcuts in Ink's raw terminal mode, always check for bo
 - Raw character: `input === '\x03'` (Ctrl+C = ASCII 3)
 
 Different terminals may deliver only the raw character without setting `key.ctrl`. See `src/tui/keyboard/mappings.ts` for canonical implementations.
+
+## Ultrathink Mode
+
+Include the word "ultrathink" anywhere in your message to enable extended thinking mode. This sets `maxThinkingTokens` based on the model, allowing Claude to think more deeply about complex problems.
+
+**Thinking tokens by model:**
+| Model | Thinking Tokens |
+|-------|-----------------|
+| Opus | 64,000 |
+| Sonnet | 64,000 |
+| Haiku | 8,000 |
+
+**How it works:**
+- The keyword "ultrathink" is detected (case-insensitive) and stripped from the message sent to Claude
+- The word appears with a cyan→magenta→cyan gradient while typing
+- During processing, a gradient "ultrathink" label appears in the thinking indicator
+- Extended thinking is single-shot (only applies to that message)
+
+**When to use:**
+- Complex reasoning or multi-step problems
+- Code architecture decisions
+- Difficult debugging scenarios
+- Tasks requiring deep analysis
+
+**Example:**
+```
+ultrathink How should I refactor this authentication system to support OAuth2?
+```
 
 ## Extended Prompt Cache
 

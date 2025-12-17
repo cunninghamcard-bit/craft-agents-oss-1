@@ -448,6 +448,8 @@ export class CraftAgent {
   private temporaryClarifications: string | null = null;
   // Map tool_use_id → explicit intent from _intent field (for summarization and UI display)
   private toolIntents: Map<string, string> = new Map();
+  // Ultrathink mode - when enabled, sets maxThinkingTokens for extended reasoning
+  private ultrathinkMode: boolean = false;
 
   // Callback for permission requests - set by TUI to receive permission prompts
   public onPermissionRequest: ((request: { requestId: string; toolName: string; command: string; description: string }) => void) | null = null;
@@ -460,6 +462,15 @@ export class CraftAgent {
 
   constructor(config: CraftAgentConfig) {
     this.config = config;
+  }
+
+  /**
+   * Enable or disable ultrathink mode
+   * When enabled, maxThinkingTokens will be set for extended reasoning
+   */
+  setUltrathinkMode(enabled: boolean): void {
+    this.ultrathinkMode = enabled;
+    this.onDebug?.(`[CraftAgent] Ultrathink mode: ${enabled ? 'ENABLED' : 'disabled'}`);
   }
 
   /**
@@ -710,12 +721,23 @@ export class CraftAgent {
       // Configure SDK options
       const model = this.config.model || DEFAULT_MODEL;
       const useExtendedCache = shouldUseExtendedCacheTtl(model);
+
+      // Determine maxThinkingTokens based on model when ultrathink is enabled
+      // Opus/Sonnet support up to 128k, Haiku up to 8k
+      const getUltrathinkTokens = (modelName: string): number => {
+        const lowerModel = modelName.toLowerCase();
+        if (lowerModel.includes('haiku')) return 8000;
+        return 64000; // Opus and Sonnet
+      };
+
       const options: Options = {
         ...getDefaultOptions(),
         model,
         // Enable extended prompt cache TTL (1 hour instead of 5 minutes) when configured
         // The actual TTL injection happens in src/cache-ttl-interceptor.ts
         ...(useExtendedCache ? { betas: ['extended-cache-ttl-2025-04-11'] as any } : {}),
+        // Extended thinking: set tokens based on model when ultrathink mode is active, otherwise 0
+        maxThinkingTokens: this.ultrathinkMode ? getUltrathinkTokens(model) : 0,
         // Option A: Append to Claude Code's system prompt (recommended by docs)
         systemPrompt: {
           type: 'preset',
@@ -1174,6 +1196,8 @@ export class CraftAgent {
       yield { type: 'complete' };
     } finally {
       this.currentQuery = null;
+      // Reset ultrathink mode after query completes (single-shot activation)
+      this.ultrathinkMode = false;
     }
   }
 

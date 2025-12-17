@@ -152,6 +152,8 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     pendingReview,
     completeReview,
     skipReview,
+    // Ultrathink mode
+    isUltrathink,
   } = useAgent(agentConfig);
 
   // Track cumulative usage - update global when workspace usage changes
@@ -625,6 +627,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
             hasExecutingTool={hasExecutingTool}
             compact={compactMode}
             showWelcome={showWelcome}
+            isUltrathink={isUltrathink}
           />
         </Box>
       )}

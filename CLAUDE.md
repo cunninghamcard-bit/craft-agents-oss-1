@@ -125,6 +125,7 @@ src/
     │   └── useKeyboard.ts        # Input normalization hook
     └── utils/
         ├── files.ts              # File attachment processing
+        ├── gradient.ts           # Ultrathink gradient rendering
         ├── markdown.ts           # Markdown rendering with Shiki
         ├── terminalProgress.ts   # Progress bar display
         └── toolStatus.ts         # Tool status tracking
@@ -469,6 +470,37 @@ Opus is expensive ($15/MTok input vs $3/MTok for Sonnet). The 2x cache write cos
 |------------|------------|-----------|
 | 5-minute (default) | 1.25x base | 0.1x base |
 | 1-hour (extended) | 2x base | 0.1x base |
+
+### Ultrathink Mode
+
+Extended thinking mode triggered by the "ultrathink" keyword in user messages.
+
+**How it works:**
+1. `useAgent.sendMessage()` detects "ultrathink" keyword (case-insensitive)
+2. Keyword is stripped from message sent to Claude (but kept in UI display)
+3. `agent.setUltrathinkMode(true)` sets `maxThinkingTokens` based on model for the SDK query
+4. ThinkingIndicator shows gradient-colored "ultrathink" label during processing
+5. Mode auto-resets after query completes (single-shot)
+
+**Thinking tokens by model:**
+| Model | maxThinkingTokens |
+|-------|-------------------|
+| Opus | 64,000 |
+| Sonnet | 64,000 |
+| Haiku | 8,000 |
+
+**Files involved:**
+- `src/tui/utils/gradient.ts` - `containsUltrathink()`, `stripUltrathink()`, `renderUltrathinkGradient()`
+- `src/agent/craft-agent.ts` - `ultrathinkMode` property, `setUltrathinkMode()` method
+- `src/tui/hooks/core/useAgent.ts` - Detection, state management, agent configuration
+- `src/tui/components/TextInput.tsx` - Live gradient coloring while typing
+- `src/tui/components/Spinner.tsx` - ThinkingIndicator gradient display
+
+**Gradient specification (cyan → magenta → cyan):**
+```
+ANSI 256: [51, 45, 39, 129, 201, 201, 129, 39, 45, 51]
+Hex:      ['#00ffff', '#00d7ff', '#00afff', '#af00ff', '#ff00ff', ...]
+```
 
 ### Keyboard Input Layer (`src/tui/keyboard/`)
 

@@ -40,6 +40,7 @@ import type { ExtractionProgressEvent } from '../../../agents/extractor.ts';
 import { invalidateDefinition, loadRegistry, clearAgentCredentialsAsync } from '../../../agents/cache.ts';
 import { CraftOAuth, getMcpBaseUrl } from '../../../auth/oauth.ts';
 import { debug } from '../../utils/debug.ts';
+import { containsUltrathink, stripUltrathink } from '../../utils/gradient.js';
 
 // MCP auth request for sub-agent servers
 export interface PendingMcpAuthRequest {
@@ -186,6 +187,8 @@ export interface UseAgentResult {
   pendingReview: PendingReviewRequest | null;
   completeReview: (answers: Record<string, string>) => Promise<void>;
   skipReview: () => Promise<void>;
+  // Ultrathink mode (extended thinking)
+  isUltrathink: boolean;
 }
 
 export function useAgent(config: CraftAgentConfig): UseAgentResult {
@@ -223,6 +226,8 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
   const [pendingMcpAuth, setPendingMcpAuth] = useState<PendingMcpAuthRequest | null>(null);
   const [pendingApiAuth, setPendingApiAuth] = useState<PendingApiAuthRequest | null>(null);
   const [pendingReview, setPendingReview] = useState<PendingReviewRequest | null>(null);
+  // Ultrathink mode (extended thinking)
+  const [isUltrathink, setIsUltrathink] = useState(false);
 
   const agentRef = useRef<CraftAgent | null>(null);
   const agentManagerRef = useRef<SubAgentManager | null>(null);
@@ -589,9 +594,18 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     // Clear SDK text error ref for this new request
     sdkTextErrorRef.current = null;
 
+    // Detect ultrathink mode and strip keyword from message
+    const ultrathinkDetected = containsUltrathink(input);
+    const cleanInput = ultrathinkDetected ? stripUltrathink(input) : input;
+    setIsUltrathink(ultrathinkDetected);
+
     const agent = getAgent();
 
+    // Configure ultrathink mode on agent
+    agent.setUltrathinkMode(ultrathinkDetected);
+
     // Add user message (include attachment names in display) - unless hidden
+    // Show original input (with ultrathink) in the UI
     if (!options?.hideUserMessage) {
       const attachmentInfo = attachments && attachments.length > 0
         ? `\n[Attached: ${attachments.map(a => a.name).join(', ')}]`
@@ -650,7 +664,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     };
 
     try {
-      for await (const event of agent.chat(input, attachments)) {
+      for await (const event of agent.chat(cleanInput, attachments)) {
         // Check if interrupted
         if (interruptedRef.current) {
           break;
@@ -1768,5 +1782,7 @@ The goal is to have clean, actionable instructions without unanswered questions.
     pendingReview,
     completeReview,
     skipReview,
+    // Ultrathink mode (extended thinking)
+    isUltrathink,
   };
 }

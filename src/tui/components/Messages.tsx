@@ -30,6 +30,7 @@ export interface MessagesProps {
   compact?: boolean;
   showWelcome?: boolean;
   resetKey?: number;
+  isUltrathink?: boolean;
 }
 
 // Static item type - welcome banner or message
@@ -47,6 +48,7 @@ export const Messages: React.FC<MessagesProps> = memo(({
   compact = true,
   showWelcome = false,
   resetKey = 0,
+  isUltrathink = false,
 }) => {
   // Track elapsed time since processing started
   const elapsed = useElapsedTime({
@@ -147,7 +149,7 @@ export const Messages: React.FC<MessagesProps> = memo(({
       {isProcessing && !streamingText && !hasExecutingTool && (
         <Box justifyContent="space-between" paddingX={1}>
           <Box>
-            <ThinkingIndicator status={status} elapsedMs={elapsed ?? undefined} />
+            <ThinkingIndicator status={status} elapsedMs={elapsed ?? undefined} isUltrathink={isUltrathink} />
           </Box>
           <Box />
         </Box>
