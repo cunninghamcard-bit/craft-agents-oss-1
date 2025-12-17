@@ -134,6 +134,7 @@ apps/electron/
 │   ├── main/              # Electron main process (Node.js)
 │   │   ├── index.ts       # Window creation, app lifecycle, nativeTheme listener
 │   │   ├── ipc.ts         # IPC handler registration
+│   │   ├── menu.ts        # Application menu (File, Edit, View, Help menus)
 │   │   ├── sessions.ts    # SessionManager - CraftAgent integration
 │   │   └── agent-service.ts # Agent listing, caching, auth checking
 │   ├── preload/           # Context bridge (main ↔ renderer)
@@ -143,15 +144,21 @@ apps/electron/
 │   │   ├── main.tsx       # React entry point, ThemeProvider
 │   │   ├── index.css      # CSS variables (:root, .dark, data-theme)
 │   │   ├── components/
-│   │   │   ├── chat/      # Chat UI (Chat, ChatInput, ChatDisplay, SessionList)
+│   │   │   ├── chat/      # Chat UI (Chat, ChatInput, ChatDisplay, SessionList, PermissionBanner)
 │   │   │   ├── icons/     # Custom SVG icons (PanelLeftRounded, SquarePenRounded)
 │   │   │   ├── markdown/  # Markdown renderer with syntax highlighting
 │   │   │   └── ui/        # shadcn/ui components
 │   │   ├── context/
 │   │   │   ├── NavigationContext.tsx  # Agent selection
 │   │   │   └── ThemeContext.tsx       # Theme state management
-│   │   ├── hooks/         # Custom hooks
-│   │   └── mocks/         # Browser dev mode mock APIs
+│   │   ├── hooks/
+│   │   │   └── useAgentState.ts  # Agent activation state machine (IPC-based)
+│   │   ├── mocks/         # Browser dev mode mock APIs
+│   │   └── playground/    # Component development playground
+│   │       ├── PlaygroundApp.tsx     # Main playground component
+│   │       ├── ComponentPreview.tsx  # Component preview display
+│   │       ├── PropsPanel.tsx        # Dynamic props editor
+│   │       └── registry/             # Component registry (chat, icons, markdown)
 │   └── shared/
 │       └── types.ts       # IPC channels, Message/Session/FileAttachment types
 ├── dist/                  # Build output
@@ -448,7 +455,103 @@ The app supports attaching files to messages (images, PDFs, code files):
 - Documents: PDF, TXT, MD
 - Code: JS, TS, TSX, JSX, PY, JSON, CSS, HTML, XML, YAML
 
+## Agent State Management
+
+The `useAgentState` hook manages agent activation flow via IPC with the main process:
+
+**State Machine:**
+```
+idle → extracting → needs_review → needs_mcp_auth → needs_api_auth → ready → active
+                         ↓              ↓                ↓
+                       error          error            error
+```
+
+**Hook API:**
+```typescript
+const agentState = useAgentState(workspaceId, agentId)
+
+// Status checks
+agentState.isIdle           // No agent selected
+agentState.isExtracting     // Loading agent definition
+agentState.isNeedsReview    // Waiting for concern review
+agentState.isNeedsMcpAuth   // Waiting for MCP server OAuth
+agentState.isNeedsApiAuth   // Waiting for API key entry
+agentState.isReady          // Auth complete, ready to activate
+agentState.isActive         // Agent fully activated
+
+// Actions
+await agentState.activate(agentId)           // Start activation
+await agentState.continueAfterReview(answers) // After user answers concerns
+await agentState.continueAfterMcpAuth()      // After MCP OAuth complete
+await agentState.continueAfterApiAuth()      // After API key entered
+agentState.deactivate()                      // Return to idle
+
+// Derived state
+agentState.activeDefinition   // SubAgentDefinition when active
+agentState.agentName          // Display name
+agentState.pendingConcerns    // Concerns awaiting review
+agentState.pendingMcpServers  // MCP servers needing auth
+agentState.pendingApis        // APIs needing credentials
+```
+
+**IPC Communication:** The hook communicates with `AgentStateManager` in the main process via `window.electronAPI` calls, keeping the renderer stateless.
+
+## Application Menu
+
+The app menu (`main/menu.ts`) provides standard macOS/Windows menu items:
+
+**Menu Structure:**
+- **File**: New Chat (⌘N)
+- **Edit**: Cut, Copy, Paste, Select All
+- **View**: Reload, Toggle DevTools, Zoom controls
+- **Help**: Open Help, Keyboard Shortcuts
+
+**IPC Channels:**
+```typescript
+MENU_NEW_CHAT           // Create new session
+MENU_OPEN_SETTINGS      // Open settings dialog
+MENU_KEYBOARD_SHORTCUTS // Show keyboard shortcuts
+MENU_OPEN_HELP          // Open help URL
+```
+
+## Component Playground
+
+A development tool for testing UI components in isolation:
+
+**Access:** Run `bun run electron:dev` and navigate to `/playground.html`
+
+**Features:**
+- Browse all registered components in sidebar
+- Live prop editing with type-aware inputs
+- Theme toggle (light/dark)
+- Component preview with state management
+
+**Adding Components:**
+```typescript
+// In playground/registry/index.ts
+import { myComponentDefinitions } from './my-components'
+
+export const componentRegistry = [
+  ...chatComponents,
+  ...myComponentDefinitions,
+]
+```
+
+## Permission Banner
+
+The `PermissionBanner` component shows bash command approval requests:
+
+```tsx
+<PermissionBanner
+  command="rm -rf /tmp/cache"
+  onAllow={() => respond('allow')}
+  onAlwaysAllow={() => respond('always_allow')}
+  onDeny={() => respond('deny')}
+/>
+```
+
+**Styling:** Amber border/background with shield icon, three action buttons.
+
 ## Current Limitations
 
-1. No AskUserQuestion UI - agent can't ask clarifying questions
-2. Development only - no electron-builder config for distribution
+1. Development only - no electron-builder config for distribution

@@ -113,7 +113,9 @@ src/
 │   ├── craft-agent.ts        # Claude Agent SDK wrapper
 │   └── plan-tools.ts         # Plan mode tools and state management
 ├── agents/
-│   ├── types.ts              # SubAgentDefinition, ApiConfig interfaces
+│   ├── types.ts              # SubAgentDefinition, ApiConfig, AgentStatus interfaces
+│   ├── plan-types.ts         # Plan, PlanStep, PlanState interfaces
+│   ├── agent-state.ts        # AgentStateManager - activation state machine
 │   ├── manager.ts            # SubAgentManager - list, activate, deactivate
 │   ├── extractor.ts          # Agentic extraction from Craft documents
 │   ├── api-tools.ts          # Dynamic MCP server factory for REST APIs
@@ -176,10 +178,13 @@ apps/
 │       └── shared/           # IPC types
 └── tui/                      # @craft-agent/tui
     └── src/
-        ├── components/       # Ink/React terminal components (including PlanMenu, PlanReview, TodoList)
-        ├── hooks/            # TUI-specific hooks
-        ├── keyboard/         # Keyboard handling
-        └── utils/            # Terminal utilities (including gradient.ts for ultrathink)
+        ├── components/       # Ink/React terminal components (PlanMenu, PlanReview, TodoList, etc.)
+        ├── hooks/
+        │   ├── core/         # useAgent.ts, useAgentState.ts (agent activation state machine)
+        │   ├── input/        # useCommands.ts, useHistory.ts, useMentionHandler.ts
+        │   └── modals/       # useModalState.ts, useWorkspaceHandlers.ts
+        ├── keyboard/         # Keyboard handling (mappings.ts)
+        └── utils/            # Terminal utilities (gradient.ts for ultrathink, markdown.ts)
 ```
 
 ## Architecture
