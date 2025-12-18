@@ -1,0 +1,43 @@
+import type { ComponentType, ReactNode } from 'react'
+
+export type ControlType =
+  | { type: 'boolean' }
+  | { type: 'string'; placeholder?: string }
+  | { type: 'textarea'; placeholder?: string; rows?: number }
+  | { type: 'number'; min?: number; max?: number; step?: number }
+  | { type: 'select'; options: Array<{ label: string; value: string }> }
+
+export interface PropDefinition {
+  name: string
+  description?: string
+  control: ControlType
+  defaultValue: unknown
+}
+
+export interface ComponentVariant {
+  name: string
+  description?: string
+  props: Record<string, unknown>
+}
+
+export type Category = 'Onboarding' | 'Chat' | 'Markdown' | 'Icons'
+
+export interface ComponentEntry {
+  id: string
+  name: string
+  category: Category
+  description: string
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  component: ComponentType<any>
+  props: PropDefinition[]
+  variants?: ComponentVariant[]
+  /** Returns mock data to merge with props (callbacks, complex objects) */
+  mockData?: () => Record<string, unknown>
+  /** Optional wrapper component for context providers */
+  wrapper?: ComponentType<{ children: ReactNode }>
+}
+
+export interface CategoryGroup {
+  name: Category
+  components: ComponentEntry[]
+}

@@ -2,11 +2,50 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Important:** Keep this file up-to-date whenever functionality changes. This should always reflect the current state of the codebase, including architecture, interfaces, and key patterns.
+**Important:** Keep documentation up-to-date whenever functionality changes. Update the relevant files based on what you changed:
+
+| If you change... | Update these docs |
+|------------------|-------------------|
+| `packages/shared/` (agent, auth, config, credentials, mcp, prompts, utils) | This file (`CLAUDE.md`) |
+| `apps/electron/` | `apps/electron/CLAUDE.md`, `apps/electron/README.md` |
+| `apps/tui/` | `apps/tui/CLAUDE.md`, `apps/tui/README.md` |
+| `packages/core/` | `packages/core/CLAUDE.md`, `packages/core/README.md` |
+| Monorepo structure, commands, releases | This file (`CLAUDE.md`), root `README.md` |
 
 ## Project Overview
 
-Craft Agent is a Claude Code-like terminal interface for managing Craft documents. It uses the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) to interact with Claude models and connects to Craft MCP servers for document operations. Supports multiple workspaces with separate conversations and OAuth authentication.
+Craft Agent is a Claude Code-like interface for managing Craft documents. It uses the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) to interact with Claude models and connects to Craft MCP servers for document operations. Supports multiple workspaces with separate conversations and OAuth authentication.
+
+**Two interfaces available:**
+- **TUI (Terminal)** - Interactive CLI similar to Claude Code
+- **Electron (Desktop)** - GUI with multi-session inbox view
+
+## Monorepo Structure
+
+This is a Bun-based monorepo with the following organization:
+
+```
+craft-tui-agent/
+├── apps/
+│   ├── electron/          # Electron desktop app (GUI)
+│   └── tui/               # Terminal interface (CLI)
+└── packages/
+    ├── core/              # @craft-agent/core - Shared types only
+    └── shared/            # @craft-agent/shared - Core business logic (agent, auth, storage)
+```
+
+Apps import shared code via clean package imports:
+```typescript
+import { CraftAgent } from '@craft-agent/shared/agent';
+import { loadStoredConfig } from '@craft-agent/shared/config';
+import type { Workspace } from '@craft-agent/core/types';
+```
+
+**Sub-project documentation:**
+- [`apps/electron/CLAUDE.md`](apps/electron/CLAUDE.md) - Electron app details
+- [`apps/tui/CLAUDE.md`](apps/tui/CLAUDE.md) - TUI app details
+- [`packages/core/CLAUDE.md`](packages/core/CLAUDE.md) - Core types
+- [`packages/shared/CLAUDE.md`](packages/shared/CLAUDE.md) - Shared business logic
 
 ## Commands
 
@@ -14,20 +53,24 @@ Craft Agent is a Claude Code-like terminal interface for managing Craft document
 # Install dependencies
 bun install
 
-# Run the application
-bun start                # or: bun run src/index.tsx
+# ===== TUI (Terminal) =====
+bun start                # Run TUI
+bun dev                  # Development with auto-reload
 
-# Development with auto-reload
-bun dev
+# ===== Electron (Desktop) =====
+bun run electron:start   # Build and run Electron app
+bun run electron:build   # Build only
+bun run electron:dev     # Vite dev server (renderer only)
 
-# Type checking
-bun run typecheck
+# ===== Type Checking =====
+bun run typecheck        # Check shared package
+bun run typecheck:all    # Check all packages (core, shared)
 
-# Install globally (creates 'craft' command)
-bun link
+# ===== Global Install =====
+bun link                 # Creates 'craft' command
 ```
 
-**CLI Flags:**
+**TUI CLI Flags:**
 - `--url, -u` - Override MCP server URL
 - `--token, -t` - Override bearer token (testing)
 - `--model, -m` - Override model selection
@@ -63,14 +106,19 @@ bash scripts/uninstall.sh
 
 ## Project Structure
 
+### Shared Business Logic (`packages/shared/src/`)
+
+This package (`@craft-agent/shared`) contains the shared business logic used by both TUI and Electron apps:
+
 ```
-src/
-├── index.tsx                 # CLI entry point, setup routing
+packages/shared/src/
 ├── agent/
 │   ├── craft-agent.ts        # Claude Agent SDK wrapper
 │   └── plan-tools.ts         # Plan mode tools and state management
 ├── agents/
-│   ├── types.ts              # SubAgentDefinition, ApiConfig interfaces
+│   ├── types.ts              # SubAgentDefinition, ApiConfig, AgentStatus interfaces
+│   ├── plan-types.ts         # Plan, PlanStep, PlanState interfaces
+│   ├── agent-state.ts        # AgentStateManager - activation state machine
 │   ├── manager.ts            # SubAgentManager - list, activate, deactivate
 │   ├── extractor.ts          # Agentic extraction from Craft documents
 │   ├── api-tools.ts          # Dynamic MCP server factory for REST APIs
@@ -99,57 +147,64 @@ src/
 │   ├── runner.ts             # HeadlessRunner - non-interactive execution
 │   ├── types.ts              # HeadlessConfig, HeadlessResult, HeadlessEvent
 │   └── output.ts             # Output formatting (text, json, stream-json)
-├── utils/
-│   └── summarize.ts          # Shared summarization for large tool results
-└── tui/
-    ├── App.tsx               # Main app, command routing
-    ├── components/
-    │   ├── ApiAuth.tsx           # API key entry for REST APIs
-    │   ├── ApiKeyChange.tsx      # Change API key dialog
-    │   ├── AskUserQuestion.tsx   # Interactive question UI for SDK hooks
-    │   ├── Header.tsx            # Status bar (model, workspace, tokens, cost)
-    │   ├── Input.tsx             # Main chat input with history & file handling
-    │   ├── McpAuth.tsx           # OAuth flow for MCP servers
-    │   ├── Messages.tsx          # Message display with streaming
-    │   ├── ModelSelector.tsx     # Model selection UI
-    │   ├── PlanMenu.tsx          # Plan mode menu (start/plans/view/approve/cancel)
-    │   ├── PlanReview.tsx        # Plan approval UI (approve/refine/cancel)
-    │   ├── PlanSelector.tsx      # Unified plan list with load/multi-select delete
-    │   ├── Setup.tsx             # First-run configuration wizard
-    │   ├── Spinner.tsx           # Thinking indicator
-    │   ├── TextInput.tsx         # Shared text input (cursor nav, selection, masking)
-    │   ├── TodoList.tsx          # Task list visualization from TodoWrite
-    │   ├── ToolCall.tsx          # Tool execution visualization
-    │   ├── WorkspaceAdd.tsx      # Add new workspace wizard
-    │   ├── WorkspaceRename.tsx   # Rename workspace dialog
-    │   └── WorkspaceSelector.tsx # Workspace switcher
-    ├── hooks/
-    │   ├── useAgent.ts           # Agent state, streaming, token tracking
-    │   ├── useElapsedTime.ts     # Track elapsed time during processing
-    │   ├── useHistory.ts         # Command history (arrow keys)
-    │   └── useResize.ts          # Terminal resize handling
-    ├── keyboard/
-    │   ├── index.ts              # Public exports
-    │   ├── sequences.ts          # Terminal escape sequence definitions
-    │   ├── actions.ts            # Keyboard action types
-    │   └── useKeyboard.ts        # Input normalization hook
-    └── utils/
-        ├── files.ts              # File attachment processing
-        ├── gradient.ts           # Ultrathink gradient rendering
-        ├── markdown.ts           # Markdown rendering with Shiki
-        ├── terminalProgress.ts   # Progress bar display
-        └── toolStatus.ts         # Tool status tracking
+└── utils/
+    ├── debug.ts              # Debug logging to /tmp/craft-debug.log
+    ├── files.ts              # File attachment processing (shared with TUI)
+    └── summarize.ts          # Shared summarization for large tool results
+```
+
+> **Note:** TUI components and hooks live in `apps/tui/src/`. The `packages/shared/src/` directory contains the shared business logic used by both TUI and Electron apps, imported via `@craft-agent/shared/*`.
+
+### Workspace Packages (`packages/`)
+
+```
+packages/
+├── core/                     # @craft-agent/core - Shared types only
+│   └── src/
+│       ├── types/            # Workspace, Session, Message, Agent types
+│       └── utils/            # Shared utilities (debug stub)
+└── shared/                   # @craft-agent/shared - Core business logic
+    └── src/
+        ├── agent/            # CraftAgent, plan-tools
+        ├── agents/           # SubAgent management, extraction
+        ├── auth/             # OAuth, credentials
+        ├── config/           # Storage, preferences
+        ├── credentials/      # Secure credential storage
+        ├── mcp/              # MCP client and validation
+        └── utils/            # Debug, files, summarization
+```
+
+### Applications (`apps/`)
+
+```
+apps/
+├── electron/                 # @craft-agent/electron
+│   └── src/
+│       ├── main/             # Electron main process
+│       ├── preload/          # Context bridge
+│       ├── renderer/         # React UI (Vite + shadcn)
+│       └── shared/           # IPC types
+└── tui/                      # @craft-agent/tui
+    └── src/
+        ├── components/       # Ink/React terminal components (PlanMenu, PlanReview, TodoList, etc.)
+        ├── hooks/
+        │   ├── core/         # useAgent.ts, useAgentState.ts (agent activation state machine)
+        │   ├── input/        # useCommands.ts, useHistory.ts, useMentionHandler.ts
+        │   └── modals/       # useModalState.ts, useWorkspaceHandlers.ts
+        ├── keyboard/         # Keyboard handling (mappings.ts)
+        └── utils/            # Terminal utilities (gradient.ts for ultrathink, markdown.ts)
 ```
 
 ## Architecture
 
-### Entry Point (`src/index.tsx`)
+### Entry Point (`apps/tui/src/index.tsx`)
 - Uses `meow` for CLI argument parsing
 - Enables bracketed paste mode for file drag-drop
 - Routes to Setup wizard or main App based on config
 - Config stored in `~/.craft-agent/config.json`
+- Imports business logic from `@craft-agent/shared/*`
 
-### Agent Layer (`src/agent/craft-agent.ts`)
+### Agent Layer (`packages/shared/src/agent/craft-agent.ts`)
 Core `CraftAgent` class that:
 - Uses `@anthropic-ai/claude-agent-sdk` via the `query()` function
 - Leverages SDK's built-in agentic loop (no manual tool call handling)
@@ -164,7 +219,7 @@ Core `CraftAgent` class that:
 
 **AgentEvent types:** `status`, `text_delta`, `text_complete`, `tool_start`, `tool_result`, `permission_request`, `ask_user`, `error`, `complete`
 
-### Configuration (`src/config/storage.ts`)
+### Configuration (`packages/shared/src/config/storage.ts`)
 Multi-workspace support with:
 ```typescript
 interface StoredConfig {
@@ -194,7 +249,7 @@ interface Workspace {
 - **Workspace OAuth (`workspace_oauth::{workspaceId}`)**: For MCP server authentication. Each MCP server has its own OAuth, separate from Craft platform.
 - The `getWorkspaceAccessTokenAsync()` function does NOT fall back to Craft OAuth - MCP servers require their own credentials.
 
-### Setup Flow (`src/tui/components/Setup.tsx`)
+### Setup Flow (`apps/tui/src/components/Setup.tsx`)
 The setup wizard uses a "Craft-first" flow:
 
 1. **Welcome** - Introduction
@@ -210,12 +265,12 @@ The setup wizard uses a "Craft-first" flow:
 
 **Existing MCP shortcut:** If user already has a workspace configured, setup skips steps 2-3 and goes directly to billing method selection.
 
-**CraftSpaceSelector** (`src/tui/components/craftAuth/CraftSpaceSelector.tsx`):
+**CraftSpaceSelector** (`apps/tui/src/components/craftAuth/CraftSpaceSelector.tsx`):
 - After selecting a space, checks for existing fullSpace MCP links
 - If found: shows list with existing links + "Create new" option
 - If none: auto-creates a new MCP link named "Craft Agent MCP"
 
-### Credential Storage (`src/credentials/`)
+### Credential Storage (`packages/shared/src/credentials/`)
 All sensitive credentials are stored in an AES-256-GCM encrypted file:
 - **Location**: `~/.craft-agent/credentials.enc`
 - **Encryption**: AES-256-GCM with machine-derived key (PBKDF2)
@@ -262,18 +317,18 @@ const mcpCreds = await manager.getMcpOAuth(wsId, agentId, serverName);
 const apiKey = await manager.getApiKeyForAgent(wsId, agentId, apiName);
 ```
 
-### User Preferences (`src/config/preferences.ts`)
+### User Preferences (`packages/shared/src/config/preferences.ts`)
 Stored in `~/.craft-agent/preferences.json`:
 - name, timezone, location, language, notes
 - Embedded in system prompt
 - Updated via `update_user_preferences` tool
 
-### MCP Integration (`src/mcp/`)
+### MCP Integration (`packages/shared/src/mcp/`)
 - `CraftMcpClient`: Basic MCP client for direct tool calls (used by sub-agent manager and `/tools` command)
 - SDK handles MCP connections via HTTP mode configuration
 - `/tools` command fetches actual tools from connected MCP servers via `fetchTools()` in useAgent
 
-### MCP Validation (`src/mcp/validation.ts`)
+### MCP Validation (`packages/shared/src/mcp/validation.ts`)
 Validates MCP connections using the Claude Agent SDK's `mcpServerStatus()` method. This ensures connections work before saving credentials.
 
 **When validation runs:**
@@ -293,7 +348,7 @@ Validates MCP connections using the Claude Agent SDK's `mcpServerStatus()` metho
 - Enter to retry, Esc to go back
 - Credentials are preserved for retry
 
-### Headless Mode (`src/headless/`)
+### Headless Mode (`packages/shared/src/headless/`)
 Non-interactive execution mode for scripts, CI/CD pipelines, and automation workflows.
 
 **Key files:**
@@ -342,7 +397,7 @@ This defense-in-depth approach ensures plan mode is never triggered in automatio
 
 Questions (from `AskUserQuestion` tool) return empty answers in headless mode.
 
-### Subagent System (`src/agents/`)
+### Subagent System (`packages/shared/src/agents/`)
 Subagents are specialized agents defined in Craft documents. When activated, they extend the base agent with custom instructions, MCP servers, and REST APIs.
 
 **Key files:**
@@ -401,7 +456,7 @@ Tool responses can be huge (e.g., full web page content, large Craft documents).
 7. Summary header tells model it can re-call with more specific parameters if needed
 
 **Intent via `_intent` Field (Schema-Enforced):**
-The `_intent` field is enforced via schema modification. The fetch interceptor (`src/cache-ttl-interceptor.ts`) intercepts Anthropic API requests and injects `_intent` into every MCP tool's schema before sending to Claude.
+The `_intent` field is enforced via schema modification. The fetch interceptor (`packages/shared/src/cache-ttl-interceptor.ts`) intercepts Anthropic API requests and injects `_intent` into every MCP tool's schema before sending to Claude.
 
 ```
 SDK subprocess → fetches tools from MCP → Anthropic API request
@@ -437,33 +492,33 @@ This provides:
 | REST API tools (`api_*`) | ✅ Yes | `_intent` field (or tool params fallback) |
 | Built-in SDK tools | ❌ No | N/A (use their own `description` field for UI) |
 
-Shared summarization utility: `src/utils/summarize.ts`
+Shared summarization utility: `packages/shared/src/utils/summarize.ts`
 
 **Credential storage:**
 - Stored in encrypted file via `CredentialManager` (see Credential Storage section)
 - MCP OAuth: `mcp_oauth::{workspaceId}::{agentId}::{serverName}`
 - API keys: `api_key::{workspaceId}::{agentId}::{apiName}` (string or JSON `{username,password}` for basic auth)
 
-### OAuth (`src/auth/oauth.ts`)
+### OAuth (`packages/shared/src/auth/oauth.ts`)
 - Dynamic client registration (no pre-registration)
 - PKCE for security, state for CSRF protection
 - Local callback server on port 8914
 - Automatic token refresh
 
-### TUI Layer (`src/tui/`)
+### TUI Layer (`apps/tui/src/`)
 **App.tsx** - Main component handling:
 - Slash commands: `/help`, `/clear`, `/paste`, `/tools`, `/settings`, `/prefs`, `/setup`, `/cost`, `/model`, `/workspace`, `/debug`, `/exit`
 - Modal state (model selector, workspace selector, etc.)
 - Message persistence
 
-**useAgent hook** - State management:
+**useAgent hook** (`hooks/core/useAgent.ts`) - State management:
 - 50ms throttled streaming updates
 - Token usage tracking (input, output, cache, cost)
 - Permission and question queue handling
 
 **Message types:** `user`, `assistant`, `tool`, `error`, `status`, `system`
 
-### System Prompt (`src/prompts/system.ts`)
+### System Prompt (`packages/shared/src/prompts/system.ts`)
 Includes:
 - Current date/time context
 - User preferences
@@ -495,15 +550,15 @@ Includes:
 - Session failures clear and start fresh
 - Replayed messages skipped via `isReplay` flag
 
-### Plan Mode (`src/agent/plan-tools.ts`)
+### Plan Mode (`packages/shared/src/agent/plan-tools.ts`)
 
 Plan Mode is a structured approach for complex multi-step tasks. Instead of immediately executing actions, the agent first creates a plan, gets user approval, then executes.
 
 **Key Files:**
-- `src/agent/plan-tools.ts` - Custom plan mode tools and state management
-- `src/agents/plan-types.ts` - Plan, PlanStep, PlanState interfaces
-- `src/tui/components/PlanReview.tsx` - User approval UI
-- `src/tui/components/TodoList.tsx` - Task visualization
+- `packages/shared/src/agent/plan-tools.ts` - Custom plan mode tools and state management
+- `packages/shared/src/agents/plan-types.ts` - Plan, PlanStep, PlanState interfaces
+- `apps/tui/src/components/PlanReview.tsx` - User approval UI
+- `apps/tui/src/components/TodoList.tsx` - Task visualization
 
 **Custom Tools (in-process MCP):**
 - `EnterCraftAgentsPlanMode` - Enters planning mode with task description
@@ -585,21 +640,20 @@ When plan mode is active, the hook blocks external operations:
 - Context tokens = base + cache for next request
 - Cost calculated by SDK (`total_cost_usd`)
 
-### Extended Prompt Cache TTL (`src/cache-ttl-interceptor.ts`)
+### Extended Prompt Cache TTL (`packages/shared/src/cache-ttl-interceptor.ts`)
 Extends Anthropic's prompt cache from 5 minutes to 1 hour for longer conversations.
 
 **How it works:**
-1. Imported as FIRST import in `index.tsx` (patches fetch before SDK loads)
-2. Also loaded via `bunfig.toml` preload for dev mode (belt-and-suspenders)
+1. Loaded via `bunfig.toml` preload (patches fetch before any imports evaluate)
+2. For production builds, copied to output folder and loaded via Bun's preload mechanism
 3. Patches `globalThis.fetch` before the SDK captures the reference
 4. Intercepts Anthropic API requests and adds `ttl: "1h"` to `cache_control` blocks
 5. Beta header in `craft-agent.ts` conditionally added based on config/model
 
-**Why first import matters:**
+**Why preload matters:**
 - ES modules capture references at load time
 - The interceptor must patch fetch before SDK imports evaluate
-- Direct import works in compiled binaries (preload doesn't)
-- Preload still helps in dev mode as extra safety
+- Preload ensures the patch runs before any application code
 
 **Configuration (`~/.craft-agent/config.json`):**
 - Not set (default): Auto mode - 1h for Opus models, 5m for others
@@ -634,11 +688,11 @@ Extended thinking mode triggered by the "ultrathink" keyword in user messages.
 | Haiku | 8,000 |
 
 **Files involved:**
-- `src/tui/utils/gradient.ts` - `containsUltrathink()`, `stripUltrathink()`, `renderUltrathinkGradient()`
-- `src/agent/craft-agent.ts` - `ultrathinkMode` property, `setUltrathinkMode()` method
-- `src/tui/hooks/core/useAgent.ts` - Detection, state management, agent configuration
-- `src/tui/components/TextInput.tsx` - Live gradient coloring while typing
-- `src/tui/components/Spinner.tsx` - ThinkingIndicator gradient display
+- `apps/tui/src/utils/gradient.ts` - `containsUltrathink()`, `stripUltrathink()`, `renderUltrathinkGradient()`
+- `packages/shared/src/agent/craft-agent.ts` - `ultrathinkMode` property, `setUltrathinkMode()` method
+- `apps/tui/src/hooks/core/useAgent.ts` - Detection, state management, agent configuration
+- `apps/tui/src/components/TextInput.tsx` - Live gradient coloring while typing
+- `apps/tui/src/components/Spinner.tsx` - ThinkingIndicator gradient display
 
 **Gradient specification (cyan → magenta → cyan):**
 ```
@@ -646,7 +700,7 @@ ANSI 256: [51, 45, 39, 129, 201, 201, 129, 39, 45, 51]
 Hex:      ['#00ffff', '#00d7ff', '#00afff', '#af00ff', '#ff00ff', ...]
 ```
 
-### Keyboard Input Layer (`src/tui/keyboard/`)
+### Keyboard Input Layer (`apps/tui/src/keyboard/`)
 
 Centralized detection helpers for keyboard shortcuts. Works WITH Ink's `useInput` (not as a wrapper).
 
@@ -720,7 +774,7 @@ Different terminals/Ink versions may deliver only the raw character without sett
 
 **Why Header Works But Input Didn't:** Header always renders in exactly 1 line (never wraps). `previousLineCount` always matches actual output. Input with character-by-character cursor rendering can wrap to multiple lines depending on terminal width.
 
-**The Solution (`src/tui/hooks/useResize.ts`):**
+**The Solution (`apps/tui/src/hooks/core/useResize.ts`):**
 1. **Debounce resize events (50ms)** - Prevents multiple clears during drag resize
 2. **Clear screen synchronously** before any state updates (`\x1b[2J\x1b[3J\x1b[H`)
 3. **Increment staticResetKey** via callback in same setTimeout - React 18 batches both state updates
@@ -739,7 +793,7 @@ useResize(handleTerminalResize);
 
 **Key insight:** The `/clear` command worked perfectly because it clears screen THEN updates state. We replicated this pattern for resize with debouncing to prevent flicker.
 
-### TextInput Component (`src/tui/components/TextInput.tsx`)
+### TextInput Component (`apps/tui/src/components/TextInput.tsx`)
 Shared text input used by all input dialogs (API keys, bearer tokens, workspace names, etc.).
 
 **Features:**
@@ -764,7 +818,7 @@ Shared text input used by all input dialogs (API keys, bearer tokens, workspace 
 
 Debug logging is disabled by default. Enable it with the `--debug` flag to write logs to `/tmp/craft-debug.log`.
 
-Use the `debug()` function from `src/tui/utils/debug.ts` to add log entries. These calls are no-ops unless `--debug` is passed.
+Use the `debug()` function from `packages/shared/src/utils/debug.ts` to add log entries. These calls are no-ops unless `--debug` is passed.
 
 **Important:** Never trim or truncate log output (e.g., using `.substring()`). Full log content is essential for debugging.
 
@@ -779,10 +833,19 @@ tail -f /tmp/craft-debug.log
 
 ## Tech Stack
 
-- **Runtime**: Bun
-- **TUI**: Ink 4.x (React for CLIs)
+### Core
+- **Runtime**: Bun (package manager, bundler, runtime)
 - **AI**: @anthropic-ai/claude-agent-sdk
 - **MCP**: @modelcontextprotocol/sdk (via Agent SDK)
-- **Credentials**: AES-256-GCM encrypted file storage (no OS keychain)
+- **Credentials**: AES-256-GCM encrypted file storage
+
+### TUI App
+- **Framework**: Ink 5.x (React for CLIs)
 - **Markdown**: marked + marked-terminal + Shiki syntax highlighting
 - **CLI**: meow for argument parsing
+
+### Electron App
+- **Framework**: Electron + React
+- **UI**: shadcn/ui + Tailwind CSS v4
+- **Bundler**: esbuild (main/preload) + Vite (renderer)
+- **IPC**: Type-safe channels with event streaming
