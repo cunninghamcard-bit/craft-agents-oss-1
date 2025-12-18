@@ -170,10 +170,18 @@ export default function AgentSetupTabPanel({ tab }: AgentSetupTabPanelProps) {
 
   // Review submission handler
   const handleSubmitReview = useCallback(async (answers: Record<number, string>) => {
-    // Convert numeric keys to string keys for the API
+    // Convert numeric indices to actual question text as keys
+    // This matches TUI behavior where keys are the question strings
     const stringAnswers: Record<string, string> = {}
-    for (const [key, value] of Object.entries(answers)) {
-      stringAnswers[String(key)] = value
+    const concerns = agentState.pendingConcerns || []
+    for (const [indexStr, value] of Object.entries(answers)) {
+      const index = parseInt(indexStr, 10)
+      const concern = concerns[index]
+      if (concern) {
+        // Use the question text (suggestedQuestion or description) as the key
+        const question = concern.suggestedQuestion || concern.description
+        stringAnswers[question] = value
+      }
     }
     await agentState.continueAfterReview(stringAnswers)
   }, [agentState])

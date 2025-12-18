@@ -483,27 +483,65 @@ export class SubAgentManager {
 
   /**
    * Get MCP servers with their auth status (for Info dialog)
+   * Also fetches available tools from authenticated servers
    * @param definition - Agent definition
    * @param agentId - Agent ID to check credentials for
-   * @returns Array of servers with hasAuth boolean indicating if credentials are stored
+   * @returns Array of servers with hasAuth boolean and tools array
    */
-  async getMcpServersWithAuthStatus(definition: SubAgentDefinition, agentId: string): Promise<Array<McpServerConfig & { hasAuth: boolean }>> {
+  async getMcpServersWithAuthStatus(definition: SubAgentDefinition, agentId: string): Promise<Array<McpServerConfig & { hasAuth: boolean; tools?: string[] }>> {
     if (!definition.mcpServers) {
       return [];
     }
 
-    const results: Array<McpServerConfig & { hasAuth: boolean }> = [];
+    const results: Array<McpServerConfig & { hasAuth: boolean; tools?: string[] }> = [];
     for (const config of definition.mcpServers) {
       const name = config.name || this.extractNameFromUrl(config.url);
       let hasAuth = false;
+      let tools: string[] | undefined;
 
+      // Check auth status
       if (config.requiresAuth) {
-        // Check if we have non-expired credentials
         const isExpired = await isCredentialExpiredAsync(this.workspaceId, agentId, name);
         hasAuth = !isExpired;
+      } else if (config.bearerToken) {
+        // Static bearer token = always authenticated
+        hasAuth = true;
+      } else {
+        // Public server = no auth needed, consider as authenticated
+        hasAuth = true;
       }
 
-      results.push({ ...config, name, hasAuth });
+      // Fetch tools if we can connect (has auth or public)
+      if (hasAuth) {
+        try {
+          let headers: Record<string, string> | undefined;
+
+          if (config.bearerToken) {
+            headers = { Authorization: `Bearer ${config.bearerToken}` };
+          } else if (config.requiresAuth) {
+            const creds = await getServerCredentialsAsync(this.workspaceId, agentId, name);
+            if (creds) {
+              headers = { Authorization: `Bearer ${creds.accessToken}` };
+            }
+          }
+
+          const client = new CraftMcpClient({
+            url: config.url,
+            headers,
+          });
+
+          await client.connect();
+          const toolList = await client.listTools();
+          tools = toolList.map(t => t.name);
+          await client.close();
+
+          debug('[manager.getMcpServersWithAuthStatus] Fetched', tools.length, 'tools from', name);
+        } catch (err) {
+          debug('[manager.getMcpServersWithAuthStatus] Failed to fetch tools from', name, ':', err);
+        }
+      }
+
+      results.push({ ...config, name, hasAuth, tools });
     }
     return results;
   }

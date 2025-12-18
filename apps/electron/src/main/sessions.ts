@@ -29,7 +29,7 @@ import { getCraftToken } from '@craft-agent/shared/auth'
 import { CraftMcpClient } from '@craft-agent/shared/mcp'
 import { SubAgentManager, type SubAgentManagerConfig } from '@craft-agent/shared/agents'
 import type { SubAgentDefinition, AgentStatus, AgentActivateOptions } from '@craft-agent/shared/agents'
-import { AgentStateManager } from '@craft-agent/shared/agents'
+import { AgentStateManager, loadRegistry, invalidateDefinition } from '@craft-agent/shared/agents'
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, IPC_CHANNELS, generateMessageId } from '../shared/types'
 import { generateSessionTitle } from '@craft-agent/shared/utils'
 import { DEFAULT_MODEL } from '@craft-agent/shared/config'
@@ -306,13 +306,98 @@ export class SessionManager {
 
   /**
    * Continue after review step (agent-scoped)
+   * Saves clarifications to Craft document during activation
    */
   async continueAfterReview(workspaceId: string, agentId: string, answers: Record<string, string>): Promise<AgentStatus> {
     const stateManager = this.getAgentStateManager(workspaceId, agentId)
     if (!stateManager) {
       return { status: 'idle' }
     }
+
+    // Get definition before continuing (may transition state)
+    const definition = stateManager.getDefinition()
+    const agentName = stateManager.getAgentName()
+
+    // Save clarifications to Craft document NOW (during activation)
+    if (Object.keys(answers).length > 0 && definition) {
+      console.log(`[SessionManager] Saving clarifications for ${agentName || agentId} (${Object.keys(answers).length} answers)`)
+      await this.saveClarificationsToDocument(workspaceId, agentId, agentName || agentId, answers, definition)
+    }
+
+    // Continue the state machine
     return stateManager.continueAfterReview(answers)
+  }
+
+  /**
+   * Save clarifications to Craft document using workspace MCP client
+   */
+  private async saveClarificationsToDocument(
+    workspaceId: string,
+    agentId: string,
+    agentName: string,
+    answers: Record<string, string>,
+    definition: SubAgentDefinition
+  ): Promise<void> {
+    console.log(`[SessionManager] Saving clarifications for agent ${agentName}`)
+
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      console.error(`[SessionManager] Cannot save clarifications - workspace ${workspaceId} not found`)
+      return
+    }
+
+    // Get the document ID from the registry
+    const registry = loadRegistry(workspaceId)
+    const agentMeta = registry?.agents.find(a => a.id === agentId)
+    const documentId = agentMeta?.documentId || 'unknown'
+    const blockId = definition.instructionsBlockId || 'unknown'
+
+    // Build clarifications text
+    const clarificationsText = Object.entries(answers)
+      .map(([question, answer]) => `Q: ${question}\nA: ${answer}`)
+      .join('\n\n')
+
+    // Build save prompt
+    const savePrompt = `Update your Instructions document in Craft with these clarifications. This is important:
+
+1. First, use blocks_get to read the current instructions content
+2. Find any open questions or concerns in the instructions that these clarifications answer
+3. REPLACE those questions/concerns with the actual answers - don't just append
+4. Use blocks_update to save the complete updated instructions
+
+Document ID: ${documentId}
+Instructions Block ID: ${blockId}
+
+Clarifications (answers to questions in your instructions):
+${clarificationsText}
+
+The goal is to have clean, actionable instructions without unanswered questions. Remove the questions and integrate the answers naturally into the relevant sections.`
+
+    // Create agent with workspace MCP
+    const config = loadStoredConfig()
+    const tempAgent = new CraftAgent({
+      workspace,
+      model: config?.model,
+    })
+
+    try {
+      console.log('[SessionManager] Sending save clarifications message...')
+      for await (const event of tempAgent.chat(savePrompt)) {
+        if (event.type === 'tool_start') {
+          console.log(`[SessionManager] Clarifications: ${event.toolName}`)
+        } else if (event.type === 'error') {
+          console.error(`[SessionManager] Clarifications error: ${event.message}`)
+        }
+      }
+      console.log('[SessionManager] Clarifications saved')
+
+      // Invalidate cache
+      invalidateDefinition(workspaceId, agentId)
+    } catch (error) {
+      console.error('[SessionManager] Error saving clarifications:', error)
+    } finally {
+      tempAgent.dispose()
+    }
   }
 
   /**

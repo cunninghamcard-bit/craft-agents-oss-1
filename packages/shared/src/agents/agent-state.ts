@@ -249,7 +249,7 @@ export class AgentStateManager extends TypedEventEmitter<AgentStateEvents> {
 
   /**
    * Continue activation after user completes review
-   * @param _answers - Map of question -> answer from user (stored elsewhere, not used here)
+   * @param _answers - Map of question -> answer from user (caller is responsible for saving to Craft)
    */
   async continueAfterReview(_answers: Record<string, string>): Promise<AgentStatus> {
     debug('[AgentStateManager.continueAfterReview] Resuming after review');

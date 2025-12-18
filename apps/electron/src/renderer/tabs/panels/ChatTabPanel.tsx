@@ -6,7 +6,7 @@
  */
 
 import * as React from 'react'
-import { AlertCircle, Bot, Loader2 } from 'lucide-react'
+import { AlertCircle, Bot } from 'lucide-react'
 import { ChatDisplay } from '@/components/chat/ChatDisplay'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/loading-indicator'
@@ -34,15 +34,37 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
 
   const { closeTab } = useTabs()
 
-  // Find the session for this tab
+  // Find the session for this tab - check early to avoid unnecessary hook calls
   const session = sessions.find((s) => s.id === chatTab.sessionId) || null
 
   // Get agent status from main process (source of truth)
   // Agent-scoped: keyed by (workspaceId, agentId), not sessionId
-  const agentState = useAgentState(chatTab.workspaceId, chatTab.agentId || null)
+  // Pass null for agentId if session doesn't exist to avoid unnecessary IPC calls
+  const agentState = useAgentState(
+    session ? chatTab.workspaceId : null,
+    session ? (chatTab.agentId || null) : null
+  )
 
   // Get pending permission for this session
   const pendingPermission = usePendingPermission(chatTab.sessionId)
+
+  // Handle file opens - optionally open in tab instead of external app
+  const handleOpenFile = React.useCallback(
+    (path: string) => {
+      // For now, open in external app (can be changed to openFileTab later)
+      onOpenFile(path)
+    },
+    [onOpenFile]
+  )
+
+  // Handle URL opens - optionally open in tab instead of external browser
+  const handleOpenUrl = React.useCallback(
+    (url: string) => {
+      // For now, open in external browser (can be changed to openBrowserTab later)
+      onOpenUrl(url)
+    },
+    [onOpenUrl]
+  )
 
   // Handle missing session (deleted while tab was open)
   if (!session) {
@@ -113,24 +135,6 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
       </div>
     )
   }
-
-  // Handle file opens - optionally open in tab instead of external app
-  const handleOpenFile = React.useCallback(
-    (path: string) => {
-      // For now, open in external app (can be changed to openFileTab later)
-      onOpenFile(path)
-    },
-    [onOpenFile]
-  )
-
-  // Handle URL opens - optionally open in tab instead of external browser
-  const handleOpenUrl = React.useCallback(
-    (url: string) => {
-      // For now, open in external browser (can be changed to openBrowserTab later)
-      onOpenUrl(url)
-    },
-    [onOpenUrl]
-  )
 
   return (
     <ChatDisplay

@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react"
 import { formatDistanceToNow } from "date-fns"
-import { Archive, ArchiveRestore, Trash2, Bot, Pencil, MoreHorizontal } from "lucide-react"
+import { Archive, ArchiveRestore, Trash2, Bot, Pencil, MoreHorizontal, ExternalLink } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -48,6 +48,7 @@ interface SessionItemProps {
   onUnarchive?: (sessionId: string) => void
   onDelete: (sessionId: string) => void
   onSelect: (forceNewTab: boolean) => void
+  onOpenInNewTab: () => void
 }
 
 /**
@@ -67,6 +68,7 @@ function SessionItem({
   onUnarchive,
   onDelete,
   onSelect,
+  onOpenInNewTab,
 }: SessionItemProps) {
   const [menuOpen, setMenuOpen] = useState(false)
 
@@ -79,88 +81,95 @@ function SessionItem({
   return (
     <div>
       {index > 0 && <Separator />}
-      <button
-        {...itemProps}
-        className={cn(
-          "group flex w-full flex-col items-start gap-2 pl-5 pr-4 py-3 text-left text-sm transition-all hover:bg-foreground/5 relative outline-none",
-          isSelected && "bg-muted",
-          "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-        )}
-        onClick={handleClick}
-        onKeyDown={(e) => {
-          itemProps.onKeyDown(e)
-          onKeyDown(e, item)
-        }}
-      >
-        {/* Card Header Row */}
-        <div className="flex w-full flex-col gap-0.5 pr-6">
-          <div className="flex items-center gap-2">
-            {item.isProcessing && (
-              <span className="flex h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
-            )}
-            <div className="font-semibold font-sans truncate">
-              {getSessionTitle(item)}
+      {/* Wrapper for button + dropdown, group for hover state */}
+      <div className="relative group">
+        <button
+          {...itemProps}
+          className={cn(
+            "flex w-full flex-col items-start gap-2 pl-5 pr-4 py-3 text-left text-sm transition-all hover:bg-foreground/5 outline-none",
+            isSelected && "bg-muted",
+            "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          )}
+          onClick={handleClick}
+          onKeyDown={(e) => {
+            itemProps.onKeyDown(e)
+            onKeyDown(e, item)
+          }}
+        >
+          {/* Card Header Row */}
+          <div className="flex w-full flex-col gap-0.5 pr-6">
+            <div className="flex items-center gap-2">
+              {item.isProcessing && (
+                <span className="flex h-2 w-2 rounded-full bg-primary animate-pulse shrink-0" />
+              )}
+              <div className="font-semibold font-sans truncate">
+                {getSessionTitle(item)}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
+              <span>
+                {item.messages.length} message{item.messages.length !== 1 ? 's' : ''}
+                {item.lastMessageAt && (
+                  <> · {formatDistanceToNow(new Date(item.lastMessageAt), { addSuffix: true })}</>
+                )}
+              </span>
+              {item.agentName && (
+                <span className="flex items-center gap-1 ml-auto">
+                  <Bot className="h-3 w-3" />
+                  {item.agentName}
+                </span>
+              )}
             </div>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground/70">
-            <span>
-              {item.messages.length} message{item.messages.length !== 1 ? 's' : ''}
-              {item.lastMessageAt && (
-                <> · {formatDistanceToNow(new Date(item.lastMessageAt), { addSuffix: true })}</>
-              )}
-            </span>
-            {item.agentName && (
-              <span className="flex items-center gap-1 ml-auto">
-                <Bot className="h-3 w-3" />
-                {item.agentName}
-              </span>
-            )}
+          {/* Preview Text */}
+          <div className="line-clamp-2 text-xs text-muted-foreground">
+            {preview}
           </div>
-        </div>
-        {/* Preview Text */}
-        <div className="line-clamp-2 text-xs text-muted-foreground">
-          {preview}
-        </div>
-        {/* More menu dropdown - visible on hover or when menu is open */}
-        <DropdownMenu onOpenChange={setMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <div
-              className={cn(
-                "absolute right-2 top-3 transition-opacity",
-                menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-              )}
-              onClick={(e) => e.stopPropagation()}
-            >
+        </button>
+        {/* More menu dropdown - outside button, visible on hover or when menu is open */}
+        <div
+          className={cn(
+            "absolute right-2 top-3 transition-opacity z-10",
+            menuOpen ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          )}
+        >
+          <DropdownMenu onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
               <div className="p-1 rounded hover:bg-foreground/10 data-[state=open]:bg-foreground/10 cursor-pointer">
                 <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
               </div>
-            </div>
-          </DropdownMenuTrigger>
-          <StyledDropdownMenuContent align="end">
-            <StyledDropdownMenuItem onClick={() => onRenameClick(item.id, getSessionTitle(item))}>
-              <Pencil />
-              Rename
-            </StyledDropdownMenuItem>
-            <StyledDropdownMenuSeparator />
-            {onArchive && (
-              <StyledDropdownMenuItem onClick={() => onArchive(item.id)}>
-                <Archive />
-                Archive
+            </DropdownMenuTrigger>
+            <StyledDropdownMenuContent align="end">
+              <StyledDropdownMenuItem onClick={onOpenInNewTab}>
+                <ExternalLink />
+                Open in new tab
               </StyledDropdownMenuItem>
-            )}
-            {onUnarchive && (
-              <StyledDropdownMenuItem onClick={() => onUnarchive(item.id)}>
-                <ArchiveRestore />
-                Unarchive
+              <StyledDropdownMenuSeparator />
+              <StyledDropdownMenuItem onClick={() => onRenameClick(item.id, getSessionTitle(item))}>
+                <Pencil />
+                Rename
               </StyledDropdownMenuItem>
-            )}
-            <StyledDropdownMenuItem onClick={() => onDelete(item.id)} variant="destructive">
-              <Trash2 />
-              Delete
-            </StyledDropdownMenuItem>
-          </StyledDropdownMenuContent>
-        </DropdownMenu>
-      </button>
+              <StyledDropdownMenuSeparator />
+              {onArchive && (
+                <StyledDropdownMenuItem onClick={() => onArchive(item.id)}>
+                  <Archive />
+                  Archive
+                </StyledDropdownMenuItem>
+              )}
+              {onUnarchive && (
+                <StyledDropdownMenuItem onClick={() => onUnarchive(item.id)}>
+                  <ArchiveRestore />
+                  Unarchive
+                </StyledDropdownMenuItem>
+              )}
+              <StyledDropdownMenuItem onClick={() => onDelete(item.id)} variant="destructive">
+                <Trash2 />
+                Delete
+              </StyledDropdownMenuItem>
+            </StyledDropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
       {isLast && <Separator />}
     </div>
   )
@@ -351,6 +360,10 @@ export function SessionList({
                   setSession({ ...session, selected: item.id })
                   // Notify parent for tab handling
                   onSessionSelect?.(item, { forceNewTab })
+                }}
+                onOpenInNewTab={() => {
+                  // Open in new tab without changing selection
+                  onSessionSelect?.(item, { forceNewTab: true })
                 }}
               />
             )

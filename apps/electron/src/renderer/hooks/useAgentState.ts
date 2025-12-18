@@ -89,17 +89,27 @@ export function useAgentState(workspaceId: string | null, agentId: string | null
       return
     }
 
+    // Track if effect is still active to prevent stale updates
+    let isActive = true
+
     // Get initial status
-    window.electronAPI.getAgentStatus(workspaceId, agentId).then(setStatus).catch(console.error)
+    window.electronAPI.getAgentStatus(workspaceId, agentId)
+      .then(status => {
+        if (isActive) setStatus(status)
+      })
+      .catch(console.error)
 
     // Listen for status updates via AGENT_STATUS_CHANGED broadcast
     const cleanup = window.electronAPI.onAgentStatusChanged((ws, agent, newStatus) => {
-      if (ws === workspaceId && agent === agentId) {
+      if (isActive && ws === workspaceId && agent === agentId) {
         setStatus(newStatus)
       }
     })
 
-    return cleanup
+    return () => {
+      isActive = false
+      cleanup()
+    }
   }, [workspaceId, agentId])
 
   // Derive convenience booleans from status

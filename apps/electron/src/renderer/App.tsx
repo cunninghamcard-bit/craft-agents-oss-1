@@ -221,6 +221,9 @@ export default function App() {
               if (lastAssistant?.role === 'assistant') {
                 return {
                   ...session,
+                  // Set isProcessing false immediately to prevent brief "Thinking..." flash
+                  // If more tools run after this, tool_start will set it back to true
+                  isProcessing: false,
                   messages: [
                     ...msgs.slice(0, -1),
                     { ...lastAssistant, content: event.text, isStreaming: false }
@@ -239,6 +242,7 @@ export default function App() {
                 // Update existing message with complete input (second event has full input)
                 return {
                   ...session,
+                  isProcessing: true, // Ensure processing state is set (tools may run after text_complete)
                   messages: session.messages.map((m, i) =>
                     i === existingIndex
                       ? { ...m, toolInput: event.toolInput }
@@ -249,6 +253,7 @@ export default function App() {
               // First event - create new message
               return {
                 ...session,
+                isProcessing: true, // Ensure processing state is set (tools may run after text_complete)
                 messages: [
                   ...session.messages,
                   {

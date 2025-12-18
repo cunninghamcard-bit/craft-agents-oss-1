@@ -612,7 +612,7 @@ agentState.isActive         // Agent fully activated
 
 // Actions
 await agentState.activate(agentId)           // Start activation
-await agentState.continueAfterReview(answers) // After user answers concerns
+await agentState.continueAfterReview(answers) // After user answers concerns (saves to Craft)
 await agentState.continueAfterMcpAuth()      // After MCP OAuth complete
 await agentState.continueAfterApiAuth()      // After API key entered
 agentState.deactivate()                      // Return to idle
@@ -626,6 +626,8 @@ agentState.pendingApis        // APIs needing credentials
 ```
 
 **IPC Communication:** The hook communicates with `AgentStateManager` in the main process via `window.electronAPI` calls, keeping the renderer stateless.
+
+**Concern Answers (Clarifications):** When the user answers concerns during agent setup (`continueAfterReview`), the answers are saved back to the source Craft document. The main process creates a temporary agent that sends a hidden message asking Claude to update the Instructions document with the user's answers. After saving, the definition cache is invalidated so the next activation gets fresh instructions.
 
 ## Application Menu
 
