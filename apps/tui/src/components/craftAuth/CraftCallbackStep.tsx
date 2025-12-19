@@ -1,8 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
-import crypto from 'crypto';
 import open from 'open';
-import { createCallbackServer } from '@craft-agent/shared/auth';
+import { createCallbackServer, generatePKCE, generateState, buildCraftLoginUrl } from '@craft-agent/shared/auth';
 import { CraftApi, type ProfileResponse } from '@craft-agent/shared/clients';
 import { AnimatedSpinner } from '../Spinner';
 import { debug } from '@craft-agent/shared/utils';
@@ -17,31 +16,12 @@ export interface CraftCallbackStepProps {
   onBack: () => void;
 }
 
-function generatePKCE(): { codeVerifier: string; codeChallenge: string } {
-  const codeVerifier = crypto.randomBytes(32)
-    .toString('base64url');
-
-  const codeChallenge = crypto
-    .createHash('sha256')
-    .update(codeVerifier)
-    .digest('base64url');
-
-  return { codeVerifier, codeChallenge };
-}
-
-function generateState(): string {
-  return crypto.randomBytes(16).toString('base64url');
-}
-
 const callback = async () => {
   const callbackServer = await createCallbackServer();
   const { codeVerifier, codeChallenge } = generatePKCE();
   const callbackUrl = `${callbackServer.url}/callback`;
   const state = generateState();
-
-  const platform = 'chaps';
-  const domain = 'docs.craft.do';
-  const url = `http://${domain}/login?platform=${encodeURIComponent(platform)}&code_challenge=${encodeURIComponent(codeChallenge)}&state=${encodeURIComponent(state)}&redirect_uri=${encodeURIComponent(callbackUrl)}`;
+  const url = buildCraftLoginUrl({ codeChallenge, state, redirectUri: callbackUrl });
   return { url, callbackUrl, callbackServer, codeVerifier, state };
 };
 
@@ -177,6 +157,10 @@ export const CraftCallbackStep: React.FC<CraftCallbackStepProps> = ({ onComplete
 
     return () => {
       cancelled = true;
+      // Close callback server on unmount to prevent resource leak
+      if (callbackDataRef.current?.callbackServer) {
+        callbackDataRef.current.callbackServer.close();
+      }
     };
   }, []);
 

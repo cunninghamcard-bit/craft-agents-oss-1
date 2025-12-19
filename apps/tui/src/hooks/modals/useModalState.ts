@@ -13,13 +13,17 @@ export type ModalName =
   | 'workspaceRename'
   | 'apiKeyChange'
   | 'claudeMaxAuth'
+  | 'craftCreditsAuth'
   | 'balance'
   | 'settings'
   | 'logoutConfirm'
   | 'planMenu'
   | 'planSelector'
   | 'planReview'
-  | 'sessionMenu';
+  | 'sessionMenu'
+  | 'credentialsViewer'
+  | 'reauthSelector'
+  | 'authModeOptions';
 
 export interface UseModalStateResult {
   /** Currently active modal, or null if none */

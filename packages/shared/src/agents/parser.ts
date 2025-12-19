@@ -175,7 +175,7 @@ function tryParseMcpConfig(content: string): McpServerConfig[] | null {
 /**
  * Extract a name from URL hostname
  */
-function extractNameFromUrl(url: string): string {
+export function extractNameFromUrl(url: string): string {
   try {
     const hostname = new URL(url).hostname;
     // Remove common prefixes like 'mcp.' or 'api.'

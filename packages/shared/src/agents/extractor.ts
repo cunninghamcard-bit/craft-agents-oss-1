@@ -226,10 +226,14 @@ For each API found, extract:
   - type: "header" - Custom header auth (e.g., -H "x-api-key: KEY")
     Set headerName to the header name (e.g., "x-api-key", "X-API-Key")
   - type: "bearer" - Authorization header auth (e.g., -H "Authorization: Bearer KEY")
-    Set authScheme if NOT "Bearer" (e.g., "Token", "ApiKey", "Key")
+    Set authScheme based on what appears before the token:
+    - "Bearer" prefix → authScheme: "Bearer" (or omit, it's the default)
+    - "Token" prefix → authScheme: "Token"
+    - NO prefix (just -H "Authorization: KEY") → authScheme: "" (empty string!)
     Default authScheme is "Bearer" if not specified
   - type: "query" - Query parameter auth (e.g., ?api_key=KEY or ?key=KEY)
-    Set queryParam to the parameter name (e.g., "api_key", "key", "token")
+    Set queryParam to the parameter name (e.g., "api_key", "key", "token", "secret")
+    IMPORTANT: If the API secret/key is passed as a query parameter, use this type!
   - type: "basic" - HTTP Basic Authentication (username:password)
     User will be prompted for two credentials separately.
 
@@ -246,11 +250,13 @@ For each API found, extract:
   1. Look at curl examples or code snippets FIRST - they are the most reliable source
   2. If you see -H "Authorization: Bearer xxx" → use "bearer"
   3. If you see -H "Authorization: Token xxx" → use "bearer" with authScheme: "Token"
-  4. If you see -H "x-api-key: xxx" or similar custom header → use "header" with headerName
-  5. If you see ?api_key=xxx in URL → use "query" with queryParam
-  6. If you see curl -u username:password OR -H "Authorization: Basic xxx" → use "basic"
-  7. If no auth in examples AND API is described as public/free → use "none"
-  8. If unclear but API requires auth → default to "bearer"
+  4. If you see -H "Authorization: xxx" with NO prefix (just the token/key directly) → use "bearer" with authScheme: "" (empty string)
+  5. If you see -H "x-api-key: xxx" or similar custom header → use "header" with headerName
+  6. If you see ?api_key=xxx or ?secret=xxx or similar in URL → use "query" with queryParam
+  7. If the API requires passing the secret/key as a query parameter → use "query" with queryParam
+  8. If you see curl -u username:password OR -H "Authorization: Basic xxx" → use "basic"
+  9. If no auth in examples AND API is described as public/free → use "none"
+  10. If unclear but API requires auth → default to "bearer"
 
   IMPORTANT: Do NOT use "basic" just because the word "basic" appears in the document.
   Only use "basic" if you see ACTUAL HTTP Basic Authentication patterns:
@@ -297,6 +303,13 @@ For each API found, extract:
   **Example:** {"urls": ["https://example.com"], "text": {"maxCharacters": 5000}}
   """
 - docsUrl: Link to official API documentation if found (optional)
+- headers: Custom headers required by the API (besides auth and Content-Type).
+  Look for curl examples with additional -H headers like:
+  -H "X-Api-Version: 1.0"
+  -H "X-Client: my-app"
+  -H "X-Luki-Platform: Craft-Agent"
+  Extract these as {"X-Api-Version": "1.0", "X-Client": "my-app", ...}
+  DO NOT include: Authorization, Content-Type, Accept (these are handled separately)
 
 4. INFO MESSAGES
 Use the "info" array to communicate important information to the user. You MUST add info messages for:
@@ -479,6 +492,11 @@ Rules:
                     description: 'CRITICAL: Comprehensive API reference as markdown text. Include all endpoints with paths, methods, parameters, examples, and constraints. This becomes the tool description.',
                   },
                   docsUrl: { type: 'string', description: 'Link to official API documentation if found' },
+                  headers: {
+                    type: 'object',
+                    additionalProperties: { type: 'string' },
+                    description: 'Custom headers required by the API (e.g., {"X-Api-Version": "1.0"}). Do NOT include Authorization or Content-Type.',
+                  },
                 },
                 required: ['name', 'baseUrl', 'documentation'],
               },

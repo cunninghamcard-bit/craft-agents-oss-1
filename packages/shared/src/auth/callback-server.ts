@@ -14,6 +14,8 @@ export interface CallbackPayload {
 export interface CallbackServer {
   promise: Promise<CallbackPayload>;
   url: string;
+  /** Close the callback server. Call this on component unmount to clean up. */
+  close: () => void;
 }
 
 export type AppType = 'terminal' | 'electron';
@@ -632,5 +634,11 @@ export async function createCallbackServer(options?: CreateCallbackServerOptions
   return {
     promise: callbackPromise,
     url: `http://localhost:${port}`,
+    close: () => {
+      if (server) {
+        server.close();
+        server = null;
+      }
+    },
   };
 }

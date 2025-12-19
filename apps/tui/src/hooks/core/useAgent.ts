@@ -47,7 +47,15 @@ import { SubAgentManager } from '@craft-agent/shared/agents';
 import type { SubAgentDefinition, McpServerConfig, ApiConfig, Concern } from '@craft-agent/shared/agents';
 import type { ExtractionProgressEvent } from '@craft-agent/shared/agents';
 import type { Plan } from '@craft-agent/shared/agents';
-import { invalidateDefinition, loadRegistry, clearAgentCredentialsAsync } from '@craft-agent/shared/agents';
+import {
+  invalidateDefinition,
+  loadRegistry,
+  clearAgentCredentialsAsync,
+  getServerCredentialsAsync,
+  getApiKeyCredentialAsync,
+  saveServerCredentialsAsync,
+  saveApiKeyCredentialAsync,
+} from '@craft-agent/shared/agents';
 import { CraftOAuth, getMcpBaseUrl } from '@craft-agent/shared/auth';
 import { debug } from '@craft-agent/shared/utils';
 import { containsUltrathink, stripUltrathink } from '../../utils/gradient.ts';
@@ -195,6 +203,8 @@ export interface UseAgentResult {
   deactivateAgent: () => void;
   reloadAgent: () => Promise<boolean>;
   resetAgent: () => Promise<boolean>;
+  /** Clear the CraftAgent instance so the next message creates a fresh one (for auth changes) */
+  resetAgentInstance: () => void;
   refreshAgents: () => Promise<string[] | { error: string }>;
   fetchTools: () => Promise<{ name: string; tools: { name: string; description?: string }[] }[]>;
   agentsLoading: boolean;
@@ -208,6 +218,10 @@ export interface UseAgentResult {
   completeApiAuth: (success: boolean) => Promise<void>;
   cancelApiAuth: () => void;
   triggerApiAuth: () => void;  // For reauth command
+  // Credential operations for active agent (encapsulates workspaceId/agentId)
+  getAgentCredential: (type: 'mcp' | 'api', name: string) => Promise<string | null>;
+  saveAgentCredential: (type: 'mcp' | 'api', name: string, value: string) => Promise<void>;
+  clearAgentCredentials: (mcpNames: string[], apiNames: string[]) => Promise<void>;
   // Review mode (concerns from extraction that need user input)
   pendingReview: PendingReviewRequest | null;
   completeReview: (answers: Record<string, string>) => Promise<void>;
@@ -1495,6 +1509,18 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     return true;
   }, [agentState]);
 
+  // Reset the CraftAgent instance (for auth changes)
+  // This clears the agent so the next message creates a fresh one with new credentials
+  const resetAgentInstance = useCallback(() => {
+    debug('[useAgent.resetAgentInstance] Clearing CraftAgent instance for auth change');
+    agentRef.current = null;
+    // Clear session so we start fresh (SDK sessions may be tied to auth)
+    if (session) {
+      debug('[useAgent.resetAgentInstance] Clearing SDK session ID');
+      updateSessionSdkId(session.id, '');
+    }
+  }, [session]);
+
   // Complete MCP auth flow - called when auth finishes (success or failure)
   const completeMcpAuth = useCallback(async (success: boolean) => {
     if (!agentState.isNeedsMcpAuth) {
@@ -1604,6 +1630,37 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       await agentState.activate(agentId);
     }
   }, [agentState]);
+
+  // Credential operations for active agent (encapsulates workspaceId/agentId internally)
+  const getAgentCredential = useCallback(async (type: 'mcp' | 'api', name: string): Promise<string | null> => {
+    const agentId = agentState.agentId;
+    if (!agentId) return null;
+
+    if (type === 'mcp') {
+      const creds = await getServerCredentialsAsync(config.workspace.id, agentId, name);
+      return creds?.accessToken ?? null;
+    } else {
+      return getApiKeyCredentialAsync(config.workspace.id, agentId, name);
+    }
+  }, [agentState.agentId, config.workspace.id]);
+
+  const saveAgentCredential = useCallback(async (type: 'mcp' | 'api', name: string, value: string): Promise<void> => {
+    const agentId = agentState.agentId;
+    if (!agentId) return;
+
+    if (type === 'mcp') {
+      await saveServerCredentialsAsync(config.workspace.id, agentId, name, { accessToken: value });
+    } else {
+      await saveApiKeyCredentialAsync(config.workspace.id, agentId, name, value);
+    }
+  }, [agentState.agentId, config.workspace.id]);
+
+  const clearAgentCredentials = useCallback(async (mcpNames: string[], apiNames: string[]): Promise<void> => {
+    const agentId = agentState.agentId;
+    if (!agentId) return;
+
+    await clearAgentCredentialsAsync(config.workspace.id, agentId, mcpNames, apiNames);
+  }, [agentState.agentId, config.workspace.id]);
 
   // Complete API auth flow - called when API key entry finishes (success or failure)
   const completeApiAuth = useCallback(async (success: boolean) => {
@@ -1997,6 +2054,7 @@ The goal is to have clean, actionable instructions without unanswered questions.
     deactivateAgent,
     reloadAgent,
     resetAgent,
+    resetAgentInstance,
     refreshAgents,
     fetchTools,
     agentsLoading,
@@ -2010,6 +2068,10 @@ The goal is to have clean, actionable instructions without unanswered questions.
     completeApiAuth,
     cancelApiAuth,
     triggerApiAuth,
+    // Credential operations for active agent
+    getAgentCredential,
+    saveAgentCredential,
+    clearAgentCredentials,
     // Review mode (derived from useAgentState)
     pendingReview,
     completeReview,

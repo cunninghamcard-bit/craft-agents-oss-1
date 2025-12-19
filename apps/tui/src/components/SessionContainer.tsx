@@ -11,12 +11,15 @@ import { WorkspaceAdd } from './WorkspaceAdd.tsx';
 import { WorkspaceRename } from './WorkspaceRename.tsx';
 import { ApiKeyChange } from './ApiKeyChange.tsx';
 import { ClaudeMaxAuth } from './ClaudeMaxAuth.tsx';
+import { CraftCreditsAuth } from './CraftCreditsAuth.tsx';
 import { AskUserQuestion } from './AskUserQuestion.tsx';
 import { PlanReview } from './PlanReview.tsx';
 import { TodoList } from './TodoList.tsx';
 import { McpAuth } from './McpAuth.tsx';
 import { ApiAuth } from './ApiAuth.tsx';
 import { AgentReview } from './AgentReview.tsx';
+import { CredentialsViewer } from './CredentialsViewer.tsx';
+import { ReauthSelector } from './ReauthSelector.tsx';
 import { PlanMenu, type PlanAction } from './PlanMenu.tsx';
 import { PlanSelector, type PlanFile } from './PlanSelector.tsx';
 import { SessionMenu } from './SessionMenu.tsx';
@@ -25,6 +28,7 @@ import { Balance } from './Balance.tsx';
 import { ErrorBanner } from './ErrorBanner.tsx';
 import type { RecoveryAction } from '@craft-agent/shared/agent';
 import { Settings, type SettingsAction } from './Settings.tsx';
+import { AuthModeOptions } from './AuthModeOptions.tsx';
 import {
   useAgent,
   useHistory,
@@ -152,6 +156,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     deactivateAgent,
     reloadAgent,
     resetAgent,
+    resetAgentInstance,
     refreshAgents,
     fetchTools,
     agentsLoading,
@@ -165,6 +170,10 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     completeApiAuth,
     cancelApiAuth,
     triggerApiAuth,
+    // Credential operations for active agent
+    getAgentCredential,
+    saveAgentCredential,
+    clearAgentCredentials,
     // Review mode
     pendingReview,
     completeReview,
@@ -420,6 +429,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
   // Agent menu handlers hook
   const { handleAgentAction: rawHandleAgentAction, handleAgentMenuCancel } = useAgentMenuHandlers({
     closeModal,
+    openModal,
     activateAgent,
     deactivateAgent,
     reloadAgent,
@@ -449,6 +459,8 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     setTokenDisplayMode,
     setShowCostSetting,
     addMessage: addLocalMessage,
+    resetAgentInstance,
+    isProcessing,
   });
 
   const handleErrorAction = useCallback((action: RecoveryAction) => {
@@ -461,6 +473,18 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       openModal('claudeMaxAuth');
     }
   }, [dismissTypedError, openModal]);
+
+  // Reauth selector handler - after deleting selected credentials, trigger auth flow
+  const handleReauthConfirm = useCallback((mcpNames: string[], apiNames: string[]) => {
+    closeModal();
+    // Trigger the auth flows for deleted credentials
+    if (mcpNames.length > 0) {
+      triggerMcpAuth();
+    }
+    if (apiNames.length > 0) {
+      triggerApiAuth();
+    }
+  }, [closeModal, triggerMcpAuth, triggerApiAuth]);
 
   // Plan menu handler
   const handlePlanAction = useCallback((action: PlanAction) => {
@@ -821,6 +845,29 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         />
       )}
 
+      {/* Credentials viewer overlay */}
+      {isOpen('credentialsViewer') && activeAgentDefinition && activeAgentName && (
+        <CredentialsViewer
+          definition={activeAgentDefinition}
+          agentName={activeAgentName}
+          getCredential={getAgentCredential}
+          saveCredential={saveAgentCredential}
+          onClose={closeModal}
+        />
+      )}
+
+      {/* Reauth selector overlay */}
+      {isOpen('reauthSelector') && activeAgentDefinition && activeAgentName && (
+        <ReauthSelector
+          definition={activeAgentDefinition}
+          agentName={activeAgentName}
+          getCredential={getAgentCredential}
+          clearCredentials={clearAgentCredentials}
+          onConfirm={handleReauthConfirm}
+          onCancel={closeModal}
+        />
+      )}
+
       {/* Plan menu overlay */}
       {isOpen('planMenu') && (
         <PlanMenu
@@ -897,6 +944,14 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         />
       )}
 
+      {/* Craft Credits auth */}
+      {isOpen('craftCreditsAuth') && (
+        <CraftCreditsAuth
+          onSubmit={settingsHandlers.handleCraftCreditsSubmit}
+          onCancel={settingsHandlers.handleCraftCreditsCancel}
+        />
+      )}
+
       {/* Balance / AI credits */}
       {isOpen('balance') && (
         <Balance
@@ -914,6 +969,17 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
           showCost={showCostSetting}
           onAction={settingsHandlers.handleSettingsAction}
           onCancel={settingsHandlers.handleSettingsCancel}
+        />
+      )}
+
+      {/* Auth mode options (use existing vs re-authenticate) */}
+      {isOpen('authModeOptions') && settingsHandlers.pendingAuthSwitch && (
+        <AuthModeOptions
+          authType={settingsHandlers.pendingAuthSwitch.authType}
+          maskedCredential={settingsHandlers.pendingAuthSwitch.maskedCredential}
+          onUseExisting={settingsHandlers.handleAuthModeUseExisting}
+          onReauthenticate={settingsHandlers.handleAuthModeReauthenticate}
+          onCancel={settingsHandlers.handleAuthModeCancel}
         />
       )}
 
