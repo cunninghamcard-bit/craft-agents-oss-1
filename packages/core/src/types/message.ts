@@ -72,6 +72,9 @@ export interface Message {
   attachments?: StoredAttachment[];
   isError?: boolean;
   isStreaming?: boolean;
+  // Pending: streaming text where we don't yet know if it's intermediate
+  // Set to true when text_delta creates message, false when text_complete arrives
+  isPending?: boolean;
   // Intermediate text (commentary between tool calls, not final response)
   isIntermediate?: boolean;
   // Turn ID: Correlation ID from the API's message.id, groups all messages in an assistant turn
@@ -86,21 +89,33 @@ export interface Message {
 
 /**
  * Stored message format (persistence)
- * Excludes transient fields like isStreaming
- * Note: For tool messages, the result is stored in `content` (not duplicated in toolResult)
+ * Excludes only transient fields (isStreaming)
  */
 export interface StoredMessage {
   id: string;
   type: MessageRole;
   content: string;
   timestamp?: number;
+  // Tool-specific fields
   toolName?: string;
+  toolUseId?: string;
   toolInput?: Record<string, unknown>;
+  toolResult?: string;
   toolStatus?: ToolStatus;
   toolDuration?: number;
+  toolIntent?: string;
   isError?: boolean;
   /** Stored attachments for user messages (persisted to disk) */
   attachments?: StoredAttachment[];
+  // Turn grouping - critical for TurnCard rendering after reload
+  isIntermediate?: boolean;
+  turnId?: string;
+  // Error display fields
+  errorCode?: string;
+  errorTitle?: string;
+  errorDetails?: string[];
+  errorOriginal?: string;
+  errorCanRetry?: boolean;
 }
 
 /**
@@ -131,17 +146,35 @@ export interface RecoveryAction {
 }
 
 /**
+ * Error codes for typed errors - must match AgentError.code in shared/agent/errors.ts
+ */
+export type ErrorCode =
+  | 'insufficient_credits'
+  | 'credits_exhausted'
+  | 'invalid_api_key'
+  | 'invalid_credentials'
+  | 'expired_oauth_token'
+  | 'token_expired'
+  | 'rate_limited'
+  | 'service_error'
+  | 'service_unavailable'
+  | 'network_error'
+  | 'mcp_auth_required'
+  | 'mcp_unreachable'
+  | 'unknown_error';
+
+/**
  * Typed error from agent
  */
 export interface TypedError {
   /** Error code for programmatic handling */
-  code: string;
+  code: ErrorCode;
   /** User-friendly title */
   title: string;
   /** Detailed message explaining what went wrong */
   message: string;
   /** Suggested recovery actions */
-  actions?: RecoveryAction[];
+  actions: RecoveryAction[];
   /** Whether auto-retry is possible */
   canRetry: boolean;
   /** Retry delay in ms (if canRetry is true) */

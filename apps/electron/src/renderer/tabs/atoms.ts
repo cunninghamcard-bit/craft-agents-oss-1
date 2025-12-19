@@ -13,19 +13,6 @@ import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import type { Tab, TabState, ChatTab } from './types'
 
-// ============================================================
-// Settings Atoms (global, not workspace-scoped)
-// ============================================================
-
-/**
- * Tool display mode: compact (single line) or verbose (expanded with input/output)
- * Default: true (compact mode)
- */
-export const compactToolDisplayAtom = atomWithStorage<boolean>(
-  'craft-compact-tool-display',
-  true
-)
-
 /**
  * Get workspace ID from URL query params (set by WindowManager)
  * This is read synchronously on module load for the storage key.

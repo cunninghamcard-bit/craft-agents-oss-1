@@ -1,13 +1,16 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
 
 export type ThemeMode = 'light' | 'dark' | 'system'
+export type FontFamily = 'inter' | 'system'
 
 interface ThemeContextType {
   mode: ThemeMode
   resolvedMode: 'light' | 'dark'
   colorTheme: string
+  font: FontFamily
   setMode: (mode: ThemeMode) => void
   setColorTheme: (theme: string) => void
+  setFont: (font: FontFamily) => void
 }
 
 const STORAGE_KEY = 'craft-agent-theme'
@@ -15,6 +18,7 @@ const STORAGE_KEY = 'craft-agent-theme'
 interface StoredTheme {
   mode: ThemeMode
   colorTheme: string
+  font?: FontFamily
 }
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined)
@@ -23,6 +27,7 @@ interface ThemeProviderProps {
   children: ReactNode
   defaultMode?: ThemeMode
   defaultColorTheme?: string
+  defaultFont?: FontFamily
 }
 
 function getSystemPreference(): 'light' | 'dark' {
@@ -58,7 +63,7 @@ function saveTheme(theme: StoredTheme): void {
   }
 }
 
-function applyThemeToDOM(resolvedMode: 'light' | 'dark', colorTheme: string, mode: ThemeMode): void {
+function applyThemeToDOM(resolvedMode: 'light' | 'dark', colorTheme: string, mode: ThemeMode, font: FontFamily): void {
   const root = document.documentElement
 
   // Apply mode
@@ -79,26 +84,35 @@ function applyThemeToDOM(resolvedMode: 'light' | 'dark', colorTheme: string, mod
   } else {
     delete root.dataset.themeOverride
   }
+
+  // Apply font
+  if (font === 'system') {
+    root.dataset.font = 'system'
+  } else {
+    delete root.dataset.font
+  }
 }
 
 export function ThemeProvider({
   children,
   defaultMode = 'system',
-  defaultColorTheme = 'default'
+  defaultColorTheme = 'default',
+  defaultFont = 'inter'
 }: ThemeProviderProps) {
   const stored = loadStoredTheme()
 
   const [mode, setModeState] = useState<ThemeMode>(stored?.mode ?? defaultMode)
   const [colorTheme, setColorThemeState] = useState<string>(stored?.colorTheme ?? defaultColorTheme)
+  const [font, setFontState] = useState<FontFamily>(stored?.font ?? defaultFont)
   const [systemPreference, setSystemPreference] = useState<'light' | 'dark'>(getSystemPreference)
 
   // Resolve the actual mode to apply
   const resolvedMode = mode === 'system' ? systemPreference : mode
 
-  // Apply theme to DOM whenever resolved mode, color theme, or mode changes
+  // Apply theme to DOM whenever resolved mode, color theme, mode, or font changes
   useEffect(() => {
-    applyThemeToDOM(resolvedMode, colorTheme, mode)
-  }, [resolvedMode, colorTheme, mode])
+    applyThemeToDOM(resolvedMode, colorTheme, mode, font)
+  }, [resolvedMode, colorTheme, mode, font])
 
   // Listen for system preference changes
   useEffect(() => {
@@ -133,13 +147,18 @@ export function ThemeProvider({
 
   const setMode = useCallback((newMode: ThemeMode) => {
     setModeState(newMode)
-    saveTheme({ mode: newMode, colorTheme })
-  }, [colorTheme])
+    saveTheme({ mode: newMode, colorTheme, font })
+  }, [colorTheme, font])
 
   const setColorTheme = useCallback((newTheme: string) => {
     setColorThemeState(newTheme)
-    saveTheme({ mode, colorTheme: newTheme })
-  }, [mode])
+    saveTheme({ mode, colorTheme: newTheme, font })
+  }, [mode, font])
+
+  const setFont = useCallback((newFont: FontFamily) => {
+    setFontState(newFont)
+    saveTheme({ mode, colorTheme, font: newFont })
+  }, [mode, colorTheme])
 
   return (
     <ThemeContext.Provider
@@ -147,8 +166,10 @@ export function ThemeProvider({
         mode,
         resolvedMode,
         colorTheme,
+        font,
         setMode,
-        setColorTheme
+        setColorTheme,
+        setFont
       }}
     >
       {children}

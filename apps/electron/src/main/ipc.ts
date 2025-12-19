@@ -6,6 +6,7 @@ import { homedir, tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { SessionManager } from './sessions'
 import { WindowManager } from './window-manager'
+import { PreviewWindowManager } from './preview-window'
 import { agentService } from './agent-service'
 import { registerOnboardingHandlers } from './onboarding'
 import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AgentActivateOptions, type AuthType, type BillingMethodInfo } from '../shared/types'
@@ -98,7 +99,7 @@ async function validateFilePath(filePath: string): Promise<string> {
   return realPath
 }
 
-export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager): void {
+export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager, previewWindowManager: PreviewWindowManager): void {
   // Get all sessions
   ipcMain.handle(IPC_CHANNELS.GET_SESSIONS, async () => {
     return sessionManager.getSessions()
@@ -731,6 +732,30 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
+  })
+
+  // ============================================================
+  // Preview Window
+  // ============================================================
+
+  // Open preview window for a message
+  ipcMain.handle(IPC_CHANNELS.PREVIEW_OPEN, async (_event, sessionId: string, messageId: string, content: string) => {
+    previewWindowManager.openPreview(sessionId, messageId, content)
+  })
+
+  // Get content for a preview (called from preview window on mount)
+  ipcMain.handle(IPC_CHANNELS.PREVIEW_GET_CONTENT, async (_event, sessionId: string, messageId: string) => {
+    return previewWindowManager.getContent(sessionId, messageId)
+  })
+
+  // Save edited content back to session
+  ipcMain.handle(IPC_CHANNELS.PREVIEW_SAVE, async (_event, sessionId: string, messageId: string, content: string) => {
+    // Update message in session storage
+    sessionManager.updateMessageContent(sessionId, messageId, content)
+    // Update preview window's original content
+    previewWindowManager.updateOriginalContent(sessionId, messageId, content)
+    // Broadcast to main window so it can update its UI
+    windowManager.broadcastToAll(IPC_CHANNELS.PREVIEW_MESSAGE_UPDATED, sessionId, messageId, content)
   })
 
   // Register onboarding handlers

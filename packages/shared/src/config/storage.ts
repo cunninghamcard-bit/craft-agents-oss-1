@@ -647,6 +647,8 @@ export interface StoredMessage {
   toolInput?: Record<string, unknown>;
   toolStatus?: 'pending' | 'executing' | 'completed' | 'error';
   toolDuration?: number;
+  /** Tool intent description (from MCP _intent field) */
+  toolIntent?: string;
   isError?: boolean;
   /** Stored attachments for user messages (persisted to disk) */
   attachments?: StoredAttachment[];
@@ -654,6 +656,16 @@ export interface StoredMessage {
   toolUseId?: string;
   /** Tool result content (for tool messages) */
   toolResult?: string;
+  /** Whether this is an intermediate assistant message (commentary between tool calls) */
+  isIntermediate?: boolean;
+  /** Turn ID for grouping messages in TurnCard after reload */
+  turnId?: string;
+  /** Error display fields for typed errors */
+  errorCode?: string;
+  errorTitle?: string;
+  errorDetails?: string[];
+  errorOriginal?: string;
+  errorCanRetry?: boolean;
 }
 
 export interface WorkspaceConversation {

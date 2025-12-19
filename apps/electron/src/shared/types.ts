@@ -220,7 +220,7 @@ export type SessionEvent =
   | { type: 'error'; sessionId: string; error: string }
   | { type: 'typed_error'; sessionId: string; error: TypedError }
   | { type: 'complete'; sessionId: string }
-  | { type: 'interrupted'; sessionId: string }
+  | { type: 'interrupted'; sessionId: string; message: Message }
   | { type: 'status'; sessionId: string; message: string }
   | { type: 'title_generated'; sessionId: string; title: string }
   | { type: 'agent_status'; sessionId: string; status: AgentStatus }
@@ -343,6 +343,12 @@ export const IPC_CHANNELS = {
   // User Preferences
   PREFERENCES_READ: 'preferences:read',
   PREFERENCES_WRITE: 'preferences:write',
+
+  // Preview window
+  PREVIEW_OPEN: 'preview:open',
+  PREVIEW_GET_CONTENT: 'preview:getContent',
+  PREVIEW_SAVE: 'preview:save',
+  PREVIEW_MESSAGE_UPDATED: 'preview:messageUpdated',
 } as const
 
 // Re-import types for ElectronAPI
@@ -471,6 +477,12 @@ export interface ElectronAPI {
   // User Preferences
   readPreferences(): Promise<{ content: string; exists: boolean }>
   writePreferences(content: string): Promise<{ success: boolean; error?: string }>
+
+  // Preview window
+  openPreview(sessionId: string, messageId: string, content: string): Promise<void>
+  getPreviewContent(sessionId: string, messageId: string): Promise<string>
+  savePreview(sessionId: string, messageId: string, content: string): Promise<void>
+  onMessageUpdated(callback: (sessionId: string, messageId: string, content: string) => void): () => void
 }
 
 /**

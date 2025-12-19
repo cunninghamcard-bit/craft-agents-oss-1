@@ -1,6 +1,5 @@
 import * as React from "react"
 import { useEffect } from "react"
-import { useAtom } from "jotai"
 import {
   ChevronDown,
   ChevronUp,
@@ -9,13 +8,12 @@ import {
   ArrowUp,
   Square,
   AlertTriangle,
-  CheckCircle2,
-  XCircle,
-  Loader2,
+  ExternalLink,
+  CircleSlash,
 } from "lucide-react"
+import { AnimatePresence } from "motion/react"
 
 import { Button } from "@/components/ui/button"
-import { compactToolDisplayAtom } from "@/tabs/atoms"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -24,16 +22,18 @@ import {
 } from "@/components/ui/styled-dropdown"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
-import { Markdown, CollapsibleMarkdownProvider, type RenderMode } from "@/components/markdown"
+import { Markdown, CollapsibleMarkdownProvider, StreamingMarkdown, type RenderMode } from "@/components/markdown"
 import { IntermediateMessage } from "./IntermediateMessage"
 import { AnimatedCollapsibleContent } from "@/components/ui/collapsible"
 import { AttachmentPreview, FileTypeIcon, getFileTypeLabel } from "./AttachmentPreview"
-import { LoadingIndicator } from "@/components/ui/loading-indicator"
+import { Spinner } from "@/components/ui/loading-indicator"
 import { useFocusZone } from "@/hooks/keyboard"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest } from "../../../shared/types"
 import { PermissionBanner } from "./PermissionBanner"
 import { SetupAuthBanner, type BannerState } from "./SetupAuthBanner"
 import { MODELS, getModelDisplayName } from "@config/models"
+import { TurnCard } from "./TurnCard"
+import { groupMessagesByTurn, type Turn, type AssistantTurn, type UserTurn, type SystemTurn } from "./turn-utils"
 
 /** Agent setup state for showing setup indicator in input area */
 interface AgentSetupState {
@@ -67,6 +67,38 @@ interface ChatDisplayProps {
 }
 
 /**
+ * ThinkingIndicator - Shows "Thinking..." with elapsed time
+ * Matches TurnCard header layout for visual continuity
+ */
+function ThinkingIndicator() {
+  const [elapsed, setElapsed] = React.useState(0)
+  const startTimeRef = React.useRef(Date.now())
+
+  React.useEffect(() => {
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [])
+
+  return (
+    <div className="flex items-center gap-2 px-3 py-1 -mb-1 text-xs text-muted-foreground">
+      {/* Spinner in same location as TurnCard chevron */}
+      <div className="w-3 h-3 flex items-center justify-center shrink-0">
+        <Spinner className="text-[10px]" />
+      </div>
+      {/* Label with elapsed time inline */}
+      <span>
+        Thinking...
+        {elapsed >= 1 && (
+          <span className="text-muted-foreground/60 ml-1">{elapsed}s</span>
+        )}
+      </span>
+    </div>
+  )
+}
+
+/**
  * ChatDisplay - Main chat interface for a selected session
  *
  * Structure:
@@ -92,13 +124,14 @@ export function ChatDisplay({
   // Input is only disabled when explicitly disabled (e.g., agent needs activation)
   // User can type during streaming - submitting will stop the stream and send
   const isInputDisabled = disabled
-  const [compactToolDisplay] = useAtom(compactToolDisplayAtom)
   const [input, setInput] = React.useState("")
   const [attachments, setAttachments] = React.useState<FileAttachment[]>([])
   const [isDraggingOver, setIsDraggingOver] = React.useState(false)
   const [loadingCount, setLoadingCount] = React.useState(0)
   const messagesEndRef = React.useRef<HTMLDivElement>(null)
+  const scrollViewportRef = React.useRef<HTMLDivElement>(null)
   const prevSessionIdRef = React.useRef<string | null>(null)
+  const isAtBottomRef = React.useRef(true)
   const internalTextareaRef = React.useRef<HTMLTextAreaElement>(null)
   const textareaRef = externalTextareaRef || internalTextareaRef
   const dragCounterRef = React.useRef(0)
@@ -117,6 +150,12 @@ export function ChatDisplay({
       textareaRef.current?.focus()
     }
   }, [isFocused, session])
+
+  // Pop-out handler - opens message in a new preview window
+  const handlePopOut = React.useCallback((message: Message) => {
+    if (!session) return
+    window.electronAPI.openPreview(session.id, message.id, message.content)
+  }, [session])
 
   // File attachment handlers
   const handleAttachClick = async () => {
@@ -263,16 +302,37 @@ export function ChatDisplay({
     setAttachments([])
   }, [session?.id])
 
+  // Track scroll position to determine if user is at bottom
+  // Threshold of 50px allows for small scroll variations
+  const handleScroll = React.useCallback(() => {
+    const viewport = scrollViewportRef.current
+    if (!viewport) return
+    const { scrollTop, scrollHeight, clientHeight } = viewport
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+    isAtBottomRef.current = distanceFromBottom < 50
+  }, [])
+
+  // Set up scroll event listener
+  React.useEffect(() => {
+    const viewport = scrollViewportRef.current
+    if (!viewport) return
+    viewport.addEventListener('scroll', handleScroll)
+    return () => viewport.removeEventListener('scroll', handleScroll)
+  }, [handleScroll])
+
   // Auto-scroll to bottom
-  // - Instant scroll on session switch
-  // - Smooth scroll on new messages in same session
+  // - Always scroll on session switch (instant)
+  // - Only scroll on new messages if user was at bottom (smooth)
   React.useEffect(() => {
     const isSessionSwitch = prevSessionIdRef.current !== session?.id
     prevSessionIdRef.current = session?.id ?? null
 
-    messagesEndRef.current?.scrollIntoView({
-      behavior: isSessionSwitch ? 'instant' : 'smooth'
-    })
+    // Always scroll on session switch, otherwise only if user is at bottom
+    if (isSessionSwitch || isAtBottomRef.current) {
+      messagesEndRef.current?.scrollIntoView({
+        behavior: isSessionSwitch ? 'instant' : 'smooth'
+      })
+    }
   }, [session?.id, session?.messages])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -331,8 +391,8 @@ export function ChatDisplay({
           {/* === MESSAGES AREA: Scrollable list of message bubbles === */}
           {/* Top fade gradient - overlays top of scroll area (pr-2 avoids scrollbar) */}
           <div className="h-8 mb-[-2rem] relative z-10 bg-gradient-to-b from-background to-transparent pointer-events-none pr-2" />
-          <ScrollArea className="flex-1 min-w-0">
-            <div className="px-5 py-8 space-y-4 min-w-0">
+          <ScrollArea className="flex-1 min-w-0" viewportRef={scrollViewportRef}>
+            <div className="max-w-[960px] mx-auto px-5 py-8 space-y-2.5 min-w-0">
               {session.messages.length === 0 ? (
                 /* Empty State: Welcome message for new sessions */
                 <div className="flex flex-col items-center justify-center h-64 text-muted-foreground px-8">
@@ -342,57 +402,60 @@ export function ChatDisplay({
                   <p className="text-xs mt-1 text-center">Start a conversation by typing a message below.</p>
                 </div>
               ) : (
-                /* Message List - group consecutive tool messages */
+                /* Turn-based Message Display */
                 (() => {
-                  const elements: React.ReactNode[] = []
-                  let toolGroup: Message[] = []
+                  const turns = groupMessagesByTurn(session.messages)
 
-                  const flushToolGroup = () => {
-                    if (toolGroup.length > 0) {
-                      elements.push(
-                        <ToolGroup
-                          key={`tool-group-${toolGroup[0].id}`}
-                          messages={toolGroup}
+                  return turns.map((turn) => {
+                    // User turns - render with MemoizedMessageBubble
+                    // Extra top margin creates visual separation after AI responses
+                    if (turn.type === 'user') {
+                      return (
+                        <div key={`user-${turn.message.id}`} className="pt-3">
+                          <MemoizedMessageBubble
+                            message={turn.message}
+                            onOpenFile={onOpenFile}
+                            onOpenUrl={onOpenUrl}
+                          />
+                        </div>
+                      )
+                    }
+
+                    // System turns (error, status, info, warning) - render with MemoizedMessageBubble
+                    if (turn.type === 'system') {
+                      return (
+                        <MemoizedMessageBubble
+                          key={`system-${turn.message.id}`}
+                          message={turn.message}
                           onOpenFile={onOpenFile}
                           onOpenUrl={onOpenUrl}
                         />
                       )
-                      toolGroup = []
                     }
-                  }
 
-                  session.messages.forEach(message => {
-                    if (message.role === 'tool' && compactToolDisplay) {
-                      toolGroup.push(message)
-                    } else {
-                      flushToolGroup()
-                      elements.push(
-                        <MessageBubble
-                          key={message.id}
-                          message={message}
-                          onOpenFile={onOpenFile}
-                          onOpenUrl={onOpenUrl}
-                          compactToolDisplay={compactToolDisplay}
-                        />
-                      )
-                    }
+                    // Assistant turns - render with TurnCard (buffered streaming)
+                    return (
+                      <TurnCard
+                        key={`turn-${turn.turnId}`}
+                        activities={turn.activities}
+                        response={turn.response}
+                        intent={turn.intent}
+                        isStreaming={turn.isStreaming}
+                        isComplete={turn.isComplete}
+                        onOpenFile={onOpenFile}
+                        onOpenUrl={onOpenUrl}
+                        onPopOut={(text) => {
+                          if (session) {
+                            window.electronAPI.openPreview(session.id, turn.turnId, text)
+                          }
+                        }}
+                      />
+                    )
                   })
-                  flushToolGroup()
-
-                  return elements
                 })()
               )}
-              {/* Thinking Indicator - shows when processing and not streaming */}
-              {session.isProcessing && !session.messages.some(m => m.isStreaming) && (
-                <div className="flex justify-start pl-1">
-                  <LoadingIndicator
-                    label="Thinking..."
-                    showElapsed
-                    className="text-sm"
-                    spinnerClassName="text-[10px]"
-                  />
-                </div>
-              )}
+              {/* Thinking Indicator - always visible while processing */}
+              {session.isProcessing && <ThinkingIndicator />}
               {/* Scroll Anchor: For auto-scroll to bottom */}
               <div ref={messagesEndRef} />
             </div>
@@ -401,21 +464,22 @@ export function ChatDisplay({
           {/* Bottom fade gradient - overlays bottom of scroll area (pr-2 avoids scrollbar) */}
           <div className="h-8 -mt-8 relative z-10 bg-gradient-to-t from-background to-transparent pointer-events-none pr-2" />
 
-          {/* Permission Banner - shows when agent needs approval for a command */}
-          {pendingPermission && onRespondToPermission && (
-            <PermissionBanner
-              request={pendingPermission}
-              onRespond={(allowed, alwaysAllow) =>
-                onRespondToPermission(pendingPermission.sessionId, pendingPermission.requestId, allowed, alwaysAllow)
-              }
-            />
-          )}
-
           {/* === INPUT CONTAINER: Textarea + Bottom row with controls === */}
-          <div className="px-4 pb-4 mt-1">
-            {agentSetupState && agentSetupState.state !== 'hidden' ? (
+          <div className="max-w-[960px] mx-auto w-full px-4 pb-4 mt-1">
+            <AnimatePresence>
+            {/* Permission Banner - replaces input when agent needs approval for a command */}
+            {pendingPermission && onRespondToPermission ? (
+              <PermissionBanner
+                key="permission-banner"
+                request={pendingPermission}
+                onRespond={(allowed, alwaysAllow) =>
+                  onRespondToPermission(pendingPermission.sessionId, pendingPermission.requestId, allowed, alwaysAllow)
+                }
+              />
+            ) : agentSetupState && agentSetupState.state !== 'hidden' ? (
               /* Agent Setup Banner - shown instead of input when agent needs setup */
               <SetupAuthBanner
+                key="setup-auth-banner"
                 state={agentSetupState.state}
                 agentName={agentSetupState.agentName}
                 reason={agentSetupState.reason}
@@ -424,7 +488,7 @@ export function ChatDisplay({
               />
             ) : (
               /* Normal Input Form */
-              <form onSubmit={handleSubmit}>
+              <form key="input-form" onSubmit={handleSubmit}>
                 <div
                   className={cn(
                     "rounded-[8px] bg-background overflow-hidden transition-all shadow-middle",
@@ -446,10 +510,17 @@ export function ChatDisplay({
                   {/* Textarea - 4 lines minimum height */}
                   <textarea
                     ref={textareaRef}
-                    className="w-full min-h-[100px] px-4 py-3 bg-transparent outline-none text-sm placeholder:text-muted-foreground resize-none focus-visible:ring-0"
+                    className="w-full min-h-[100px] pl-5 pr-4 pt-4 pb-3 bg-transparent outline-none text-sm placeholder:text-muted-foreground resize-none focus-visible:ring-0"
                     placeholder={`Message ${session.agentName || session.workspaceName || 'Chat'}...`}
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={(e) => {
+                      let value = e.target.value
+                      // Auto-capitalize first letter
+                      if (value.length > 0) {
+                        value = value.charAt(0).toUpperCase() + value.slice(1)
+                      }
+                      setInput(value)
+                    }}
                     onKeyDown={handleKeyDown}
                     onDragOver={handleDragOver}
                     onDrop={handleDrop}
@@ -532,83 +603,10 @@ export function ChatDisplay({
                 </div>
               </form>
             )}
+            </AnimatePresence>
           </div>
         </div>
       ) : null}
-    </div>
-  )
-}
-
-/**
- * ToolGroup - Collapsible group of consecutive tool calls
- * Shows first few tools with expand/collapse toggle
- */
-interface ToolGroupProps {
-  messages: Message[]
-  onOpenFile: (path: string) => void
-  onOpenUrl: (url: string) => void
-}
-
-function ToolGroup({ messages, onOpenFile, onOpenUrl }: ToolGroupProps) {
-  const [expanded, setExpanded] = React.useState(false)
-  const COLLAPSED_COUNT = 3
-
-  // Check if any tool is still running
-  // Note: We check toolResult specifically because content is always set
-  // (to a placeholder like "Running toolName...") even while running
-  const hasRunningTool = messages.some(m => !m.toolResult)
-  const allCompleted = messages.every(m => !!m.toolResult)
-  const hasError = messages.some(m => m.isError)
-
-  // Show all if expanded, still running, or few tools
-  const shouldShowAll = expanded || hasRunningTool || messages.length <= COLLAPSED_COUNT
-  const visibleMessages = shouldShowAll ? messages : messages.slice(0, COLLAPSED_COUNT)
-  const hiddenCount = messages.length - COLLAPSED_COUNT
-
-  return (
-    <div className="mt-2 mb-4">
-      <div className="overflow-hidden">
-        {/* Header */}
-        <div className="px-3 pb-0.5">
-          <span className="text-xs font-medium text-muted-foreground">
-            {hasRunningTool ? 'Running tools...' :
-             `${messages.length} tool${messages.length > 1 ? 's' : ''} completed`}
-          </span>
-        </div>
-
-        {/* Tool list */}
-        <div>
-          {visibleMessages.map(msg => (
-            <MessageBubble
-              key={msg.id}
-              message={msg}
-              onOpenFile={onOpenFile}
-              onOpenUrl={onOpenUrl}
-              compactToolDisplay={true}
-            />
-          ))}
-        </div>
-
-        {/* Show more/less toggle */}
-        {messages.length > COLLAPSED_COUNT && allCompleted && (
-          <button
-            onClick={() => setExpanded(!expanded)}
-            className="w-full px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 transition-colors flex items-center justify-center gap-1"
-          >
-            {expanded ? (
-              <>
-                <ChevronUp className="w-3 h-3" />
-                Show less
-              </>
-            ) : (
-              <>
-                <ChevronDown className="w-3 h-3" />
-                Show {hiddenCount} more
-              </>
-            )}
-          </button>
-        )}
-      </div>
     </div>
   )
 }
@@ -619,9 +617,10 @@ function ToolGroup({ messages, onOpenFile, onOpenUrl }: ToolGroupProps) {
  * Message Roles & Styles:
  * - user:      Right-aligned, blue (bg-primary), white text
  * - assistant: Left-aligned, gray (bg-muted), markdown rendered with clickable links
- * - tool:      Left-aligned, bordered card with tool name header + result preview (max 500 chars)
  * - error:     Left-aligned, red border/bg, warning icon + error message
  * - status:    Centered pill badge with pulsing dot (e.g., "Thinking...")
+ *
+ * Note: Tool messages are rendered by TurnCard, not MessageBubble
  */
 interface MessageBubbleProps {
   message: Message
@@ -633,10 +632,9 @@ interface MessageBubbleProps {
    */
   renderMode?: RenderMode
   /**
-   * Tool display mode: compact (single line) or verbose (expanded with input/output)
-   * @default true
+   * Callback to pop out message into a separate window
    */
-  compactToolDisplay?: boolean
+  onPopOut?: (message: Message) => void
 }
 
 /**
@@ -689,7 +687,7 @@ function MessageBubble({
   onOpenFile,
   onOpenUrl,
   renderMode = 'minimal',
-  compactToolDisplay = true,
+  onPopOut,
 }: MessageBubbleProps) {
   // === USER MESSAGE: Right-aligned blue bubble with attachments above ===
   if (message.role === 'user') {
@@ -784,154 +782,41 @@ function MessageBubble({
     }
 
     return (
-      <div className="flex justify-start">
-        <div className="max-w-[80%] bg-white shadow-minimal rounded-[8px] pl-6 pr-4 py-3 break-words min-w-0">
-          <CollapsibleMarkdownProvider>
-            <Markdown
+      <div className="flex justify-start group">
+        <div className="relative max-w-[80%] bg-white shadow-minimal rounded-[8px] pl-6 pr-4 py-3 break-words min-w-0">
+          {/* Pop-out button - visible on hover */}
+          {onPopOut && !message.isStreaming && (
+            <button
+              onClick={() => onPopOut(message)}
+              className="absolute top-2 right-2 p-1.5 rounded-md opacity-0 group-hover:opacity-100 transition-opacity hover:bg-foreground/5"
+              title="Open in new window"
+            >
+              <ExternalLink className="w-4 h-4 text-muted-foreground hover:text-foreground" />
+            </button>
+          )}
+          {/* Use StreamingMarkdown for block-level memoization during streaming */}
+          {message.isStreaming ? (
+            <StreamingMarkdown
+              content={message.content}
+              isStreaming={true}
               mode={renderMode}
               onUrlClick={onOpenUrl}
               onFileClick={onOpenFile}
-              id={message.id}
-              className="text-sm"
-              collapsible
-            >
-              {message.content}
-            </Markdown>
-          </CollapsibleMarkdownProvider>
-          {/* Streaming Cursor: Pulsing bar while response is being generated */}
-          {message.isStreaming && (
-            <span className="inline-block w-2 h-4 bg-primary ml-1 animate-pulse rounded-sm" />
+            />
+          ) : (
+            <CollapsibleMarkdownProvider>
+              <Markdown
+                mode={renderMode}
+                onUrlClick={onOpenUrl}
+                onFileClick={onOpenFile}
+                id={message.id}
+                className="text-sm"
+                collapsible
+              >
+                {message.content}
+              </Markdown>
+            </CollapsibleMarkdownProvider>
           )}
-        </div>
-      </div>
-    )
-  }
-
-  // === TOOL MESSAGE: Compact (single line) or Verbose (expanded with input/output) ===
-  if (message.role === 'tool') {
-    // Check toolResult specifically because content is always set
-    // (to a placeholder like "Running toolName...") even while running
-    const isRunning = !message.toolResult
-    const result = message.toolResult || message.content
-    const isError = message.isError
-
-    // Get friendly tool name
-    const getToolDisplayName = (name: string): string => {
-      // Strip MCP prefixes (mcp__craft__, mcp__docs__, etc.)
-      const stripped = name.replace(/^mcp__[^_]+__/, '')
-      // Special display names for common tools
-      const displayNames: Record<string, string> = {
-        'WebFetch': 'Fetching',
-        'WebSearch': 'Searching',
-        'Read': 'Reading',
-        'Write': 'Writing',
-        'Edit': 'Editing',
-        'Glob': 'Finding files',
-        'Grep': 'Searching code',
-        'Bash': 'Running command',
-      }
-      return displayNames[stripped] || stripped
-    }
-
-    // Format tool input for display
-    const formatToolInput = (input?: Record<string, unknown>): string => {
-      if (!input || Object.keys(input).length === 0) return ''
-      const parts: string[] = []
-      for (const [key, value] of Object.entries(input)) {
-        if (key === '_intent' || value === undefined || value === null) continue
-        let valStr = typeof value === 'string'
-          ? value.replace(/\s+/g, ' ').trim()
-          : JSON.stringify(value)
-        if (valStr.length > 60) valStr = valStr.slice(0, 60) + '...'
-        parts.push(`${key}: ${valStr}`)
-      }
-      return parts.join(', ')
-    }
-
-    // Get status icon
-    const StatusIcon = isRunning
-      ? () => <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-500" />
-      : isError
-        ? () => <XCircle className="w-3.5 h-3.5 text-destructive" />
-        : () => <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-
-    const displayName = getToolDisplayName(message.toolName || 'unknown')
-    const inputSummary = formatToolInput(message.toolInput)
-
-    // === COMPACT MODE: Single line with status icon ===
-    if (compactToolDisplay) {
-      return (
-        <div className="flex justify-start">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground py-0.5 px-2">
-            <StatusIcon />
-            <span className="font-medium">{displayName}</span>
-            {inputSummary && (
-              <span className="text-xs opacity-70 truncate max-w-[300px]">{inputSummary}</span>
-            )}
-            {isError && result && (
-              <span className="text-xs text-destructive truncate max-w-[200px]">
-                — {result.replace(/\n/g, ' ').slice(0, 50)}
-              </span>
-            )}
-          </div>
-        </div>
-      )
-    }
-
-    // === VERBOSE MODE: Expanded card with input/output ===
-    return (
-      <div className="flex justify-start">
-        <div className="max-w-[85%] border rounded-lg overflow-hidden">
-          {/* Tool Header: Status icon + tool name */}
-          <div className="flex items-center gap-2 pl-4 pr-3 py-2 bg-muted/50 border-b">
-            <StatusIcon />
-            <span className="text-xs font-semibold uppercase tracking-wide">{message.toolName}</span>
-          </div>
-
-          <div className="pl-4 pr-3 py-2 min-w-0 space-y-2">
-            {/* Input section */}
-            {message.toolInput && Object.keys(message.toolInput).length > 0 && (
-              <div>
-                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1">Input</div>
-                <div className="text-xs font-mono bg-muted/30 p-2 rounded space-y-0.5">
-                  {Object.entries(message.toolInput).map(([key, value]) => {
-                    if (key === '_intent') return null
-                    const valStr = typeof value === 'string' ? value : JSON.stringify(value)
-                    return (
-                      <div key={key} className="flex gap-2">
-                        <span className="text-cyan-600 dark:text-cyan-400 shrink-0">{key}:</span>
-                        <span className="text-muted-foreground break-all">{valStr.slice(0, 200)}{valStr.length > 200 && '...'}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            {/* Result section */}
-            {result ? (
-              <div>
-                <div className={cn(
-                  "text-[10px] font-semibold uppercase tracking-wide mb-1",
-                  isError ? "text-destructive" : "text-muted-foreground"
-                )}>
-                  {isError ? 'Error' : 'Result'}
-                </div>
-                <pre className={cn(
-                  "text-xs max-h-48 overflow-y-auto font-mono p-2 rounded whitespace-pre-wrap break-words",
-                  isError ? "bg-destructive/10 text-destructive" : "bg-muted/30 text-muted-foreground"
-                )}>
-                  {result.slice(0, 500)}
-                  {result.length > 500 && '...'}
-                </pre>
-              </div>
-            ) : (
-              <LoadingIndicator
-                label="Running..."
-                className="text-sm text-muted-foreground"
-              />
-            )}
-          </div>
         </div>
       </div>
     )
@@ -942,23 +827,27 @@ function MessageBubble({
     return <ErrorMessage message={message} />
   }
 
-  // === STATUS MESSAGE: Left-aligned with braille spinner (TUI-style) ===
+  // === STATUS MESSAGE: Matches ThinkingIndicator layout for visual consistency ===
   if (message.role === 'status') {
     return (
-      <div className="flex justify-start pl-1">
-        <LoadingIndicator
-          label={message.content}
-          className="text-sm"
-        />
+      <div className="flex items-center gap-2 px-3 py-1 -mb-1 text-xs text-muted-foreground">
+        {/* Spinner in same location as TurnCard chevron */}
+        <div className="w-3 h-3 flex items-center justify-center shrink-0">
+          <Spinner className="text-[10px]" />
+        </div>
+        <span>{message.content}</span>
       </div>
     )
   }
 
-  // === INFO MESSAGE: Simple italic text (for interruptions, etc.) ===
+  // === INFO MESSAGE: Matches TurnCard header style ===
   if (message.role === 'info') {
     return (
-      <div className="flex justify-start pl-1">
-        <span className="text-sm text-muted-foreground italic">{message.content}</span>
+      <div className="flex items-center gap-2 px-3 py-1 text-xs text-muted-foreground">
+        <div className="w-3 h-3 flex items-center justify-center shrink-0">
+          <CircleSlash className="w-3 h-3" />
+        </div>
+        <span>{message.content}</span>
       </div>
     )
   }
@@ -983,3 +872,23 @@ function MessageBubble({
 
   return null
 }
+
+/**
+ * MemoizedMessageBubble - Prevents re-renders of non-streaming messages
+ *
+ * During streaming, the entire message list gets updated on each delta.
+ * This wrapper skips re-renders for messages that haven't changed,
+ * significantly improving performance for long conversations.
+ */
+const MemoizedMessageBubble = React.memo(MessageBubble, (prev, next) => {
+  // Always re-render streaming messages (content is changing)
+  if (prev.message.isStreaming || next.message.isStreaming) {
+    return false
+  }
+  // Skip re-render if key props unchanged
+  return (
+    prev.message.id === next.message.id &&
+    prev.message.content === next.message.content &&
+    prev.message.role === next.message.role
+  )
+})

@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/styled-dropdown'
 import { Separator } from '@/components/ui/separator'
 import { useChatContext } from '@/context/ChatContext'
+import { useCloseTab } from '@/hooks/useCloseTab'
 import { getSessionTitle } from '@/utils/session'
 import { TabBar } from './TabBar'
 import { TabContent } from './TabContent'
@@ -47,33 +48,14 @@ interface TabContainerProps {
 }
 
 export function TabContainer({ className }: TabContainerProps) {
-  const { activeTab, tabs, isTabBarVisible, closeTab } = useTabs()
-  const { sessions, onDeleteSession } = useChatContext()
+  const { activeTab, isTabBarVisible } = useTabs()
+  const { sessions } = useChatContext()
+  const { closeTab } = useCloseTab()
 
   // Rename dialog state
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
   const [renameName, setRenameName] = useState('')
   const [renameSessionId, setRenameSessionId] = useState<string | null>(null)
-
-  /**
-   * Close a tab with automatic cleanup for empty sessions.
-   * If closing a chat tab with no messages, delete the session too.
-   */
-  const closeTabWithCleanup = React.useCallback((tabId: string) => {
-    const tab = tabs.find(t => t.id === tabId)
-    if (tab?.type === 'chat') {
-      const chatTab = tab as ChatTab
-      const session = sessions.find(s => s.id === chatTab.sessionId)
-      // If session has no messages, delete it entirely
-      if (session && session.messages.length === 0) {
-        onDeleteSession(session.id)
-        // Note: onDeleteSession already closes the tab via closeChatTabBySession
-        return
-      }
-    }
-    // Otherwise just close the tab normally
-    closeTab(tabId)
-  }, [tabs, sessions, onDeleteSession, closeTab])
 
   // Get session for chat tab
   const getChatSession = (tab: Tab) => {
@@ -147,7 +129,7 @@ export function TabContainer({ className }: TabContainerProps) {
       {/* Separator only when tab bar is hidden */}
       {!isTabBarVisible && <Separator />}
       {/* Tab bar - below header, only when multiple tabs */}
-      <TabBar onClose={closeTabWithCleanup} />
+      <TabBar onClose={closeTab} />
       {/* Content */}
       <TabContent className="flex-1 overflow-hidden" />
 
@@ -200,7 +182,8 @@ interface TabHeaderActionsProps {
  * Contains type-specific actions + Close tab at the bottom
  */
 function TabHeaderActions({ tab, onOpenRename }: TabHeaderActionsProps) {
-  const { closeTab } = useTabs()
+  const { closeTab } = useCloseTab()
+  const { closeTab: rawCloseTab } = useTabs()
   const { sessions, onArchiveSession, onDeleteSession } = useChatContext()
 
   // Get session for chat tab
@@ -238,20 +221,14 @@ function TabHeaderActions({ tab, onOpenRename }: TabHeaderActionsProps) {
     if (session) {
       // Close the tab immediately to prevent race conditions
       // (the session removal from state happens async, tab must close first)
-      closeTab(tab.id)
+      rawCloseTab(tab.id)
       onDeleteSession(session.id)
     }
-  }, [session, onDeleteSession, closeTab, tab.id])
+  }, [session, onDeleteSession, rawCloseTab, tab.id])
 
   const handleClose = React.useCallback(() => {
-    // If closing a chat tab with no messages, delete the session entirely
-    if (tab.type === 'chat' && session && session.messages.length === 0) {
-      onDeleteSession(session.id)
-      // Note: onDeleteSession already closes the tab via closeChatTabBySession
-      return
-    }
     closeTab(tab.id)
-  }, [closeTab, tab, session, onDeleteSession])
+  }, [closeTab, tab.id])
 
   // Check if there are any type-specific actions
   const hasTypeActions = tab.type === 'file' || tab.type === 'browser' || tab.type === 'chat'

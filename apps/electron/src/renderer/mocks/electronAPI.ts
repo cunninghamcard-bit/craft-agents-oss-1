@@ -807,4 +807,49 @@ console.log(example);
     // Mock: just log, no actual write
     return { success: true }
   },
+
+  // ===== Preview Window =====
+
+  async openPreview(sessionId: string, messageId: string, content: string): Promise<void> {
+    console.log('[Mock] openPreview called:', { sessionId, messageId, contentLength: content.length })
+    // In browser dev mode, open in a new tab/window with content stored in sessionStorage
+    const key = `preview:${sessionId}:${messageId}`
+    sessionStorage.setItem(key, content)
+    window.open(`/preview.html?sessionId=${encodeURIComponent(sessionId)}&messageId=${encodeURIComponent(messageId)}`, '_blank')
+  },
+
+  async getPreviewContent(sessionId: string, messageId: string): Promise<string> {
+    await sleep(100)
+    console.log('[Mock] getPreviewContent called:', { sessionId, messageId })
+    // In browser dev mode, get from sessionStorage
+    const key = `preview:${sessionId}:${messageId}`
+    const content = sessionStorage.getItem(key)
+    if (content) {
+      return content
+    }
+    // Return mock content if not found
+    return `# Preview Content\n\nThis is mock preview content for message **${messageId}** in session **${sessionId}**.\n\n## Features\n\n- Table of Contents\n- Markdown editing\n- Syntax highlighting\n\n\`\`\`typescript\nconst hello = "world";\nconsole.log(hello);\n\`\`\`\n`
+  },
+
+  async savePreview(sessionId: string, messageId: string, content: string): Promise<void> {
+    await sleep(200)
+    console.log('[Mock] savePreview called:', { sessionId, messageId, contentLength: content.length })
+    // In browser dev mode, update sessionStorage and find the original message
+    const key = `preview:${sessionId}:${messageId}`
+    sessionStorage.setItem(key, content)
+    // Also update the mock session message if it exists
+    const session = sessions.find(s => s.id === sessionId)
+    if (session) {
+      const message = session.messages.find(m => m.id === messageId)
+      if (message) {
+        message.content = content
+      }
+    }
+  },
+
+  onMessageUpdated(callback: (sessionId: string, messageId: string, content: string) => void): () => void {
+    console.log('[Mock] onMessageUpdated registered')
+    // Mock: no-op in browser mode - we could implement a BroadcastChannel for cross-tab sync
+    return () => {}
+  },
 }

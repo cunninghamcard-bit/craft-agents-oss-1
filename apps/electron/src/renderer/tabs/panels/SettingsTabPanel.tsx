@@ -8,15 +8,13 @@
 
 import * as React from 'react'
 import { useState, useEffect, useCallback } from 'react'
-import { useAtom } from 'jotai'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { useTheme } from '@/context/ThemeContext'
+import { useTheme, type FontFamily } from '@/context/ThemeContext'
 import { cn } from '@/lib/utils'
 import { Monitor, Sun, Moon, Eye, EyeOff, Check, ExternalLink, CheckCircle2 } from 'lucide-react'
 import { Spinner } from '@/components/ui/loading-indicator'
-import { compactToolDisplayAtom } from '../atoms'
 import type { Tab } from '../types'
 import type { AuthType } from '../../../shared/types'
 
@@ -477,8 +475,7 @@ export default function SettingsTabPanel({
   onAuthTypeChange,
   onModelChange,
 }: SettingsTabPanelProps) {
-  const { mode, setMode } = useTheme()
-  const [compactToolDisplay, setCompactToolDisplay] = useAtom(compactToolDisplayAtom)
+  const { mode, setMode, font, setFont } = useTheme()
 
   // Billing state
   const [authType, setAuthType] = useState<AuthType>(propAuthType ?? 'craft_credits') // Actually saved auth type
@@ -675,6 +672,20 @@ export default function SettingsTabPanel({
                 label="Dark"
               />
             </SettingRow>
+            <SettingRow label="Font">
+              <ThemeButton
+                selected={font === 'inter'}
+                onClick={() => setFont('inter')}
+                icon={<span className="w-4 h-4 flex items-center justify-center font-semibold text-xs">Aa</span>}
+                label="Inter"
+              />
+              <ThemeButton
+                selected={font === 'system'}
+                onClick={() => setFont('system')}
+                icon={<Monitor className="w-4 h-4" />}
+                label="System"
+              />
+            </SettingRow>
           </div>
 
           {/* Model - vertical radio list */}
@@ -698,25 +709,6 @@ export default function SettingsTabPanel({
                 onClick={() => onModelChange?.('claude-haiku-4-5-20251001')}
                 label="Haiku 4.5"
                 description="— fast"
-              />
-            </div>
-          </div>
-
-          {/* Tool Output - vertical radio list */}
-          <div>
-            <SectionHeader>Tool Output</SectionHeader>
-            <div>
-              <RadioOption
-                selected={compactToolDisplay}
-                onClick={() => setCompactToolDisplay(true)}
-                label="Compact"
-                description="— single line"
-              />
-              <RadioOption
-                selected={!compactToolDisplay}
-                onClick={() => setCompactToolDisplay(false)}
-                label="Verbose"
-                description="— with details"
               />
             </div>
           </div>

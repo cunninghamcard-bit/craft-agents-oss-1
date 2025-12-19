@@ -71,21 +71,32 @@ interface ManagedSession {
 }
 
 // Convert runtime Message to StoredMessage for persistence
-// Note: For tool messages, result is stored in `content` (not duplicated in toolResult)
+// Only excludes transient field: isStreaming
 function messageToStored(msg: Message): StoredMessage {
   return {
     id: msg.id,
     type: msg.role,  // Message uses 'role', StoredMessage uses 'type'
     content: msg.content,
     timestamp: msg.timestamp,
+    // Tool fields
     toolName: msg.toolName,
+    toolUseId: msg.toolUseId,
     toolInput: msg.toolInput,
+    toolResult: msg.toolResult,
     toolStatus: msg.toolStatus,
     toolDuration: msg.toolDuration,
+    toolIntent: msg.toolIntent,
     isError: msg.isError,
     attachments: msg.attachments,
-    toolUseId: msg.toolUseId,
-    toolResult: msg.toolResult,
+    // Turn grouping
+    isIntermediate: msg.isIntermediate,
+    turnId: msg.turnId,
+    // Error display
+    errorCode: msg.errorCode,
+    errorTitle: msg.errorTitle,
+    errorDetails: msg.errorDetails,
+    errorOriginal: msg.errorOriginal,
+    errorCanRetry: msg.errorCanRetry,
   }
 }
 
@@ -96,14 +107,25 @@ function storedToMessage(stored: StoredMessage): Message {
     role: stored.type,  // StoredMessage uses 'type', Message uses 'role'
     content: stored.content,
     timestamp: stored.timestamp ?? Date.now(),
+    // Tool fields
     toolName: stored.toolName,
+    toolUseId: stored.toolUseId,
     toolInput: stored.toolInput,
+    toolResult: stored.toolResult,
     toolStatus: stored.toolStatus,
     toolDuration: stored.toolDuration,
+    toolIntent: stored.toolIntent,
     isError: stored.isError,
     attachments: stored.attachments,
-    toolUseId: stored.toolUseId,
-    toolResult: stored.toolResult,
+    // Turn grouping
+    isIntermediate: stored.isIntermediate,
+    turnId: stored.turnId,
+    // Error display
+    errorCode: stored.errorCode,
+    errorTitle: stored.errorTitle,
+    errorDetails: stored.errorDetails,
+    errorOriginal: stored.errorOriginal,
+    errorCanRetry: stored.errorCanRetry,
   }
 }
 
@@ -705,6 +727,30 @@ export class SessionManager {
     }
   }
 
+  /**
+   * Update the content of a specific message in a session
+   * Used by preview window to save edited content back to the original message
+   */
+  updateMessageContent(sessionId: string, messageId: string, content: string): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      console.warn(`[SessionManager] Cannot update message: session ${sessionId} not found`)
+      return
+    }
+
+    const message = managed.messages.find(m => m.id === messageId)
+    if (!message) {
+      console.warn(`[SessionManager] Cannot update message: message ${messageId} not found in session ${sessionId}`)
+      return
+    }
+
+    // Update the message content
+    message.content = content
+    // Persist the updated session
+    this.persistSession(managed)
+    console.log(`[SessionManager] Updated message ${messageId} content in session ${sessionId}`)
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
@@ -909,8 +955,17 @@ export class SessionManager {
     managed.isProcessing = false
     managed.abortController = undefined
 
-    // Send interrupted event immediately
-    this.sendEvent({ type: 'interrupted', sessionId }, managed.workspace.id)
+    // Add interrupted info message to session (for persistence)
+    const interruptedMessage: Message = {
+      id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+      role: 'info',
+      content: 'Response interrupted',
+      timestamp: Date.now(),
+    }
+    managed.messages.push(interruptedMessage)
+
+    // Send interrupted event with message for renderer
+    this.sendEvent({ type: 'interrupted', sessionId, message: interruptedMessage }, managed.workspace.id)
 
     // Persist session
     this.persistSession(managed)
@@ -1098,6 +1153,7 @@ export class SessionManager {
             code: event.error.code,
             title: event.error.title,
             message: event.error.message,
+            actions: event.error.actions,
             canRetry: event.error.canRetry,
             details: event.error.details,
             originalError: event.error.originalError,
@@ -1108,15 +1164,30 @@ export class SessionManager {
   }
 
   private sendEvent(event: SessionEvent, workspaceId?: string): void {
-    if (!this.windowManager) return
+    if (!this.windowManager) {
+      console.warn('[SessionManager] Cannot send event - no window manager')
+      return
+    }
 
     // Route to the window for this workspace
     const window = workspaceId
       ? this.windowManager.getWindowByWorkspace(workspaceId)
       : null
 
-    if (window && !window.isDestroyed()) {
+    if (!window) {
+      console.warn(`[SessionManager] Cannot send ${event.type} event - no window for workspace ${workspaceId}`)
+      return
+    }
+
+    if (window.isDestroyed()) {
+      console.warn(`[SessionManager] Cannot send ${event.type} event - window destroyed for workspace ${workspaceId}`)
+      return
+    }
+
+    try {
       window.webContents.send(IPC_CHANNELS.SESSION_EVENT, event)
+    } catch (error) {
+      console.error(`[SessionManager] Failed to send ${event.type} event:`, error)
     }
   }
 }

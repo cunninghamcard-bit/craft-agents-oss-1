@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Session, Workspace, SessionEvent, Message, SubAgentMetadata, FileAttachment, StoredAttachment, PermissionRequest, SetupNeeds } from '../shared/types'
 import { generateMessageId } from '../shared/types'
 import { Chat } from '@/components/chat/Chat'
@@ -32,6 +32,10 @@ export default function App() {
   const [menuNewChatTrigger, setMenuNewChatTrigger] = useState(0)
   // Permission requests per session (queue to handle multiple concurrent requests)
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
+
+  // Queue for tool_result events that arrive before their tool_start (out-of-order handling)
+  // Using ref to avoid stale closure issues in the useEffect event handler
+  const orphanedToolResultsRef = useRef<Map<string, { result: string; toolName: string; turnId?: string }>>(new Map())
 
   // Handle onboarding completion
   const handleOnboardingComplete = useCallback(() => {
@@ -251,6 +255,7 @@ export default function App() {
                     content: event.delta,
                     timestamp: Date.now(),
                     isStreaming: true,
+                    isPending: true,  // Don't know if intermediate yet - wait for text_complete
                     turnId: event.turnId
                   }
                 ]
@@ -273,7 +278,7 @@ export default function App() {
                   isProcessing: false,
                   messages: [
                     ...msgs.slice(0, assistantIndex),
-                    { ...assistantMsg, content: event.text, isStreaming: false, isIntermediate: event.isIntermediate, turnId: event.turnId },
+                    { ...assistantMsg, content: event.text, isStreaming: false, isPending: false, isIntermediate: event.isIntermediate, turnId: event.turnId },
                     ...msgs.slice(assistantIndex + 1)
                   ]
                 }
@@ -298,7 +303,37 @@ export default function App() {
                   )
                 }
               }
-              // First event - create new message
+
+              // Check if we have a queued result for this tool (out-of-order case)
+              // This handles tool_result arriving before tool_start
+              const queuedResult = orphanedToolResultsRef.current.get(event.toolUseId)
+              if (queuedResult) {
+                orphanedToolResultsRef.current.delete(event.toolUseId)
+                console.log(`[App] Applying queued tool_result for ${event.toolUseId} (${event.toolName})`)
+
+                // Create message AND apply result in one update
+                return {
+                  ...session,
+                  isProcessing: true,
+                  messages: [
+                    ...session.messages,
+                    {
+                      id: generateMessageId(),
+                      role: 'tool' as const,
+                      content: queuedResult.result,
+                      timestamp: Date.now(),
+                      toolName: event.toolName,
+                      toolUseId: event.toolUseId,
+                      toolInput: event.toolInput,
+                      toolResult: queuedResult.result,
+                      toolStatus: 'completed',  // Already complete!
+                      turnId: event.turnId
+                    }
+                  ]
+                }
+              }
+
+              // Normal case - create new pending tool message
               return {
                 ...session,
                 isProcessing: true, // Ensure processing state is set (tools may run after text_complete)
@@ -321,28 +356,29 @@ export default function App() {
             case 'tool_result': {
               const toolMsgs = session.messages
               const matchingTool = toolMsgs.find(m => m.toolUseId === event.toolUseId)
+
               if (matchingTool) {
+                // Normal case - message exists, update it
                 return {
                   ...session,
                   messages: toolMsgs.map(m =>
                     m.toolUseId === event.toolUseId
-                      ? { ...m, content: event.result, toolResult: event.result }
+                      ? { ...m, content: event.result, toolResult: event.result, toolStatus: 'completed' }
                       : m
                   )
                 }
               }
-              const lastTool = toolMsgs.findLast(m => m.toolName === event.toolName && !m.toolResult)
-              if (lastTool) {
-                return {
-                  ...session,
-                  messages: toolMsgs.map(m =>
-                    m.id === lastTool.id
-                      ? { ...m, content: event.result, toolResult: event.result }
-                      : m
-                  )
-                }
-              }
-              return session
+
+              // Message doesn't exist yet - queue the result for when tool_start arrives
+              // This handles out-of-order events (result before start)
+              orphanedToolResultsRef.current.set(event.toolUseId, {
+                result: event.result,
+                toolName: event.toolName,
+                turnId: event.turnId
+              })
+              console.warn(`[App] tool_result arrived before tool_start for ${event.toolUseId} (${event.toolName}) - queued`)
+
+              return session  // No change yet - will be applied when tool_start arrives
             }
 
             case 'error':
@@ -396,6 +432,13 @@ export default function App() {
               }
 
             case 'complete':
+              // Clear any orphaned tool results (memory cleanup)
+              // If any orphans exist, it indicates a bug - tool_start never arrived for some results
+              if (orphanedToolResultsRef.current.size > 0) {
+                console.warn(`[App] Session complete but ${orphanedToolResultsRef.current.size} orphaned tool results exist:`,
+                  Array.from(orphanedToolResultsRef.current.keys()))
+                orphanedToolResultsRef.current.clear()
+              }
               return { ...session, isProcessing: false }
 
             case 'interrupted':
@@ -404,12 +447,8 @@ export default function App() {
                 isProcessing: false,
                 messages: [
                   ...session.messages,
-                  {
-                    id: generateMessageId(),
-                    role: 'info' as const,
-                    content: 'Response interrupted',
-                    timestamp: Date.now()
-                  }
+                  // Use message from main process (already persisted)
+                  event.message as Message
                 ]
               }
 
@@ -627,8 +666,13 @@ export default function App() {
 
   const handleRefreshAgents = useCallback(async () => {
     if (windowWorkspaceId) {
-      const refreshedAgents = await window.electronAPI.refreshAgents(windowWorkspaceId)
-      setAgents(refreshedAgents)
+      setIsLoadingAgents(true)
+      try {
+        const refreshedAgents = await window.electronAPI.refreshAgents(windowWorkspaceId)
+        setAgents(refreshedAgents)
+      } finally {
+        setIsLoadingAgents(false)
+      }
     }
   }, [windowWorkspaceId])
 

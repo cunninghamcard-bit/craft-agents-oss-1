@@ -26,11 +26,6 @@ import { SquarePenRounded } from "../icons/SquarePenRounded"
 
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
-import {
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable"
-import { GradientResizeHandle } from "@/components/ui/gradient-resize-handle"
 import { Separator } from "@/components/ui/separator"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import {
@@ -60,6 +55,7 @@ import { getResizeGradientStyle } from "@/hooks/useResizeGradient"
 import { useFocusZone, useGlobalShortcuts } from "@/hooks/keyboard"
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
+import { closeTabWithCleanup } from "@/utils/closeTabWithCleanup"
 import type { Session, Workspace, SubAgentMetadata, FileAttachment, PermissionRequest } from "../../../shared/types"
 
 type ViewMode = 'inbox' | 'archive' | 'flagged' | 'agent'
@@ -467,9 +463,16 @@ export function Chat({
     const saved = localStorage.getItem('chat-sidebar-width')
     return saved ? Number(saved) : 260
   })
-  const [isResizing, setIsResizing] = React.useState(false)
-  const [resizeHandleY, setResizeHandleY] = React.useState<number | null>(null)
+  // Session list width in pixels (min 280, max 500)
+  const [sessionListWidth, setSessionListWidth] = React.useState(() => {
+    const saved = localStorage.getItem('chat-session-list-width')
+    return saved ? Number(saved) : 340
+  })
+  const [isResizing, setIsResizing] = React.useState<'sidebar' | 'session-list' | null>(null)
+  const [sidebarHandleY, setSidebarHandleY] = React.useState<number | null>(null)
+  const [sessionListHandleY, setSessionListHandleY] = React.useState<number | null>(null)
   const resizeHandleRef = React.useRef<HTMLDivElement>(null)
+  const sessionListHandleRef = React.useRef<HTMLDivElement>(null)
   const [session, setSession] = useSession()
   const [viewMode, setViewMode] = React.useState<ViewMode>('inbox')
   const [selectedAgentId, setSelectedAgentId] = React.useState<string | null>(null)
@@ -517,6 +520,7 @@ export function Chat({
 
   // Tab system
   const {
+    tabs,
     openChatTab,
     openSettingsTab,
     openShortcutsTab,
@@ -555,7 +559,16 @@ export function Chat({
       // Panel tab navigation
       { key: '[', cmd: true, action: previousTab },
       { key: ']', cmd: true, action: nextTab },
-      { key: 'w', cmd: true, action: () => { if (activeTab?.closable) closeTab(activeTab.id) } },
+      { key: 'w', cmd: true, action: () => {
+        if (!activeTab?.closable) return
+        closeTabWithCleanup({
+          tabId: activeTab.id,
+          tabs,
+          sessions,
+          onDeleteSession,
+          closeTab,
+        })
+      } },
       // Sidebar toggle
       { key: 'b', cmd: true, action: () => setIsSidebarVisible(v => !v) },
       // New chat (context-aware: uses selected agent if in agent view)
@@ -565,43 +578,38 @@ export function Chat({
     ],
   })
 
-  // Sidebar resize handlers
-  const handleResizeStart = React.useCallback((e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizing(true)
-  }, [])
-
-  // Track mouse position on resize handle for gradient effect
-  const handleResizeHandleMouseMove = React.useCallback((e: React.MouseEvent) => {
-    if (resizeHandleRef.current) {
-      const rect = resizeHandleRef.current.getBoundingClientRect()
-      setResizeHandleY(e.clientY - rect.top)
-    }
-  }, [])
-
-  const handleResizeHandleMouseLeave = React.useCallback(() => {
-    if (!isResizing) {
-      setResizeHandleY(null)
-    }
-  }, [isResizing])
-
+  // Resize effect for both sidebar and session list
   React.useEffect(() => {
     if (!isResizing) return
 
     const handleMouseMove = (e: MouseEvent) => {
-      const newWidth = Math.min(Math.max(e.clientX, 200), 400)
-      setSidebarWidth(newWidth)
-      // Update gradient position during drag
-      if (resizeHandleRef.current) {
-        const rect = resizeHandleRef.current.getBoundingClientRect()
-        setResizeHandleY(e.clientY - rect.top)
+      if (isResizing === 'sidebar') {
+        const newWidth = Math.min(Math.max(e.clientX, 200), 400)
+        setSidebarWidth(newWidth)
+        if (resizeHandleRef.current) {
+          const rect = resizeHandleRef.current.getBoundingClientRect()
+          setSidebarHandleY(e.clientY - rect.top)
+        }
+      } else if (isResizing === 'session-list') {
+        const offset = isSidebarVisible ? sidebarWidth : 0
+        const newWidth = Math.min(Math.max(e.clientX - offset, 280), 500)
+        setSessionListWidth(newWidth)
+        if (sessionListHandleRef.current) {
+          const rect = sessionListHandleRef.current.getBoundingClientRect()
+          setSessionListHandleY(e.clientY - rect.top)
+        }
       }
     }
 
     const handleMouseUp = () => {
-      setIsResizing(false)
-      setResizeHandleY(null)
-      localStorage.setItem('chat-sidebar-width', String(sidebarWidth))
+      if (isResizing === 'sidebar') {
+        localStorage.setItem('chat-sidebar-width', String(sidebarWidth))
+        setSidebarHandleY(null)
+      } else if (isResizing === 'session-list') {
+        localStorage.setItem('chat-session-list-width', String(sessionListWidth))
+        setSessionListHandleY(null)
+      }
+      setIsResizing(null)
     }
 
     document.addEventListener('mousemove', handleMouseMove)
@@ -611,7 +619,7 @@ export function Chat({
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [isResizing, sidebarWidth])
+  }, [isResizing, sidebarWidth, sessionListWidth, isSidebarVisible])
 
   // Spring transition config - shared between sidebar and header
   // Critical damping (no bounce): damping = 2 * sqrt(stiffness * mass)
@@ -1324,7 +1332,12 @@ export function Chat({
                 <div className="group/agents flex-1 min-h-0 flex flex-col overflow-hidden pt-0.5">
                   {/* Agents Section Header with menu */}
                   <div className="flex items-center justify-between pl-4 pr-2 py-2 shrink-0">
-                    <span className="text-xs font-medium text-muted-foreground select-none">Agents</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-muted-foreground select-none">Agents</span>
+                      {isLoadingAgents && agents.length > 0 && (
+                        <Spinner className="text-xs text-muted-foreground" />
+                      )}
+                    </div>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <button
@@ -1420,102 +1433,122 @@ export function Chat({
             Visual: 2px wide gradient centered in touch area */}
         <div
           ref={resizeHandleRef}
-          onMouseDown={handleResizeStart}
-          onMouseMove={handleResizeHandleMouseMove}
-          onMouseLeave={handleResizeHandleMouseLeave}
+          onMouseDown={(e) => { e.preventDefault(); setIsResizing('sidebar') }}
+          onMouseMove={(e) => {
+            if (resizeHandleRef.current) {
+              const rect = resizeHandleRef.current.getBoundingClientRect()
+              setSidebarHandleY(e.clientY - rect.top)
+            }
+          }}
+          onMouseLeave={() => { if (!isResizing) setSidebarHandleY(null) }}
           className="absolute top-0 w-3 h-full cursor-col-resize z-50 flex justify-center"
           style={{
             left: isSidebarVisible ? sidebarWidth - 6 : -6,
-            transition: isResizing ? undefined : 'left 0.15s ease-out',
+            transition: isResizing === 'sidebar' ? undefined : 'left 0.15s ease-out',
           }}
         >
           {/* Visual indicator - 2px wide */}
           <div
             className="w-0.5 h-full"
-            style={getResizeGradientStyle(resizeHandleY)}
+            style={getResizeGradientStyle(sidebarHandleY)}
           />
         </div>
 
         {/* === MAIN CONTENT (Right) ===
-            Nested resizable layout: Session List | Chat Display */}
-        <div className="flex-1 overflow-hidden min-w-0">
-          {/* Inner Layout: Session List (40%) | Chat Display (60%) */}
-          <ResizablePanelGroup
-            direction="horizontal"
-            onLayout={(sizes: number[]) => {
-              localStorage.setItem('chat-layout-inner', JSON.stringify(sizes))
-            }}
-            className="h-full"
+            Flex layout: Session List | Chat Display */}
+        <div className="flex-1 overflow-hidden min-w-0 flex h-full">
+          {/* === SESSION LIST PANEL === */}
+          <div
+            className="h-full flex flex-col min-w-0 bg-background shrink-0"
+            style={{ width: sessionListWidth }}
           >
-            {/* === SESSION LIST PANEL === */}
-            <ResizablePanel defaultSize={40} minSize={25} className="overflow-hidden min-w-0">
-              <div className="h-full flex flex-col min-w-0 bg-background">
-                {/* Header: Dynamic title (Conversations/Archive/Agent name) + New Chat button
-                    Animated margin when sidebar toggles - uses same spring curve */}
-                <motion.div
-                  initial={false}
-                  animate={{ marginLeft: isSidebarVisible ? 0 : 102 }}
-                  transition={springTransition}
-                  className="flex h-[50px] shrink-0 items-center pl-5 pr-2 min-w-0 relative z-50"
-                >
-                  <div className="flex-1 min-w-0 flex flex-col justify-center">
-                    <h1 className="text-sm font-semibold truncate font-sans leading-tight">{listTitle}</h1>
-                    <p className="text-[11px] opacity-50 font-sans leading-tight">{filteredSessions.length} conversations</p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleNewChat(true)}
-                    disabled={viewMode === 'agent' && bannerState.state !== 'hidden'}
-                    className={cn(
-                      "h-7 w-7 shrink-0 rounded-[4px] hover:bg-foreground/5 titlebar-no-drag",
-                      viewMode === 'agent' && bannerState.state !== 'hidden' && "opacity-50 cursor-not-allowed"
-                    )}
-                    title="New Chat"
-                  >
-                    <SquarePenRounded className="!h-5 !w-5" />
-                  </Button>
-                </motion.div>
-                <Separator />
-                {/* Activation/Auth Banner - shows when agent needs activation or authentication */}
-                <SetupAuthBanner
-                  state={viewMode === 'agent' ? bannerState.state : 'hidden'}
-                  agentName={selectedAgentId ? agents.find(a => a.id === selectedAgentId)?.displayName || agents.find(a => a.id === selectedAgentId)?.name : undefined}
-                  reason={bannerState.reason}
-                  onAction={handleBannerAction}
-                />
-                {/* SessionList: Scrollable list of session cards */}
-                <SessionList
-                  items={filteredSessions}
-                  onDelete={handleDeleteSession}
-                  onArchive={viewMode !== 'archive' ? onArchiveSession : undefined}
-                  onUnarchive={viewMode === 'archive' ? onUnarchiveSession : undefined}
-                  onFlag={onFlagSession}
-                  onUnflag={onUnflagSession}
-                  onRename={onRenameSession}
-                  onFocusChatInput={focusChatInput}
-                  onSessionSelect={(selectedSession, { forceNewTab }) => {
-                    if (activeWorkspaceId) {
-                      openChatTab(
-                        selectedSession.id,
-                        activeWorkspaceId,
-                        getSessionTitle(selectedSession),
-                        selectedSession.agentId,
-                        { forceNew: forceNewTab }
-                      )
-                    }
-                  }}
-                />
+            {/* Header: Dynamic title (Conversations/Archive/Agent name) + New Chat button
+                Animated margin when sidebar toggles - uses same spring curve */}
+            <motion.div
+              initial={false}
+              animate={{ marginLeft: isSidebarVisible ? 0 : 102 }}
+              transition={springTransition}
+              className="flex h-[50px] shrink-0 items-center pl-5 pr-2 min-w-0 relative z-50"
+            >
+              <div className="flex-1 min-w-0 flex flex-col justify-center">
+                <h1 className="text-sm font-semibold truncate font-sans leading-tight">{listTitle}</h1>
+                <p className="text-[11px] opacity-50 font-sans leading-tight">{filteredSessions.length} conversations</p>
               </div>
-            </ResizablePanel>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => handleNewChat(true)}
+                disabled={viewMode === 'agent' && bannerState.state !== 'hidden'}
+                className={cn(
+                  "h-7 w-7 shrink-0 rounded-[4px] hover:bg-foreground/5 titlebar-no-drag",
+                  viewMode === 'agent' && bannerState.state !== 'hidden' && "opacity-50 cursor-not-allowed"
+                )}
+                title="New Chat"
+              >
+                <SquarePenRounded className="!h-5 !w-5" />
+              </Button>
+            </motion.div>
+            <Separator />
+            {/* Activation/Auth Banner - shows when agent needs activation or authentication */}
+            <SetupAuthBanner
+              state={viewMode === 'agent' ? bannerState.state : 'hidden'}
+              agentName={selectedAgentId ? agents.find(a => a.id === selectedAgentId)?.displayName || agents.find(a => a.id === selectedAgentId)?.name : undefined}
+              reason={bannerState.reason}
+              onAction={handleBannerAction}
+            />
+            {/* SessionList: Scrollable list of session cards */}
+            <SessionList
+              items={filteredSessions}
+              onDelete={handleDeleteSession}
+              onArchive={viewMode !== 'archive' ? onArchiveSession : undefined}
+              onUnarchive={viewMode === 'archive' ? onUnarchiveSession : undefined}
+              onFlag={onFlagSession}
+              onUnflag={onUnflagSession}
+              onRename={onRenameSession}
+              onFocusChatInput={focusChatInput}
+              onSessionSelect={(selectedSession, { forceNewTab }) => {
+                if (activeWorkspaceId) {
+                  openChatTab(
+                    selectedSession.id,
+                    activeWorkspaceId,
+                    getSessionTitle(selectedSession),
+                    selectedSession.agentId,
+                    { forceNew: forceNewTab }
+                  )
+                }
+              }}
+            />
+          </div>
 
-            <GradientResizeHandle />
+          {/* Session List Resize Handle */}
+          <div
+            ref={sessionListHandleRef}
+            onMouseDown={(e) => { e.preventDefault(); setIsResizing('session-list') }}
+            onMouseMove={(e) => {
+              if (sessionListHandleRef.current) {
+                const rect = sessionListHandleRef.current.getBoundingClientRect()
+                setSessionListHandleY(e.clientY - rect.top)
+              }
+            }}
+            onMouseLeave={() => { if (isResizing !== 'session-list') setSessionListHandleY(null) }}
+            className="relative w-px h-full cursor-col-resize flex justify-center shrink-0"
+          >
+            {/* Horizontal connector at header height */}
+            <div className="absolute h-px bg-border" style={{ top: 50, left: -6, right: 0 }} />
+            {/* Touch area */}
+            <div className="absolute inset-y-0 -left-1.5 -right-1.5 flex justify-center cursor-col-resize">
+              <div className="w-px h-full bg-border" />
+              <div
+                className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5"
+                style={getResizeGradientStyle(sessionListHandleY)}
+              />
+            </div>
+          </div>
 
-            {/* === TAB CONTAINER PANEL === */}
-            <ResizablePanel defaultSize={60} minSize={35} className="overflow-hidden min-w-0 bg-background">
-              <TabContainer />
-            </ResizablePanel>
-          </ResizablePanelGroup>
+          {/* === TAB CONTAINER PANEL === */}
+          <div className="flex-1 overflow-hidden min-w-0 bg-background">
+            <TabContainer />
+          </div>
         </div>
       </div>
 
