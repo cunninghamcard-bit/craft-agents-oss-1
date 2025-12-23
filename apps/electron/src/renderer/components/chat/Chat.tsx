@@ -106,13 +106,9 @@ interface ChatProps {
   // Permission handling (queue to support multiple concurrent requests)
   pendingPermissions?: Map<string, PermissionRequest[]>
   onRespondToPermission?: (sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => void
-  // Advanced options (all session-scoped)
-  ultrathinkSessions?: Set<string>
-  onUltrathinkChange?: (sessionId: string, enabled: boolean) => void
-  skipPermissionsSessions?: Set<string>
-  onSkipPermissionsChange?: (sessionId: string, enabled: boolean) => void
-  sessionModes?: Map<string, import('../../shared/types').Mode[]>
-  onModeChange?: (sessionId: string, mode: import('../../shared/types').Mode, enabled: boolean) => void
+  // Unified session options (replaces ultrathink, skipPermissions, modes)
+  sessionOptions?: Map<string, import('../../hooks/useSessionOptions').SessionOptions>
+  onSessionOptionsChange?: (sessionId: string, updates: import('../../hooks/useSessionOptions').SessionOptionUpdates) => void
   // Input drafts per session
   sessionDrafts?: Map<string, string>
   onInputChange?: (sessionId: string, value: string) => void
@@ -480,13 +476,9 @@ export function Chat({
   onAddWorkspace,
   pendingPermissions,
   onRespondToPermission,
-  // Advanced options (all session-scoped)
-  ultrathinkSessions,
-  onUltrathinkChange,
-  skipPermissionsSessions,
-  onSkipPermissionsChange,
-  sessionModes,
-  onModeChange,
+  // Unified session options
+  sessionOptions,
+  onSessionOptionsChange,
   // Input drafts per session
   sessionDrafts,
   onInputChange,
@@ -882,10 +874,8 @@ export function Chat({
     currentModel,
     pendingPermissions: pendingPermissions || new Map(),
     sessionDrafts: sessionDrafts || new Map(),
-    // Advanced options (all session-scoped)
-    ultrathinkSessions: ultrathinkSessions || new Set(),
-    skipPermissionsSessions: skipPermissionsSessions || new Set(),
-    sessionModes: sessionModes || new Map(),
+    // Unified session options
+    sessionOptions: sessionOptions || new Map(),
     onCreateSession,
     onSendMessage,
     onRenameSession,
@@ -897,10 +887,8 @@ export function Chat({
     onOpenFile,
     onOpenUrl,
     onModelChange,
-    // Advanced options callbacks
-    onUltrathinkChange: onUltrathinkChange || (() => {}),
-    onSkipPermissionsChange: onSkipPermissionsChange || (() => {}),
-    onModeChange: onModeChange || (() => {}),
+    // Unified session options callback
+    onSessionOptionsChange: onSessionOptionsChange || (() => {}),
     onInputChange: onInputChange || (() => {}),
     textareaRef: chatInputRef,
   }), [
@@ -910,9 +898,7 @@ export function Chat({
     activeWorkspaceId,
     currentModel,
     pendingPermissions,
-    ultrathinkSessions,
-    skipPermissionsSessions,
-    sessionModes,
+    sessionOptions,
     onCreateSession,
     onSendMessage,
     onRenameSession,
@@ -924,9 +910,7 @@ export function Chat({
     onOpenFile,
     onOpenUrl,
     onModelChange,
-    onUltrathinkChange,
-    onSkipPermissionsChange,
-    onModeChange,
+    onSessionOptionsChange,
     sessionDrafts,
     onInputChange,
   ])
@@ -1875,7 +1859,7 @@ export function Chat({
                   setViewMode('flagged')
                 }
               }}
-              sessionModes={sessionModes}
+              sessionOptions={sessionOptions}
               searchActive={searchActive}
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}

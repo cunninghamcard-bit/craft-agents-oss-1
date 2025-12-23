@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import type { Session, Workspace, SessionEvent, Message, SubAgentMetadata, FileAttachment, StoredAttachment, PermissionRequest, SetupNeeds, TodoState, Mode } from '../shared/types'
+import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
+import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { getToolDisplayName } from '@craft-agent/shared/utils/toolNames'
 import { generateMessageId } from '../shared/types'
 import { Chat } from '@/components/chat/Chat'
@@ -35,23 +37,19 @@ export default function App() {
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
   // Draft input text per session (preserved across mode switches and conversation changes)
   const [sessionDrafts, setSessionDrafts] = useState<Map<string, string>>(new Map())
-  // Advanced options (all session-scoped)
-  // Ultrathink per session (session-scoped, single-shot per message)
-  const [ultrathinkSessions, setUltrathinkSessions] = useState<Set<string>>(new Set())
-  // Skip permissions per session (session-scoped, not global)
-  const [skipPermissionsSessions, setSkipPermissionsSessions] = useState<Set<string>>(new Set())
-  // Active modes per session (generic for any mode type)
-  const [sessionModes, setSessionModes] = useState<Map<string, Mode[]>>(new Map())
+  // Unified session options - replaces ultrathinkSessions, skipPermissionsSessions, sessionModes
+  // All session-scoped options in one place (ultrathink, skipPermissions, activeModes, etc.)
+  const [sessionOptions, setSessionOptions] = useState<Map<string, SessionOptions>>(new Map())
 
   // Queue for tool_result events that arrive before their tool_start (out-of-order handling)
   // Using ref to avoid stale closure issues in the useEffect event handler
   const orphanedToolResultsRef = useRef<Map<string, { result: string; toolName: string; turnId?: string; parentToolUseId?: string }>>(new Map())
-  // Ref for skipPermissionsSessions to access current value in event handlers without re-registering
-  const skipPermissionsSessionsRef = useRef(skipPermissionsSessions)
+  // Ref for sessionOptions to access current value in event handlers without re-registering
+  const sessionOptionsRef = useRef(sessionOptions)
   // Keep ref in sync with state
   useEffect(() => {
-    skipPermissionsSessionsRef.current = skipPermissionsSessions
-  }, [skipPermissionsSessions])
+    sessionOptionsRef.current = sessionOptions
+  }, [sessionOptions])
 
   // Performance: Throttle streaming text state updates to reduce React re-renders
   // Accumulates deltas in ref, flushes to state every 200ms (or immediately on complete)
@@ -263,19 +261,20 @@ export default function App() {
     window.electronAPI.getWorkspaces().then(setWorkspaces)
     window.electronAPI.getSessions().then((loadedSessions) => {
       setSessions(loadedSessions)
-      // Initialize skipPermissionsSessions from session data
-      const skipSessions = new Set(
-        loadedSessions.filter(s => s.skipPermissions).map(s => s.id)
-      )
-      setSkipPermissionsSessions(skipSessions)
-      // Initialize sessionModes from session data (generic for any mode type)
-      const modesMap = new Map<string, Mode[]>()
+      // Initialize unified sessionOptions from session data
+      const optionsMap = new Map<string, SessionOptions>()
       for (const s of loadedSessions) {
-        if (s.activeModes && s.activeModes.length > 0) {
-          modesMap.set(s.id, s.activeModes)
+        // Only store non-default options to keep the map lean
+        const hasOptions = s.skipPermissions || (s.activeModes && s.activeModes.length > 0)
+        if (hasOptions) {
+          optionsMap.set(s.id, {
+            ultrathinkEnabled: false, // ultrathink is single-shot, never persisted
+            skipPermissions: s.skipPermissions ?? false,
+            activeModes: s.activeModes ?? [],
+          })
         }
       }
-      setSessionModes(modesMap)
+      setSessionOptions(optionsMap)
     })
     // Load stored model preference
     window.electronAPI.getModel().then((storedModel) => {
@@ -335,21 +334,17 @@ export default function App() {
       // Handle mode change events (generic for any mode type)
       if (event.type === 'mode_changed') {
         console.log('[App] mode_changed:', event.sessionId, event.mode, event.enabled)
-        setSessionModes(prev => {
+        setSessionOptions(prev => {
           const next = new Map(prev)
-          const currentModes = next.get(event.sessionId) || []
+          const current = next.get(event.sessionId) ?? defaultSessionOptions
+          const currentModes = current.activeModes
+          let newModes: Mode[]
           if (event.enabled) {
-            if (!currentModes.includes(event.mode)) {
-              next.set(event.sessionId, [...currentModes, event.mode])
-            }
+            newModes = currentModes.includes(event.mode) ? currentModes : [...currentModes, event.mode]
           } else {
-            const filtered = currentModes.filter(m => m !== event.mode)
-            if (filtered.length > 0) {
-              next.set(event.sessionId, filtered)
-            } else {
-              next.delete(event.sessionId)
-            }
+            newModes = currentModes.filter(m => m !== event.mode)
           }
+          next.set(event.sessionId, { ...current, activeModes: newModes })
           return next
         })
         return
@@ -842,15 +837,16 @@ export default function App() {
     const session = await window.electronAPI.createSession(workspaceId, agentId, agentName)
     setSessions(prev => [session, ...prev])
 
-    // Apply session defaults to the UI state
-    if (session.skipPermissions) {
-      setSkipPermissionsSessions(prev => new Set([...prev, session.id]))
-    }
-    // Apply mode defaults (generic for any mode type)
-    if (session.activeModes && session.activeModes.length > 0) {
-      setSessionModes(prev => {
+    // Apply session defaults to the unified sessionOptions
+    const hasDefaults = session.skipPermissions || (session.activeModes && session.activeModes.length > 0)
+    if (hasDefaults) {
+      setSessionOptions(prev => {
         const next = new Map(prev)
-        next.set(session.id, session.activeModes!)
+        next.set(session.id, {
+          ultrathinkEnabled: false,
+          skipPermissions: session.skipPermissions ?? false,
+          activeModes: session.activeModes ?? [],
+        })
         return next
       })
     }
@@ -1010,7 +1006,7 @@ export default function App() {
       }
 
       // Step 3: Check if ultrathink is enabled for this session
-      const isUltrathink = ultrathinkSessions.has(sessionId)
+      const isUltrathink = sessionOptions.get(sessionId)?.ultrathinkEnabled ?? false
 
       // Step 4: Create user message with StoredAttachments (for UI display)
       const userMessage: Message = {
@@ -1061,7 +1057,7 @@ export default function App() {
           : s
       ))
     }
-  }, [ultrathinkSessions])
+  }, [sessionOptions])
 
   const handleRefreshAgents = useCallback(async () => {
     if (windowWorkspaceId) {
@@ -1081,53 +1077,38 @@ export default function App() {
     window.electronAPI.setModel(model)
   }, [])
 
-  const handleUltrathinkChange = useCallback((sessionId: string, enabled: boolean) => {
-    setUltrathinkSessions(prev => {
-      const next = new Set(prev)
-      if (enabled) {
-        next.add(sessionId)
-      } else {
-        next.delete(sessionId)
-      }
-      return next
-    })
-  }, [])
-
-  const handleSkipPermissionsChange = useCallback((sessionId: string, enabled: boolean) => {
-    setSkipPermissionsSessions(prev => {
-      const next = new Set(prev)
-      if (enabled) {
-        next.add(sessionId)
-      } else {
-        next.delete(sessionId)
-      }
-      return next
-    })
-    // Persist to backend
-    window.electronAPI.setSkipPermissions(sessionId, enabled)
-  }, [])
-
-  const handleModeChange = useCallback((sessionId: string, mode: Mode, enabled: boolean) => {
-    setSessionModes(prev => {
+  /**
+   * Unified handler for all session option changes.
+   * Handles persistence and backend sync for each option type.
+   */
+  const handleSessionOptionsChange = useCallback((sessionId: string, updates: SessionOptionUpdates) => {
+    setSessionOptions(prev => {
       const next = new Map(prev)
-      const currentModes = next.get(sessionId) || []
-      if (enabled) {
-        if (!currentModes.includes(mode)) {
-          next.set(sessionId, [...currentModes, mode])
-        }
-      } else {
-        const filtered = currentModes.filter(m => m !== mode)
-        if (filtered.length > 0) {
-          next.set(sessionId, filtered)
-        } else {
-          next.delete(sessionId)
-        }
-      }
+      const current = next.get(sessionId) ?? defaultSessionOptions
+      next.set(sessionId, mergeSessionOptions(current, updates))
       return next
     })
-    // Persist to backend and update agent state
-    window.electronAPI.setMode(sessionId, mode, enabled)
-  }, [])
+
+    // Handle persistence/backend for specific options
+    if (updates.skipPermissions !== undefined) {
+      window.electronAPI.setSkipPermissions(sessionId, updates.skipPermissions)
+    }
+    if (updates.activeModes !== undefined) {
+      // Sync mode changes with backend (compare to get added/removed modes)
+      const current = sessionOptions.get(sessionId)?.activeModes ?? []
+      for (const mode of updates.activeModes) {
+        if (!current.includes(mode)) {
+          window.electronAPI.setMode(sessionId, mode, true)
+        }
+      }
+      for (const mode of current) {
+        if (!updates.activeModes.includes(mode)) {
+          window.electronAPI.setMode(sessionId, mode, false)
+        }
+      }
+    }
+    // ultrathinkEnabled is UI-only (single-shot), no backend persistence needed
+  }, [sessionOptions])
 
   // Handle input draft changes per session with debounced persistence
   const draftSaveTimeoutRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
@@ -1373,13 +1354,9 @@ export default function App() {
             onAddWorkspace={handleAddWorkspace}
             pendingPermissions={pendingPermissions}
             onRespondToPermission={handleRespondToPermission}
-            // Advanced options (all session-scoped)
-            ultrathinkSessions={ultrathinkSessions}
-            onUltrathinkChange={handleUltrathinkChange}
-            skipPermissionsSessions={skipPermissionsSessions}
-            onSkipPermissionsChange={handleSkipPermissionsChange}
-            sessionModes={sessionModes}
-            onModeChange={handleModeChange}
+            // Unified session options (replaces ultrathink, skipPermissions, modes)
+            sessionOptions={sessionOptions}
+            onSessionOptionsChange={handleSessionOptionsChange}
             // Input drafts per session
             sessionDrafts={sessionDrafts}
             onInputChange={handleInputChange}
