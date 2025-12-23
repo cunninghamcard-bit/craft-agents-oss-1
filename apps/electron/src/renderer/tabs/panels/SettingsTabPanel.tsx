@@ -525,7 +525,7 @@ export default function SettingsTabPanel({
   const [claudeOAuthError, setClaudeOAuthError] = useState<string | undefined>()
 
   // New session defaults state
-  const [defaultPlanMode, setDefaultPlanMode] = useState(false)
+  const [defaultSafeMode, setDefaultSafeMode] = useState(false)
   const [defaultSkipPermissions, setDefaultSkipPermissions] = useState(false)
 
   // Load new session defaults on mount
@@ -533,11 +533,11 @@ export default function SettingsTabPanel({
     const loadDefaults = async () => {
       if (!window.electronAPI) return
       try {
-        const [planMode, skipPerms] = await Promise.all([
-          window.electronAPI.getDefaultPlanMode(),
+        const [safeMode, skipPerms] = await Promise.all([
+          window.electronAPI.getDefaultSafeMode(),
           window.electronAPI.getDefaultSkipPermissions(),
         ])
-        setDefaultPlanMode(planMode)
+        setDefaultSafeMode(safeMode)
         setDefaultSkipPermissions(skipPerms)
       } catch (error) {
         console.error('Failed to load session defaults:', error)
@@ -547,14 +547,14 @@ export default function SettingsTabPanel({
   }, [])
 
   // Handlers for new session defaults
-  const handleDefaultPlanModeChange = useCallback(async (enabled: boolean) => {
+  const handleDefaultSafeModeChange = useCallback(async (enabled: boolean) => {
     if (!window.electronAPI) return
-    setDefaultPlanMode(enabled)
+    setDefaultSafeMode(enabled)
     try {
-      await window.electronAPI.setDefaultPlanMode(enabled)
+      await window.electronAPI.setDefaultSafeMode(enabled)
     } catch (error) {
-      console.error('Failed to save default plan mode:', error)
-      setDefaultPlanMode(!enabled) // Revert on error
+      console.error('Failed to save default safe mode:', error)
+      setDefaultSafeMode(!enabled) // Revert on error
     }
   }, [])
 
@@ -793,10 +793,10 @@ export default function SettingsTabPanel({
             <SectionHeader>New Sessions</SectionHeader>
             <div>
               <ToggleRow
-                label="Plan Mode"
-                description="— start with planning enabled"
-                checked={defaultPlanMode}
-                onCheckedChange={handleDefaultPlanModeChange}
+                label="Safe Mode"
+                description="— start with safe mode enabled"
+                checked={defaultSafeMode}
+                onCheckedChange={handleDefaultSafeModeChange}
               />
               <ToggleRow
                 label="Skip Permissions"

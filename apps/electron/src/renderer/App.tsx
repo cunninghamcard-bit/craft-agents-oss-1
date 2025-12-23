@@ -40,8 +40,8 @@ export default function App() {
   const [ultrathinkSessions, setUltrathinkSessions] = useState<Set<string>>(new Set())
   // Skip permissions per session (session-scoped, not global)
   const [skipPermissionsSessions, setSkipPermissionsSessions] = useState<Set<string>>(new Set())
-  // Plan mode per session (session-scoped)
-  const [planModeSessions, setPlanModeSessions] = useState<Set<string>>(new Set())
+  // Safe mode per session (session-scoped)
+  const [safeModeSessions, setSafeModeSessions] = useState<Set<string>>(new Set())
 
   // Queue for tool_result events that arrive before their tool_start (out-of-order handling)
   // Using ref to avoid stale closure issues in the useEffect event handler
@@ -268,11 +268,11 @@ export default function App() {
         loadedSessions.filter(s => s.skipPermissions).map(s => s.id)
       )
       setSkipPermissionsSessions(skipSessions)
-      // Initialize planModeSessions from session data
-      const planSessions = new Set(
-        loadedSessions.filter(s => s.planModeEnabled).map(s => s.id)
+      // Initialize safeModeSessions from session data
+      const safeSessions = new Set(
+        loadedSessions.filter(s => s.safeModeEnabled).map(s => s.id)
       )
-      setPlanModeSessions(planSessions)
+      setSafeModeSessions(safeSessions)
     })
     // Load stored model preference
     window.electronAPI.getModel().then((storedModel) => {
@@ -330,9 +330,9 @@ export default function App() {
       }
 
       // Handle plan mode events
-      if (event.type === 'plan_mode_changed') {
-        console.log('[App] plan_mode_changed:', event.sessionId, event.enabled)
-        setPlanModeSessions(prev => {
+      if (event.type === 'safe_mode_changed') {
+        console.log('[App] safe_mode_changed:', event.sessionId, event.enabled)
+        setSafeModeSessions(prev => {
           const next = new Set(prev)
           if (event.enabled) {
             next.add(event.sessionId)
@@ -835,8 +835,8 @@ export default function App() {
     if (session.skipPermissions) {
       setSkipPermissionsSessions(prev => new Set([...prev, session.id]))
     }
-    if (session.planModeEnabled) {
-      setPlanModeSessions(prev => new Set([...prev, session.id]))
+    if (session.safeModeEnabled) {
+      setSafeModeSessions(prev => new Set([...prev, session.id]))
     }
 
     return session
@@ -1091,8 +1091,8 @@ export default function App() {
     window.electronAPI.setSkipPermissions(sessionId, enabled)
   }, [])
 
-  const handlePlanModeChange = useCallback((sessionId: string, enabled: boolean) => {
-    setPlanModeSessions(prev => {
+  const handleSafeModeChange = useCallback((sessionId: string, enabled: boolean) => {
+    setSafeModeSessions(prev => {
       const next = new Set(prev)
       if (enabled) {
         next.add(sessionId)
@@ -1102,7 +1102,7 @@ export default function App() {
       return next
     })
     // Persist to backend and update agent state
-    window.electronAPI.setPlanMode(sessionId, enabled)
+    window.electronAPI.setSafeMode(sessionId, enabled)
   }, [])
 
   // Handle input draft changes per session with debounced persistence
@@ -1354,8 +1354,8 @@ export default function App() {
             onUltrathinkChange={handleUltrathinkChange}
             skipPermissionsSessions={skipPermissionsSessions}
             onSkipPermissionsChange={handleSkipPermissionsChange}
-            planModeSessions={planModeSessions}
-            onPlanModeChange={handlePlanModeChange}
+            safeModeSessions={safeModeSessions}
+            onSafeModeChange={handleSafeModeChange}
             // Input drafts per session
             sessionDrafts={sessionDrafts}
             onInputChange={handleInputChange}

@@ -279,7 +279,7 @@ export interface Session {
   isFlagged?: boolean
   // Advanced options (persisted per session)
   skipPermissions?: boolean
-  planModeEnabled?: boolean  // Whether plan mode is enabled for this session
+  safeModeEnabled?: boolean  // Whether safe mode (read-only exploration) is enabled for this session
   // Todo state (user-controlled) - determines inbox vs completed
   todoState?: TodoState
   // Read/unread tracking - ID of last message user has read
@@ -302,8 +302,8 @@ export type SessionEvent =
   | { type: 'title_generated'; sessionId: string; title: string }
   | { type: 'agent_status'; sessionId: string; status: AgentStatus }
   | { type: 'permission_request'; sessionId: string; request: PermissionRequest }
-  // Plan mode events
-  | { type: 'plan_mode_changed'; sessionId: string; enabled: boolean }
+  // Safe mode events
+  | { type: 'safe_mode_changed'; sessionId: string; enabled: boolean }
   | { type: 'plan_submitted'; sessionId: string; message: CoreMessage }
   | { type: 'ask_question_request'; sessionId: string; request: AskQuestionRequest }
 
@@ -330,9 +330,9 @@ export const IPC_CHANNELS = {
   MARK_SESSION_UNREAD: 'sessions:markUnread',
   RESPOND_TO_PERMISSION: 'sessions:respondToPermission',
 
-  // Plan mode
+  // Safe mode
   RESPOND_TO_ASK_QUESTION: 'sessions:respondToAskQuestion',
-  SET_PLAN_MODE: 'sessions:setPlanMode',
+  SET_SAFE_MODE: 'sessions:setSafeMode',
 
   // Workspace management
   GET_WORKSPACES: 'workspaces:get',
@@ -435,8 +435,8 @@ export const IPC_CHANNELS = {
   SETTINGS_SET_MODEL: 'settings:setModel',
 
   // Settings - New Session Defaults
-  SETTINGS_GET_DEFAULT_PLAN_MODE: 'settings:getDefaultPlanMode',
-  SETTINGS_SET_DEFAULT_PLAN_MODE: 'settings:setDefaultPlanMode',
+  SETTINGS_GET_DEFAULT_SAFE_MODE: 'settings:getDefaultSafeMode',
+  SETTINGS_SET_DEFAULT_SAFE_MODE: 'settings:setDefaultSafeMode',
   SETTINGS_GET_DEFAULT_SKIP_PERMISSIONS: 'settings:getDefaultSkipPermissions',
   SETTINGS_SET_DEFAULT_SKIP_PERMISSIONS: 'settings:setDefaultSkipPermissions',
 
@@ -558,9 +558,9 @@ export interface ElectronAPI {
   markSessionUnread(sessionId: string): Promise<void>
   respondToPermission(sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean): Promise<boolean>
 
-  // Plan mode
+  // Safe mode
   respondToAskQuestion(sessionId: string, requestId: string, answers: AskQuestionResponse): Promise<boolean>
-  setPlanMode(sessionId: string, enabled: boolean): Promise<void>
+  setSafeMode(sessionId: string, enabled: boolean): Promise<void>
 
   // Workspace management
   getWorkspaces(): Promise<Workspace[]>
@@ -668,8 +668,8 @@ export interface ElectronAPI {
   setModel(model: string): Promise<void>
 
   // Settings - New Session Defaults
-  getDefaultPlanMode(): Promise<boolean>
-  setDefaultPlanMode(enabled: boolean): Promise<void>
+  getDefaultSafeMode(): Promise<boolean>
+  setDefaultSafeMode(enabled: boolean): Promise<void>
   getDefaultSkipPermissions(): Promise<boolean>
   setDefaultSkipPermissions(enabled: boolean): Promise<void>
 

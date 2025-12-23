@@ -41,7 +41,7 @@ import {
   PLAN_MODE_ENTER_PROMPT,
   PLAN_MODE_EXIT_PROMPT,
 } from '@craft-agent/shared/agents';
-import { getPlanModeStateForSession } from '@craft-agent/shared/agent';
+import { isModeActive } from '@craft-agent/shared/agent';
 import { useGlobalContext } from '../context/GlobalContext.tsx';
 import {
   getWorkspaces,
@@ -163,14 +163,14 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     completeApiAuth,
     cancelApiAuth,
     triggerApiAuth,
-    // Plan mode
+    // Safe mode (read-only exploration)
     activePlan,
-    planMode,
+    safeMode,
     cancelPlan,
     approvePlan,
-    // Craft Agents plan mode toggle (for SHIFT+TAB)
-    startCraftPlanning,
-    cancelCraftPlanning,
+    // Safe mode toggle (for SHIFT+TAB or Ctrl+S)
+    startSafeMode,
+    exitSafeModeAction,
     // Todos (from TodoWrite tool)
     todos,
     // Ultrathink mode
@@ -370,11 +370,11 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     resetAgent,
     refreshAgents,
     fetchTools,
-    planMode,
+    safeMode,
     approvePlan,
     cancelPlan,
-    startCraftPlanning,
-    cancelCraftPlanning,
+    startSafeMode,
+    exitSafeModeAction,
     exitApp,
   });
 
@@ -686,22 +686,22 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       }
     }
 
-    // SHIFT+TAB: Toggle Craft Agents plan mode
-    // Use synchronous internal state (getPlanModeStateForSession) instead of async React state (planMode)
+    // SHIFT+TAB: Toggle Safe Mode (read-only exploration)
+    // Use synchronous internal state (isModeActive) instead of async React state (safeMode)
     // to avoid race conditions when toggling quickly
     if (isShiftTab(input, key)) {
-      const internalPlanMode = getPlanModeStateForSession(session.id).isActive;
-      if (internalPlanMode) {
-        // Exit Craft Agents plan mode (cancel without calling ExitCraftAgentsPlanMode)
-        cancelCraftPlanning();
+      const internalSafeMode = isModeActive(session.id, 'safe');
+      if (internalSafeMode) {
+        // Exit Safe Mode
+        exitSafeModeAction();
         addLocalMessage(PLAN_MODE_EXIT_MESSAGE, 'system');
         // Only send exit prompt if not already processing
         if (!isProcessing) {
           sendMessage(PLAN_MODE_EXIT_PROMPT);
         }
       } else if (!isProcessing) {
-        // Enter Craft Agents plan mode
-        startCraftPlanning();
+        // Enter Safe Mode
+        startSafeMode();
         addLocalMessage(PLAN_MODE_ENTER_MESSAGE, 'system');
         sendMessage(PLAN_MODE_ENTER_PROMPT);
       }
@@ -1028,7 +1028,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
           tokenDisplay={tokenDisplayMode}
           showCost={showCostSetting}
           version={getCurrentVersion()}
-          planMode={planMode}
+          safeMode={safeMode}
           exitWarning={showExitWarning}
         />
       </Box>

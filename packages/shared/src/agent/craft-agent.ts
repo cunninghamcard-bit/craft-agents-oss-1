@@ -25,25 +25,39 @@ import {
   clearPlanFileState,
 } from './plan-tools.ts';
 import {
+  isModeActive,
+  enterMode,
+  exitMode,
+  toggleMode,
+  initializeModeState,
+  cleanupModeState,
+  getModeContext,
+  isToolBlockedInMode,
+  isReadOnlyMcpToolForMode,
+  isReadOnlyApiMethodForMode,
+  getBlockReason,
+  // Legacy exports for re-export
   isSafeModeActive,
   enterSafeMode,
   exitSafeMode,
   toggleSafeMode,
-  initializeModeState,
-  cleanupModeState,
-  getSafeModeContext,
-  isToolBlockedInSafeMode,
-  isMcpToolAllowedInSafeMode,
-  isApiCallAllowedInSafeMode,
-  getSafeModeBlockReason,
-  isReadOnlyMcpTool,
-  isReadOnlyApiMethod,
-  SAFE_MODE_BLOCKED_TOOLS,
 } from './mode-manager.ts';
 import { getPlansDir } from '../config/storage.ts';
 
-// Re-export safe mode functions for TUI usage
-export { isSafeModeActive, enterSafeMode, exitSafeMode, toggleSafeMode } from './mode-manager.ts';
+// Re-export mode functions for TUI/Electron usage
+export {
+  // Generic mode API
+  isModeActive,
+  enterMode,
+  exitMode,
+  toggleMode,
+  type Mode,
+  // Legacy aliases (deprecated)
+  isSafeModeActive,
+  enterSafeMode,
+  exitSafeMode,
+  toggleSafeMode,
+} from './mode-manager.ts';
 // Documentation is now served via external HTTP MCP at agents.craft.do/docs/mcp
 
 // Import and re-export AgentEvent from core (single source of truth)
@@ -541,12 +555,13 @@ export class CraftAgent {
     const sessionId = this.modeSessionId;
     const initialSafeMode = config.session?.safeModeEnabled ?? false;
 
-    initializeModeState(sessionId, initialSafeMode, {
+    initializeModeState(sessionId, { safeMode: initialSafeMode }, {
       onStateChange: (state) => {
         // Sync safe mode state with agent
-        this.safeMode = state.safeMode;
+        const isSafe = state.activeModes.has('safe');
+        this.safeMode = isSafe;
         // Notify TUI of safe mode changes
-        this.onSafeModeChange?.(state.safeMode);
+        this.onSafeModeChange?.(isSafe);
       },
     });
 
@@ -940,14 +955,14 @@ export class CraftAgent {
                 }
 
                 // Block destructive tools (Write, Edit, Bash, etc.)
-                if (isToolBlockedInSafeMode(input.tool_name)) {
+                if (isToolBlockedInMode(input.tool_name, 'safe')) {
                   this.onDebug?.(`BLOCKED in safe mode: ${input.tool_name}`);
                   return {
                     continue: false,
                     hookSpecificOutput: {
                       hookEventName: 'PreToolUse' as const,
                       decision: 'block',
-                      reason: getSafeModeBlockReason(input.tool_name),
+                      reason: getBlockReason(input.tool_name, 'safe'),
                     },
                   };
                 }
@@ -962,7 +977,7 @@ export class CraftAgent {
                   }
 
                   // Allow read-only MCP tools
-                  if (isReadOnlyMcpTool(input.tool_name)) {
+                  if (isReadOnlyMcpToolForMode(input.tool_name, 'safe')) {
                     this.onDebug?.(`Allowing read-only MCP tool in safe mode: ${input.tool_name}`);
                     return { continue: true };
                   }
@@ -974,7 +989,7 @@ export class CraftAgent {
                     hookSpecificOutput: {
                       hookEventName: 'PreToolUse' as const,
                       decision: 'block',
-                      reason: 'MCP write operations are blocked in Safe Mode. Exit Safe Mode (Ctrl+S) to make changes.',
+                      reason: getBlockReason(input.tool_name, 'safe'),
                     },
                   };
                 }
@@ -984,7 +999,7 @@ export class CraftAgent {
                   const toolInput = input.tool_input as Record<string, unknown>;
                   const method = (toolInput.method as string) || 'GET';
 
-                  if (isReadOnlyApiMethod(method)) {
+                  if (isReadOnlyApiMethodForMode(method, 'safe')) {
                     this.onDebug?.(`Allowing API GET in safe mode: ${input.tool_name}`);
                     return { continue: true };
                   }
@@ -995,7 +1010,7 @@ export class CraftAgent {
                     hookSpecificOutput: {
                       hookEventName: 'PreToolUse' as const,
                       decision: 'block',
-                      reason: 'API mutations (POST, PUT, DELETE) are blocked in Safe Mode. Exit Safe Mode (Ctrl+S) to make changes.',
+                      reason: getBlockReason(input.tool_name, 'safe'),
                     },
                   };
                 }
@@ -1554,10 +1569,10 @@ export class CraftAgent {
     // Add date/time context first (moved from system prompt to enable caching)
     parts.push(getDateTimeContext());
 
-    // Add safe mode context if active (injected into user message to preserve caching)
-    const safeModeContext = getSafeModeContext(this.modeSessionId);
-    if (safeModeContext) {
-      parts.push(safeModeContext);
+    // Add mode context if any modes are active (injected into user message to preserve caching)
+    const modeContext = getModeContext(this.modeSessionId);
+    if (modeContext) {
+      parts.push(modeContext);
     }
 
     // Add file attachments
@@ -1588,10 +1603,10 @@ export class CraftAgent {
     // Add date/time context first (moved from system prompt to enable caching)
     contentBlocks.push({ type: 'text', text: getDateTimeContext() });
 
-    // Add safe mode context if active (injected into user message to preserve caching)
-    const safeModeContext = getSafeModeContext(this.modeSessionId);
-    if (safeModeContext) {
-      contentBlocks.push({ type: 'text', text: safeModeContext });
+    // Add mode context if any modes are active (injected into user message to preserve caching)
+    const modeContext = getModeContext(this.modeSessionId);
+    if (modeContext) {
+      contentBlocks.push({ type: 'text', text: modeContext });
     }
 
     // Add attachments

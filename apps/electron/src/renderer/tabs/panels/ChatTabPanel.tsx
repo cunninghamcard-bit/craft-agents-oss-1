@@ -34,10 +34,10 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
     // Advanced options (all session-scoped)
     ultrathinkSessions,
     skipPermissionsSessions,
-    planModeSessions,
+    safeModeSessions,
     onUltrathinkChange,
     onSkipPermissionsChange,
-    onPlanModeChange,
+    onSafeModeChange,
     // Input drafts
     sessionDrafts,
     onInputChange,
@@ -188,8 +188,8 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
       onUltrathinkChange={(enabled) => onUltrathinkChange(chatTab.sessionId, enabled)}
       skipPermissions={skipPermissionsSessions.has(chatTab.sessionId)}
       onSkipPermissionsChange={(enabled) => onSkipPermissionsChange(chatTab.sessionId, enabled)}
-      planModeEnabled={planModeSessions.has(chatTab.sessionId)}
-      onPlanModeChange={(enabled) => onPlanModeChange(chatTab.sessionId, enabled)}
+      safeModeEnabled={safeModeSessions.has(chatTab.sessionId)}
+      onSafeModeChange={(enabled) => onSafeModeChange(chatTab.sessionId, enabled)}
       // Input draft preservation
       inputValue={inputValue}
       onInputChange={handleInputChange}

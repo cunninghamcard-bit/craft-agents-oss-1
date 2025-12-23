@@ -49,8 +49,8 @@ export interface FreeFormInputProps {
   onUltrathinkChange?: (enabled: boolean) => void
   skipPermissions?: boolean
   onSkipPermissionsChange?: (enabled: boolean) => void
-  planModeEnabled?: boolean
-  onPlanModeChange?: (enabled: boolean) => void
+  safeModeEnabled?: boolean
+  onSafeModeChange?: (enabled: boolean) => void
   // Controlled input value (for persisting across mode switches and conversation changes)
   /** Current input value - if provided, component becomes controlled */
   inputValue?: string
@@ -87,8 +87,8 @@ export function FreeFormInput({
   onUltrathinkChange,
   skipPermissions = false,
   onSkipPermissionsChange,
-  planModeEnabled = false,
-  onPlanModeChange,
+  safeModeEnabled = false,
+  onSafeModeChange,
   inputValue,
   onInputChange,
   unstyled = false,
@@ -175,18 +175,18 @@ export function FreeFormInput({
   // Build active commands list for slash command menu
   const activeCommands = React.useMemo(() => {
     const active: SlashCommandId[] = []
-    if (planModeEnabled) active.push('plan')
+    if (safeModeEnabled) active.push('plan')  // 'plan' command ID maps to safe mode
     if (ultrathinkEnabled) active.push('ultrathink')
     if (skipPermissions) active.push('skip-permissions')
     return active
-  }, [planModeEnabled, ultrathinkEnabled, skipPermissions])
+  }, [safeModeEnabled, ultrathinkEnabled, skipPermissions])
 
   // Handle slash command selection
   const handleSlashCommand = React.useCallback((commandId: SlashCommandId) => {
-    if (commandId === 'plan') onPlanModeChange?.(!planModeEnabled)
+    if (commandId === 'plan') onSafeModeChange?.(!safeModeEnabled)  // 'plan' command ID maps to safe mode
     else if (commandId === 'ultrathink') onUltrathinkChange?.(!ultrathinkEnabled)
     else if (commandId === 'skip-permissions') onSkipPermissionsChange?.(!skipPermissions)
-  }, [planModeEnabled, ultrathinkEnabled, skipPermissions, onPlanModeChange, onUltrathinkChange, onSkipPermissionsChange])
+  }, [safeModeEnabled, ultrathinkEnabled, skipPermissions, onSafeModeChange, onUltrathinkChange, onSkipPermissionsChange])
 
   // Inline slash command hook
   const inlineSlash = useInlineSlashCommand({
@@ -355,10 +355,10 @@ export function FreeFormInput({
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Shift+Tab toggles plan mode
+    // Shift+Tab toggles safe mode
     if (e.key === 'Tab' && e.shiftKey) {
       e.preventDefault()
-      onPlanModeChange?.(!planModeEnabled)
+      onSafeModeChange?.(!safeModeEnabled)
       return
     }
 

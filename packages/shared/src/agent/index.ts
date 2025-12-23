@@ -19,31 +19,47 @@ export {
   type PlanCallbacks,
 } from './plan-tools.ts';
 
-// Export mode-manager - Safe Mode is user-controlled read-only exploration
+// Export mode-manager - Centralized mode management
 export {
-  // Safe Mode state management
+  // Generic Mode API
+  isModeActive,
+  enterMode,
+  exitMode,
+  toggleMode,
+  getActiveModes,
+  getModeState,
+  initializeModeState,
+  cleanupModeState,
+  // Tool blocking (generic)
+  isToolBlockedInMode,
+  isReadOnlyMcpToolForMode,
+  isReadOnlyApiMethodForMode,
+  isToolBlockedInAnyMode,
+  getBlockReason,
+  // Mode context for user messages
+  getModeContext,
+  // Mode configurations
+  MODE_CONFIGS,
+  // Mode manager singleton (for advanced use cases)
+  modeManager,
+  // Types
+  type Mode,
+  type ModeState,
+  type ModeCallbacks,
+  type ModeConfig,
+  // Legacy aliases (deprecated, for backward compatibility)
   isSafeModeActive,
   enterSafeMode,
   exitSafeMode,
   toggleSafeMode,
-  initializeModeState,
-  cleanupModeState,
-  getModeState,
-  // Safe Mode context for user messages
-  getSafeModeContext,
-  // Tool blocking utilities
   isToolBlockedInSafeMode,
   isMcpToolAllowedInSafeMode,
   isApiCallAllowedInSafeMode,
   getSafeModeBlockReason,
+  getSafeModeContext,
+  SAFE_MODE_BLOCKED_TOOLS,
   isReadOnlyMcpTool,
   isReadOnlyApiMethod,
-  SAFE_MODE_BLOCKED_TOOLS,
-  // Mode manager singleton (for advanced use cases)
-  modeManager,
-  // Types
-  type ModeState,
-  type ModeCallbacks,
 } from './mode-manager.ts';
 
 // Export plan review types for electron app (plans can still be submitted via SubmitPlan)

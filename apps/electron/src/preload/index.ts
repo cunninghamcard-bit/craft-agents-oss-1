@@ -18,11 +18,11 @@ const api: ElectronAPI = {
   respondToPermission: (sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.RESPOND_TO_PERMISSION, sessionId, requestId, allowed, alwaysAllow),
 
-  // Plan mode
+  // Safe mode
   respondToAskQuestion: (sessionId: string, requestId: string, answers: import('../shared/types').AskQuestionResponse) =>
     ipcRenderer.invoke(IPC_CHANNELS.RESPOND_TO_ASK_QUESTION, sessionId, requestId, answers),
-  setPlanMode: (sessionId: string, enabled: boolean) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SET_PLAN_MODE, sessionId, enabled),
+  setSafeMode: (sessionId: string, enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SET_SAFE_MODE, sessionId, enabled),
 
   // Workspace management
   getWorkspaces: () => ipcRenderer.invoke(IPC_CHANNELS.GET_WORKSPACES),
@@ -190,8 +190,8 @@ const api: ElectronAPI = {
   setModel: (model: string) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_MODEL, model),
 
   // Settings - New Session Defaults
-  getDefaultPlanMode: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_DEFAULT_PLAN_MODE),
-  setDefaultPlanMode: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_DEFAULT_PLAN_MODE, enabled),
+  getDefaultSafeMode: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_DEFAULT_SAFE_MODE),
+  setDefaultSafeMode: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_DEFAULT_SAFE_MODE, enabled),
   getDefaultSkipPermissions: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_DEFAULT_SKIP_PERMISSIONS),
   setDefaultSkipPermissions: (enabled: boolean) => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET_DEFAULT_SKIP_PERMISSIONS, enabled),
 

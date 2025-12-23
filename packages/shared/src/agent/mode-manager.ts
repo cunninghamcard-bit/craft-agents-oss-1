@@ -4,26 +4,25 @@
  * Manages agent operational modes (Safe Mode, and future modes).
  * Each session has its own mode state - no global state contamination.
  *
- * Safe Mode: Read-only exploration mode. The agent can:
- * - Read files, search, explore the codebase
- * - Make MCP read-only calls (blocks_read, search, etc.)
- * - Make API GET requests
- * - Ask questions and have conversations
+ * Available Modes:
+ * - 'safe': Read-only exploration mode (no writes/edits)
  *
- * Safe Mode blocks:
- * - File writes/edits (Write, Edit, Bash)
- * - MCP write operations (blocks_add, blocks_update, etc.)
- * - API mutations (POST, PUT, DELETE)
- *
- * The user explicitly toggles Safe Mode via UI (Ctrl+S or badge toggle).
- * The agent cannot enter/exit Safe Mode - only the user can.
+ * Future modes could include:
+ * - 'plan': Planning mode (research before execution)
+ * - 'explore': Deep codebase exploration
+ * - 'debug': Debug/investigation mode
  */
 
 import { debug } from '../utils/debug.ts';
 
 // ============================================================
-// Mode State Types
+// Mode Types
 // ============================================================
+
+/**
+ * Available operational modes
+ */
+export type Mode = 'safe';
 
 /**
  * State for a single session's modes
@@ -31,8 +30,8 @@ import { debug } from '../utils/debug.ts';
 export interface ModeState {
   /** Session ID */
   sessionId: string;
-  /** Whether Safe Mode is active (read-only exploration) */
-  safeMode: boolean;
+  /** Active modes (can have multiple active at once in future) */
+  activeModes: Set<Mode>;
   /** Callback when mode state changes */
   onStateChange?: (state: ModeState) => void;
 }
@@ -43,6 +42,60 @@ export interface ModeState {
 export interface ModeCallbacks {
   onStateChange?: (state: ModeState) => void;
 }
+
+/**
+ * Mode configuration - defines behavior for each mode
+ */
+export interface ModeConfig {
+  /** Tools that are blocked in this mode */
+  blockedTools: Set<string>;
+  /** Read-only MCP patterns (tools matching these are allowed) */
+  readOnlyMcpPatterns: RegExp[];
+  /** Read-only API methods */
+  readOnlyApiMethods: Set<string>;
+  /** User-friendly name */
+  displayName: string;
+  /** Keyboard shortcut hint */
+  shortcutHint: string;
+}
+
+// ============================================================
+// Mode Configurations
+// ============================================================
+
+/**
+ * Configuration for each mode
+ */
+export const MODE_CONFIGS: Record<Mode, ModeConfig> = {
+  safe: {
+    blockedTools: new Set([
+      'Bash',
+      'Write',
+      'Edit',
+      'MultiEdit',
+      'NotebookEdit',
+    ]),
+    readOnlyMcpPatterns: [
+      // Craft MCP - read operations
+      /blocks_read/,
+      /blocks_list/,
+      /blocks_get/,
+      /document_get/,
+      /document_list/,
+      /spaces_list/,
+      /folders_list/,
+      /search/,
+      /list/,
+      /get/,
+      /read/,
+      // Docs MCP - all operations are read-only
+      /^mcp__docs__/,
+    ],
+    readOnlyApiMethods: new Set(['GET']),
+    displayName: 'Safe Mode',
+    shortcutHint: 'Ctrl+S',
+  },
+};
 
 // ============================================================
 // Mode Manager Class
@@ -64,7 +117,7 @@ class ModeManager {
     if (!state) {
       state = {
         sessionId,
-        safeMode: false,
+        activeModes: new Set(),
       };
       this.states.set(sessionId, state);
     }
@@ -72,11 +125,11 @@ class ModeManager {
   }
 
   /**
-   * Set state for a session (merges with existing state)
+   * Set modes for a session
    */
-  setState(sessionId: string, updates: Partial<ModeState>): void {
+  setModes(sessionId: string, activeModes: Set<Mode>): void {
     const existing = this.getState(sessionId);
-    const newState = { ...existing, ...updates, sessionId };
+    const newState = { ...existing, activeModes: new Set(activeModes) };
     this.states.set(sessionId, newState);
 
     // Notify callbacks
@@ -113,43 +166,57 @@ class ModeManager {
 export const modeManager = new ModeManager();
 
 // ============================================================
-// Safe Mode API
+// Generic Mode API
 // ============================================================
 
 /**
- * Check if Safe Mode is active for a session
+ * Check if a mode is active for a session
  */
-export function isSafeModeActive(sessionId: string): boolean {
-  return modeManager.getState(sessionId).safeMode;
+export function isModeActive(sessionId: string, mode: Mode): boolean {
+  return modeManager.getState(sessionId).activeModes.has(mode);
 }
 
 /**
- * Enter Safe Mode for a session (called by UI)
+ * Enter a mode for a session (called by UI)
  */
-export function enterSafeMode(sessionId: string): void {
-  debug(`[SafeMode] Entering safe mode for session ${sessionId}`);
-  modeManager.setState(sessionId, { safeMode: true });
+export function enterMode(sessionId: string, mode: Mode): void {
+  debug(`[Mode] Entering ${mode} mode for session ${sessionId}`);
+  const state = modeManager.getState(sessionId);
+  const newModes = new Set(state.activeModes);
+  newModes.add(mode);
+  modeManager.setModes(sessionId, newModes);
 }
 
 /**
- * Exit Safe Mode for a session (called by UI)
+ * Exit a mode for a session (called by UI)
  */
-export function exitSafeMode(sessionId: string): void {
-  debug(`[SafeMode] Exiting safe mode for session ${sessionId}`);
-  modeManager.setState(sessionId, { safeMode: false });
+export function exitMode(sessionId: string, mode: Mode): void {
+  debug(`[Mode] Exiting ${mode} mode for session ${sessionId}`);
+  const state = modeManager.getState(sessionId);
+  const newModes = new Set(state.activeModes);
+  newModes.delete(mode);
+  modeManager.setModes(sessionId, newModes);
 }
 
 /**
- * Toggle Safe Mode for a session (called by UI)
+ * Toggle a mode for a session (called by UI)
+ * Returns the new state (true = active, false = inactive)
  */
-export function toggleSafeMode(sessionId: string): boolean {
-  const current = isSafeModeActive(sessionId);
-  if (current) {
-    exitSafeMode(sessionId);
+export function toggleMode(sessionId: string, mode: Mode): boolean {
+  if (isModeActive(sessionId, mode)) {
+    exitMode(sessionId, mode);
+    return false;
   } else {
-    enterSafeMode(sessionId);
+    enterMode(sessionId, mode);
+    return true;
   }
-  return !current;
+}
+
+/**
+ * Get all active modes for a session
+ */
+export function getActiveModes(sessionId: string): Mode[] {
+  return Array.from(modeManager.getState(sessionId).activeModes);
 }
 
 /**
@@ -164,10 +231,22 @@ export function getModeState(sessionId: string): ModeState {
  */
 export function initializeModeState(
   sessionId: string,
-  initialSafeMode: boolean,
+  initialModes: Mode[] | { safeMode?: boolean },
   callbacks?: ModeCallbacks
 ): void {
-  modeManager.setState(sessionId, { safeMode: initialSafeMode });
+  // Support both new array format and legacy { safeMode: boolean } format
+  let modes: Set<Mode>;
+  if (Array.isArray(initialModes)) {
+    modes = new Set(initialModes);
+  } else {
+    // Legacy format
+    modes = new Set<Mode>();
+    if (initialModes.safeMode) {
+      modes.add('safe');
+    }
+  }
+
+  modeManager.setModes(sessionId, modes);
   if (callbacks) {
     modeManager.registerCallbacks(sessionId, callbacks);
   }
@@ -181,127 +260,166 @@ export function cleanupModeState(sessionId: string): void {
 }
 
 // ============================================================
-// Tool Blocking Logic (for PreToolUse hook)
+// Tool Blocking Logic (Generic)
 // ============================================================
 
 /**
- * Tools that are always blocked in Safe Mode
+ * Check if a tool is blocked in a specific mode
  */
-export const SAFE_MODE_BLOCKED_TOOLS = new Set([
-  'Bash',
-  'Write',
-  'Edit',
-  'MultiEdit',
-  'NotebookEdit',
-]);
-
-/**
- * Read-only MCP tool patterns (allowed in Safe Mode)
- */
-const READ_ONLY_MCP_PATTERNS = [
-  // Craft MCP - read operations
-  /blocks_read/,
-  /blocks_list/,
-  /blocks_get/,
-  /document_get/,
-  /document_list/,
-  /spaces_list/,
-  /folders_list/,
-  /search/,
-  /list/,
-  /get/,
-  /read/,
-  // Docs MCP - all operations are read-only
-  /^mcp__docs__/,
-];
-
-/**
- * Check if an MCP tool is read-only (allowed in Safe Mode)
- */
-export function isReadOnlyMcpTool(toolName: string): boolean {
-  return READ_ONLY_MCP_PATTERNS.some(pattern => pattern.test(toolName));
+export function isToolBlockedInMode(toolName: string, mode: Mode): boolean {
+  const config = MODE_CONFIGS[mode];
+  return config.blockedTools.has(toolName);
 }
 
 /**
- * Check if an API method is read-only (allowed in Safe Mode)
+ * Check if an MCP tool is read-only in a specific mode
  */
-export function isReadOnlyApiMethod(method: string): boolean {
-  return method.toUpperCase() === 'GET';
+export function isReadOnlyMcpToolForMode(toolName: string, mode: Mode): boolean {
+  const config = MODE_CONFIGS[mode];
+  return config.readOnlyMcpPatterns.some(pattern => pattern.test(toolName));
 }
 
 /**
- * Check if a tool is blocked in Safe Mode
- * Returns true if the tool should be blocked
+ * Check if an API method is read-only in a specific mode
  */
-export function isToolBlockedInSafeMode(toolName: string): boolean {
-  return SAFE_MODE_BLOCKED_TOOLS.has(toolName);
+export function isReadOnlyApiMethodForMode(method: string, mode: Mode): boolean {
+  const config = MODE_CONFIGS[mode];
+  return config.readOnlyApiMethods.has(method.toUpperCase());
 }
 
 /**
- * Check if an MCP tool is allowed in Safe Mode
- * Returns true if the MCP tool is read-only
+ * Check if a tool is blocked in ANY active mode for a session
  */
-export function isMcpToolAllowedInSafeMode(toolName: string): boolean {
-  return isReadOnlyMcpTool(toolName);
-}
-
-/**
- * Check if an API call is allowed in Safe Mode
- * Returns true if the method is GET
- */
-export function isApiCallAllowedInSafeMode(method: string): boolean {
-  return isReadOnlyApiMethod(method);
+export function isToolBlockedInAnyMode(sessionId: string, toolName: string): boolean {
+  const activeModes = getActiveModes(sessionId);
+  return activeModes.some(mode => isToolBlockedInMode(toolName, mode));
 }
 
 /**
  * Get a user-friendly message explaining why a tool is blocked
  */
-export function getSafeModeBlockReason(toolName: string): string {
+export function getBlockReason(toolName: string, mode: Mode): string {
+  const config = MODE_CONFIGS[mode];
+  const displayName = config.displayName;
+  const shortcut = config.shortcutHint;
+
   if (toolName === 'Bash') {
-    return 'Bash commands are blocked in Safe Mode. Exit Safe Mode (Ctrl+S) to run commands.';
+    return `Bash commands are blocked in ${displayName}. Exit ${displayName} (${shortcut}) to run commands.`;
   }
   if (toolName === 'Write' || toolName === 'Edit' || toolName === 'MultiEdit') {
-    return 'File modifications are blocked in Safe Mode. Exit Safe Mode (Ctrl+S) to make changes.';
+    return `File modifications are blocked in ${displayName}. Exit ${displayName} (${shortcut}) to make changes.`;
   }
   if (toolName.startsWith('mcp__')) {
-    return 'MCP write operations are blocked in Safe Mode. Exit Safe Mode (Ctrl+S) to make changes.';
+    return `MCP write operations are blocked in ${displayName}. Exit ${displayName} (${shortcut}) to make changes.`;
   }
   if (toolName.startsWith('api_')) {
-    return 'API mutations are blocked in Safe Mode. Exit Safe Mode (Ctrl+S) to make changes.';
+    return `API mutations are blocked in ${displayName}. Exit ${displayName} (${shortcut}) to make changes.`;
   }
-  return `${toolName} is blocked in Safe Mode. Exit Safe Mode (Ctrl+S) to use this tool.`;
+  return `${toolName} is blocked in ${displayName}. Exit ${displayName} (${shortcut}) to use this tool.`;
 }
 
 // ============================================================
-// Safe Mode Context (for user messages)
+// Mode Context (for user messages)
 // ============================================================
 
 /**
- * Generate Safe Mode context to inject into user messages.
- * Returns null if Safe Mode is not active.
+ * Generate context for all active modes to inject into user messages.
+ * Returns null if no modes are active.
  */
-export function getSafeModeContext(sessionId: string): string | null {
-  if (!isSafeModeActive(sessionId)) {
+export function getModeContext(sessionId: string): string | null {
+  const activeModes = getActiveModes(sessionId);
+  if (activeModes.length === 0) {
     return null;
   }
 
   const parts: string[] = [];
-  parts.push('<safe_mode_active>');
-  parts.push('You are in **SAFE MODE** (read-only exploration).');
-  parts.push('');
-  parts.push('**Allowed:**');
-  parts.push('- Reading files, searching, exploring the codebase');
-  parts.push('- MCP read operations (blocks_read, search, etc.)');
-  parts.push('- API GET requests');
-  parts.push('- Asking questions, having conversations');
-  parts.push('');
-  parts.push('**Blocked:**');
-  parts.push('- File writes/edits (Write, Edit, Bash)');
-  parts.push('- MCP write operations');
-  parts.push('- API mutations (POST, PUT, DELETE)');
-  parts.push('');
-  parts.push('The user can exit Safe Mode via Ctrl+S or the UI toggle.');
-  parts.push('</safe_mode_active>');
+
+  for (const mode of activeModes) {
+    const config = MODE_CONFIGS[mode];
+    parts.push(`<${mode}_mode_active>`);
+    parts.push(`You are in **${config.displayName.toUpperCase()}** (read-only exploration).`);
+    parts.push('');
+    parts.push('**Allowed:**');
+    parts.push('- Reading files, searching, exploring the codebase');
+    parts.push('- MCP read operations (blocks_read, search, etc.)');
+    parts.push('- API GET requests');
+    parts.push('- Asking questions, having conversations');
+    parts.push('');
+    parts.push('**Blocked:**');
+    parts.push(`- ${Array.from(config.blockedTools).join(', ')}`);
+    parts.push('- MCP write operations');
+    parts.push('- API mutations (POST, PUT, DELETE)');
+    parts.push('');
+    parts.push(`The user can exit ${config.displayName} via ${config.shortcutHint} or the UI toggle.`);
+    parts.push(`</${mode}_mode_active>`);
+  }
 
   return parts.join('\n');
+}
+
+// ============================================================
+// Legacy Aliases (for backward compatibility)
+// ============================================================
+
+// These maintain the old API while using the new generic system
+
+/** @deprecated Use isModeActive(sessionId, 'safe') */
+export function isSafeModeActive(sessionId: string): boolean {
+  return isModeActive(sessionId, 'safe');
+}
+
+/** @deprecated Use enterMode(sessionId, 'safe') */
+export function enterSafeMode(sessionId: string): void {
+  enterMode(sessionId, 'safe');
+}
+
+/** @deprecated Use exitMode(sessionId, 'safe') */
+export function exitSafeMode(sessionId: string): void {
+  exitMode(sessionId, 'safe');
+}
+
+/** @deprecated Use toggleMode(sessionId, 'safe') */
+export function toggleSafeMode(sessionId: string): boolean {
+  return toggleMode(sessionId, 'safe');
+}
+
+/** @deprecated Use isToolBlockedInMode(toolName, 'safe') */
+export function isToolBlockedInSafeMode(toolName: string): boolean {
+  return isToolBlockedInMode(toolName, 'safe');
+}
+
+/** @deprecated Use isReadOnlyMcpToolForMode(toolName, 'safe') */
+export function isMcpToolAllowedInSafeMode(toolName: string): boolean {
+  return isReadOnlyMcpToolForMode(toolName, 'safe');
+}
+
+/** @deprecated Use isReadOnlyApiMethodForMode(method, 'safe') */
+export function isApiCallAllowedInSafeMode(method: string): boolean {
+  return isReadOnlyApiMethodForMode(method, 'safe');
+}
+
+/** @deprecated Use getBlockReason(toolName, 'safe') */
+export function getSafeModeBlockReason(toolName: string): string {
+  return getBlockReason(toolName, 'safe');
+}
+
+/** @deprecated Use getModeContext(sessionId) */
+export function getSafeModeContext(sessionId: string): string | null {
+  if (!isModeActive(sessionId, 'safe')) {
+    return null;
+  }
+  return getModeContext(sessionId);
+}
+
+// Legacy exports
+export const SAFE_MODE_BLOCKED_TOOLS = MODE_CONFIGS.safe.blockedTools;
+
+/** @deprecated Use isReadOnlyMcpToolForMode */
+export function isReadOnlyMcpTool(toolName: string): boolean {
+  return isReadOnlyMcpToolForMode(toolName, 'safe');
+}
+
+/** @deprecated Use isReadOnlyApiMethodForMode */
+export function isReadOnlyApiMethod(method: string): boolean {
+  return isReadOnlyApiMethodForMode(method, 'safe');
 }

@@ -67,13 +67,13 @@ export interface UseCommandsProps {
   refreshAgents: () => Promise<string[] | { error: string }>;
   fetchTools: () => Promise<ToolGroup[]>;
 
-  // Plan mode operations
-  planMode: boolean;
+  // Safe mode operations (read-only exploration)
+  safeMode: boolean;
   approvePlan: () => void;
   cancelPlan: () => void;
-  // Craft Agents plan mode (uses CraftAgentsPlanModeAskQuestion, blocks API calls during planning)
-  startCraftPlanning: () => void;
-  cancelCraftPlanning: () => void;
+  // Safe mode toggle (blocks writes during exploration)
+  startSafeMode: () => void;
+  exitSafeModeAction: () => void;
 
   // Exit handler
   exitApp: () => void;
@@ -120,11 +120,11 @@ export function useCommands(props: UseCommandsProps) {
     resetAgent,
     refreshAgents,
     fetchTools,
-    planMode,
+    safeMode,
     approvePlan,
     cancelPlan,
-    startCraftPlanning,
-    cancelCraftPlanning,
+    startSafeMode,
+    exitSafeModeAction,
     exitApp,
   } = props;
 
@@ -475,14 +475,14 @@ export function useCommands(props: UseCommandsProps) {
         const subCommand = parts[1] ?? '';
 
         if (subCommand === 'start') {
-          if (planMode) {
+          if (safeMode) {
             return {
               handled: true,
-              message: { content: 'Already in plan mode. Use /plan cancel to exit first.', type: 'error' },
+              message: { content: 'Already in safe mode. Use /plan cancel to exit first.', type: 'error' },
             };
           }
-          // Start Craft Agents plan mode (blocks API calls, uses CraftAgentsPlanModeAskQuestion)
-          startCraftPlanning();
+          // Start Safe Mode (blocks writes during exploration)
+          startSafeMode();
           return {
             handled: true,
             message: {
@@ -560,10 +560,10 @@ export function useCommands(props: UseCommandsProps) {
         }
 
         if (subCommand === 'approve') {
-          if (!planMode) {
+          if (!safeMode) {
             return {
               handled: true,
-              message: { content: 'No active plan mode. Plan approval happens after SubmitPlan is called.', type: 'system' },
+              message: { content: 'No active safe mode. Plan approval happens after SubmitPlan is called.', type: 'system' },
             };
           }
           approvePlan();
@@ -574,16 +574,16 @@ export function useCommands(props: UseCommandsProps) {
         }
 
         if (subCommand === 'cancel') {
-          if (!planMode) {
+          if (!safeMode) {
             return {
               handled: true,
-              message: { content: 'No active plan to cancel.', type: 'error' },
+              message: { content: 'No active safe mode to cancel.', type: 'error' },
             };
           }
-          cancelCraftPlanning();
+          exitSafeModeAction();
           return {
             handled: true,
-            message: { content: 'Plan cancelled. Returned to normal mode.', type: 'system' },
+            message: { content: 'Safe mode cancelled. Returned to normal mode.', type: 'system' },
           };
         }
 
@@ -793,11 +793,11 @@ export function useCommands(props: UseCommandsProps) {
     resetAgent,
     refreshAgents,
     fetchTools,
-    planMode,
+    safeMode,
     approvePlan,
     cancelPlan,
-    startCraftPlanning,
-    cancelCraftPlanning,
+    startSafeMode,
+    exitSafeModeAction,
     exitApp,
   ]);
 

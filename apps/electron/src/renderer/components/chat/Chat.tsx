@@ -111,8 +111,8 @@ interface ChatProps {
   onUltrathinkChange?: (sessionId: string, enabled: boolean) => void
   skipPermissionsSessions?: Set<string>
   onSkipPermissionsChange?: (sessionId: string, enabled: boolean) => void
-  planModeSessions?: Set<string>
-  onPlanModeChange?: (sessionId: string, enabled: boolean) => void
+  safeModeSessions?: Set<string>
+  onSafeModeChange?: (sessionId: string, enabled: boolean) => void
   // Input drafts per session
   sessionDrafts?: Map<string, string>
   onInputChange?: (sessionId: string, value: string) => void
@@ -485,8 +485,8 @@ export function Chat({
   onUltrathinkChange,
   skipPermissionsSessions,
   onSkipPermissionsChange,
-  planModeSessions,
-  onPlanModeChange,
+  safeModeSessions,
+  onSafeModeChange,
   // Input drafts per session
   sessionDrafts,
   onInputChange,
@@ -885,7 +885,7 @@ export function Chat({
     // Advanced options (all session-scoped)
     ultrathinkSessions: ultrathinkSessions || new Set(),
     skipPermissionsSessions: skipPermissionsSessions || new Set(),
-    planModeSessions: planModeSessions || new Set(),
+    safeModeSessions: safeModeSessions || new Set(),
     onCreateSession,
     onSendMessage,
     onRenameSession,
@@ -900,7 +900,7 @@ export function Chat({
     // Advanced options callbacks
     onUltrathinkChange: onUltrathinkChange || (() => {}),
     onSkipPermissionsChange: onSkipPermissionsChange || (() => {}),
-    onPlanModeChange: onPlanModeChange || (() => {}),
+    onSafeModeChange: onSafeModeChange || (() => {}),
     onInputChange: onInputChange || (() => {}),
     textareaRef: chatInputRef,
   }), [
@@ -912,7 +912,7 @@ export function Chat({
     pendingPermissions,
     ultrathinkSessions,
     skipPermissionsSessions,
-    planModeSessions,
+    safeModeSessions,
     onCreateSession,
     onSendMessage,
     onRenameSession,
@@ -926,7 +926,7 @@ export function Chat({
     onModelChange,
     onUltrathinkChange,
     onSkipPermissionsChange,
-    onPlanModeChange,
+    onSafeModeChange,
     sessionDrafts,
     onInputChange,
   ])
@@ -1875,7 +1875,7 @@ export function Chat({
                   setViewMode('flagged')
                 }
               }}
-              planModeSessions={planModeSessions}
+              safeModeSessions={safeModeSessions}
               searchActive={searchActive}
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}

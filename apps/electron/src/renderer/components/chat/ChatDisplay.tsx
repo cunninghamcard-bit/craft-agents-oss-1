@@ -64,9 +64,9 @@ interface ChatDisplayProps {
   /** Skip all permission prompts automatically */
   skipPermissions?: boolean
   onSkipPermissionsChange?: (enabled: boolean) => void
-  /** Enable plan mode for complex tasks */
-  planModeEnabled?: boolean
-  onPlanModeChange?: (enabled: boolean) => void
+  /** Enable safe mode for read-only exploration */
+  safeModeEnabled?: boolean
+  onSafeModeChange?: (enabled: boolean) => void
   // Input value preservation (controlled from parent)
   /** Current input value - preserved across mode switches and conversation changes */
   inputValue?: string
@@ -241,8 +241,8 @@ export function ChatDisplay({
   onUltrathinkChange,
   skipPermissions = false,
   onSkipPermissionsChange,
-  planModeEnabled = false,
-  onPlanModeChange,
+  safeModeEnabled = false,
+  onSafeModeChange,
   // Input value preservation
   inputValue,
   onInputChange,
@@ -702,7 +702,7 @@ export function ChatDisplay({
             ) : (
               <>
                 {/* Active option badges - positioned above input */}
-                {(ultrathinkEnabled || planModeEnabled || skipPermissions) && (
+                {(ultrathinkEnabled || safeModeEnabled || skipPermissions) && (
                   <div className="flex justify-start gap-2 mb-2">
                     {ultrathinkEnabled && (
                       <button
@@ -715,15 +715,15 @@ export function ChatDisplay({
                         <X className="h-3 w-3 text-purple-500 opacity-60 hover:opacity-100 translate-y-px" />
                       </button>
                     )}
-                    {planModeEnabled && (
+                    {safeModeEnabled && (
                       <button
                         type="button"
-                        onClick={() => onPlanModeChange?.(false)}
+                        onClick={() => onSafeModeChange?.(false)}
                         className="h-[30px] pl-2.5 pr-2 text-xs font-medium rounded-[8px] flex items-center gap-1.5 transition-all bg-emerald-500/5 text-emerald-700 hover:bg-emerald-500/10 shadow-tinted"
                         style={{ '--shadow-color': '6, 95, 70' } as React.CSSProperties}
                       >
                         <ListTodo className="h-3.5 w-3.5" />
-                        <span>Plan Mode</span>
+                        <span>Safe Mode</span>
                         <X className="h-3.5 w-3.5 opacity-60 hover:opacity-100" />
                       </button>
                     )}
@@ -754,8 +754,8 @@ export function ChatDisplay({
                 onUltrathinkChange={onUltrathinkChange}
                 skipPermissions={skipPermissions}
                 onSkipPermissionsChange={onSkipPermissionsChange}
-                planModeEnabled={planModeEnabled}
-                onPlanModeChange={onPlanModeChange}
+                safeModeEnabled={safeModeEnabled}
+                onSafeModeChange={onSafeModeChange}
                 structuredInput={structuredInput}
                 onStructuredResponse={handleStructuredResponse}
                 inputValue={inputValue}

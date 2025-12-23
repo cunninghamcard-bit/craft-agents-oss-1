@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { rm, readFile } from 'fs/promises'
-import { CraftAgent, type AgentEvent, enterCraftPlanMode, exitCraftPlanMode } from '@craft-agent/shared/agent'
+import { CraftAgent, type AgentEvent, enterMode, exitMode } from '@craft-agent/shared/agent'
 import type { WindowManager } from './window-manager'
 import {
   loadStoredConfig,
@@ -10,7 +10,7 @@ import {
   getWorkspaceAccessTokenAsync,
   updateSessionMetadata,
   getSessionAttachmentsPath,
-  getDefaultPlanMode,
+  getDefaultSafeMode,
   getDefaultSkipPermissions,
   type Workspace,
   // Session persistence functions
@@ -42,8 +42,8 @@ import { DEFAULT_MODEL } from '@craft-agent/shared/config'
  * Feature flags for agent behavior
  */
 export const AGENT_FLAGS = {
-  /** Enable plan mode tools (ExitCraftAgentsPlanMode, CraftAgentsPlanModeAskQuestion) */
-  planModeEnabled: true,
+  /** Enable safe mode (read-only exploration) */
+  safeModeEnabled: true,
 } as const
 
 interface ManagedSession {
@@ -72,7 +72,7 @@ interface ManagedSession {
   isFlagged: boolean
   // Advanced options (persisted per session)
   skipPermissions: boolean
-  planModeEnabled?: boolean
+  safeModeEnabled?: boolean
   // SDK session ID for conversation continuity
   sdkSessionId?: string
   // Track whether agent was successfully activated via AgentStateManager
@@ -581,7 +581,7 @@ export class SessionManager {
           agentName: storedSession.agentName,
           isFlagged: storedSession.isFlagged ?? false,
           skipPermissions: storedSession.skipPermissions ?? false,
-          planModeEnabled: storedSession.planModeEnabled ?? false,
+          safeModeEnabled: storedSession.safeModeEnabled ?? false,
           sdkSessionId: storedSession.sdkSessionId,
           tokenUsage: storedSession.tokenUsage,
           todoState: storedSession.todoState,
@@ -615,7 +615,7 @@ export class SessionManager {
         agentName: managed.agentName,
         isFlagged: managed.isFlagged,
         skipPermissions: managed.skipPermissions,
-        planModeEnabled: managed.planModeEnabled,
+        safeModeEnabled: managed.safeModeEnabled,
         todoState: managed.todoState,
         messages: persistableMessages.map(messageToStored),
         tokenUsage: managed.tokenUsage ?? {
@@ -652,7 +652,7 @@ export class SessionManager {
         agentName: m.agentName,
         isFlagged: m.isFlagged,
         skipPermissions: m.skipPermissions,
-        planModeEnabled: m.planModeEnabled,
+        safeModeEnabled: m.safeModeEnabled,
         todoState: m.todoState,
         lastReadMessageId: m.lastReadMessageId,
       }))
@@ -667,7 +667,7 @@ export class SessionManager {
 
     // Get new session defaults from settings
     const defaultSkipPerms = getDefaultSkipPermissions()
-    const defaultPlanMode = getDefaultPlanMode()
+    const defaultSafeMode = getDefaultSafeMode()
 
     // Use storage layer to create and persist the session
     const storedSession = createStoredSession(workspaceId)
@@ -707,7 +707,7 @@ export class SessionManager {
       agentName,
       isFlagged: false,
       skipPermissions: defaultSkipPerms,
-      planModeEnabled: defaultPlanMode,
+      safeModeEnabled: defaultSafeMode,
       todoState: undefined,  // User-controlled, defaults to undefined (treated as 'todo')
     }
   }
@@ -722,7 +722,7 @@ export class SessionManager {
       managed.agent = new CraftAgent({
         workspace: managed.workspace,
         model: config?.model,
-        isHeadless: !AGENT_FLAGS.planModeEnabled,
+        isHeadless: !AGENT_FLAGS.safeModeEnabled,
         // Always pass session object - id is required for plan mode callbacks
         // sdkSessionId is optional and used for conversation resumption
         session: {
@@ -748,12 +748,12 @@ export class SessionManager {
         }, managed.workspace.id)
       }
 
-      // Set up plan mode handlers
-      managed.agent.onPlanModeChange = (enabled) => {
-        console.log(`[SessionManager] Plan mode changed for session ${managed.id}:`, enabled)
-        managed.planModeEnabled = enabled
+      // Set up safe mode handlers
+      managed.agent.onSafeModeChange = (enabled) => {
+        console.log(`[SessionManager] Safe mode changed for session ${managed.id}:`, enabled)
+        managed.safeModeEnabled = enabled
         this.sendEvent({
-          type: 'plan_mode_changed',
+          type: 'safe_mode_changed',
           sessionId: managed.id,
           enabled,
         }, managed.workspace.id)
@@ -805,11 +805,11 @@ export class SessionManager {
       // NOTE: Agent definition is now applied in sendMessage() via AgentStateManager.activate()
       // This ensures proper state machine flow: extraction → auth checks → activation
 
-      // Apply session-scoped plan mode state to the newly created agent
+      // Apply session-scoped safe mode state to the newly created agent
       // This ensures the UI toggle state is reflected in the agent before first message
-      if (managed.planModeEnabled) {
-        managed.agent.enterPlanMode()
-        console.log(`[SessionManager] Applied plan mode to agent for session ${managed.id}`)
+      if (managed.safeModeEnabled) {
+        enterMode(managed.id, 'safe')
+        console.log(`[SessionManager] Applied safe mode to agent for session ${managed.id}`)
       }
     }
     return managed.agent
@@ -1213,30 +1213,22 @@ export class SessionManager {
   }
 
   /**
-   * Set plan mode for a session
+   * Set safe mode for a session
    */
-  setPlanMode(sessionId: string, enabled: boolean): void {
+  setSafeMode(sessionId: string, enabled: boolean): void {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      managed.planModeEnabled = enabled
+      managed.safeModeEnabled = enabled
 
-      // Update the plan mode state for this specific session
+      // Update the mode state for this specific session via mode manager
       if (enabled) {
-        enterCraftPlanMode(sessionId)
+        enterMode(sessionId, 'safe')
       } else {
-        exitCraftPlanMode(sessionId)
+        exitMode(sessionId, 'safe')
       }
 
-      // If we have an agent, update its plan mode state
-      if (managed.agent) {
-        if (enabled) {
-          managed.agent.enterPlanMode()
-        } else {
-          managed.agent.exitPlanMode()
-        }
-      }
       this.sendEvent({
-        type: 'plan_mode_changed',
+        type: 'safe_mode_changed',
         sessionId: managed.id,
         enabled,
       }, managed.workspace.id)

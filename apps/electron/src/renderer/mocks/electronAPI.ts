@@ -502,15 +502,15 @@ console.log(example);
     return true
   },
 
-  // ===== Plan Mode =====
+  // ===== Safe Mode =====
 
   async respondToAskQuestion(_sessionId: string, _requestId: string, answers: import('../../shared/types').AskQuestionResponse): Promise<boolean> {
     console.log('[Mock] respondToAskQuestion called:', Object.keys(answers).length, 'answers')
     return true
   },
 
-  async setPlanMode(_sessionId: string, enabled: boolean): Promise<void> {
-    console.log('[Mock] setPlanMode called:', enabled)
+  async setSafeMode(_sessionId: string, enabled: boolean): Promise<void> {
+    console.log('[Mock] setSafeMode called:', enabled)
   },
 
   // ===== Agent State Management (agent-scoped) =====
@@ -826,16 +826,16 @@ console.log(example);
 
   // ===== New Session Defaults =====
 
-  async getDefaultPlanMode() {
+  async getDefaultSafeMode() {
     await sleep(50)
-    console.log('[Mock] getDefaultPlanMode called')
-    return localStorage.getItem('craft-agent-default-plan-mode') === 'true'
+    console.log('[Mock] getDefaultSafeMode called')
+    return localStorage.getItem('craft-agent-default-safe-mode') === 'true'
   },
 
-  async setDefaultPlanMode(enabled: boolean) {
+  async setDefaultSafeMode(enabled: boolean) {
     await sleep(50)
-    console.log('[Mock] setDefaultPlanMode called:', enabled)
-    localStorage.setItem('craft-agent-default-plan-mode', String(enabled))
+    console.log('[Mock] setDefaultSafeMode called:', enabled)
+    localStorage.setItem('craft-agent-default-safe-mode', String(enabled))
   },
 
   async getDefaultSkipPermissions() {

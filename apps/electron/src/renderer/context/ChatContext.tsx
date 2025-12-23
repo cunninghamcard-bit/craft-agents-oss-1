@@ -32,8 +32,8 @@ export interface ChatContextType {
   ultrathinkSessions: Set<string>
   /** Session IDs that have skip permissions enabled (session-scoped) */
   skipPermissionsSessions: Set<string>
-  /** Session IDs that have plan mode enabled (session-scoped) */
-  planModeSessions: Set<string>
+  /** Session IDs that have safe mode enabled (session-scoped) */
+  safeModeSessions: Set<string>
 
   // Session callbacks
   onCreateSession: (workspaceId: string, agentId?: string) => Promise<Session>
@@ -62,7 +62,7 @@ export interface ChatContextType {
   // Advanced options callbacks (all session-scoped)
   onUltrathinkChange: (sessionId: string, enabled: boolean) => void
   onSkipPermissionsChange: (sessionId: string, enabled: boolean) => void
-  onPlanModeChange: (sessionId: string, enabled: boolean) => void
+  onSafeModeChange: (sessionId: string, enabled: boolean) => void
 
   // Input draft callback
   onInputChange: (sessionId: string, value: string) => void
