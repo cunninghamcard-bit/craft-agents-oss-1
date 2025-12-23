@@ -467,7 +467,31 @@ tail -f /tmp/craft-debug.log
 
 This two-terminal setup lets you interact with the app while seeing debug output stream in real-time.
 
+### Extracting Claude Code System Prompts
 
+Tools for extracting and comparing Claude Code system prompts across SDK versions. Useful for tracking changes to the underlying system prompt.
+
+```bash
+# Extract system prompt from current SDK version
+bun run scripts/system-prompt/extract.ts
+# Output: exported_prompts/claude-code/v{version}.md
+
+# Compare two versions (auto-detects most recent if no args)
+bun run scripts/system-prompt/compare.ts
+bun run scripts/system-prompt/compare.ts v0.1.62 v0.1.73
+```
+
+**How it works:**
+1. A fetch interceptor (`scripts/system-prompt/capture-interceptor.ts`) is loaded via `bunfig.toml` preload
+2. The extraction script runs a minimal SDK query with the `claude_code` preset
+3. The interceptor captures the system prompt from the API request and writes it to a temp file
+4. The extraction script formats and saves the prompt to `exported_prompts/claude-code/v{version}.md`
+
+**To extract a different SDK version:**
+1. Edit `package.json` to pin the desired version (e.g., `"@anthropic-ai/claude-agent-sdk": "0.1.62"`)
+2. Run `rm -f bun.lockb && bun install`
+3. Run `bun run scripts/system-prompt/extract.ts`
+4. Restore the original version and reinstall
 
 ## Releasing
 
