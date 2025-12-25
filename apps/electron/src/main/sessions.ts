@@ -819,6 +819,23 @@ export class SessionManager {
             sessionId: managed.id,
             message: planMessage,
           }, managed.workspace.id)
+
+          // Interrupt execution - plan presentation is a stopping point
+          // The user needs to review and respond before continuing
+          if (managed.isProcessing && managed.agent) {
+            console.log(`[SessionManager] Interrupting after plan submission for session ${managed.id}`)
+            managed.agent.interrupt()
+            managed.isProcessing = false
+            managed.abortController = undefined
+
+            // Clear parent tool tracking (stale entries would corrupt future tracking)
+            managed.parentToolStack = []
+            managed.toolToParentMap.clear()
+            managed.pendingTextParent = undefined
+
+            // Persist session state
+            this.persistSession(managed)
+          }
         } catch (error) {
           console.error(`[SessionManager] Failed to read plan file:`, error)
         }

@@ -32,7 +32,7 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
     onMarkSessionRead,
     textareaRef,
     // Input drafts
-    sessionDrafts,
+    getDraft,
     onInputChange,
     // Connections
     enabledConnections,
@@ -73,8 +73,12 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
   // Get pending permission for this session
   const pendingPermission = usePendingPermission(chatTab.sessionId)
 
-  // Get draft input value for this session
-  const inputValue = sessionDrafts.get(chatTab.sessionId) ?? ''
+  // Get initial draft value for this session (only on mount/session change)
+  // Using useMemo to call getter only once - subsequent typing is handled by FreeFormInput's internal state
+  const initialInputValue = React.useMemo(() => {
+    return getDraft(chatTab.sessionId)
+  }, [getDraft, chatTab.sessionId])
+
   const handleInputChange = React.useCallback((value: string) => {
     onInputChange(chatTab.sessionId, value)
   }, [chatTab.sessionId, onInputChange])
@@ -203,8 +207,8 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
       onSkipPermissionsChange={(enabled) => setOption('skipPermissions', enabled)}
       safeModeEnabled={sessionOpts.activeModes.includes('safe')}
       onSafeModeChange={(enabled) => setMode('safe', enabled)}
-      // Input draft preservation
-      inputValue={inputValue}
+      // Input draft preservation - initial value only, FreeFormInput manages its own state
+      inputValue={initialInputValue}
       onInputChange={handleInputChange}
       // Connections
       connections={enabledConnections}

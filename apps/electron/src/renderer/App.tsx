@@ -38,7 +38,9 @@ export default function App() {
   // Permission requests per session (queue to handle multiple concurrent requests)
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
   // Draft input text per session (preserved across mode switches and conversation changes)
-  const [sessionDrafts, setSessionDrafts] = useState<Map<string, string>>(new Map())
+  // Using ref instead of state to avoid re-renders during typing - drafts are only
+  // needed for initial value restoration and disk persistence, not reactive updates
+  const sessionDraftsRef = useRef<Map<string, string>>(new Map())
   // Unified session options - replaces ultrathinkSessions, skipPermissionsSessions, sessionModes
   // All session-scoped options in one place (ultrathink, skipPermissions, activeModes, etc.)
   const [sessionOptions, setSessionOptions] = useState<Map<string, SessionOptions>>(new Map())
@@ -284,10 +286,10 @@ export default function App() {
         setCurrentModel(storedModel)
       }
     })
-    // Load persisted input drafts
+    // Load persisted input drafts into ref (no re-render needed)
     window.electronAPI.getAllDrafts().then((drafts) => {
       if (Object.keys(drafts).length > 0) {
-        setSessionDrafts(new Map(Object.entries(drafts)))
+        sessionDraftsRef.current = new Map(Object.entries(drafts))
       }
     })
   }, [appState])
@@ -1157,17 +1159,18 @@ export default function App() {
     }
   }, [])
 
+  // Getter for draft values - reads from ref without triggering re-renders
+  const getDraft = useCallback((sessionId: string): string => {
+    return sessionDraftsRef.current.get(sessionId) ?? ''
+  }, [])
+
   const handleInputChange = useCallback((sessionId: string, value: string) => {
-    // Update local state immediately
-    setSessionDrafts(prev => {
-      const next = new Map(prev)
-      if (value) {
-        next.set(sessionId, value)
-      } else {
-        next.delete(sessionId) // Clean up empty drafts
-      }
-      return next
-    })
+    // Update ref immediately (no re-render triggered)
+    if (value) {
+      sessionDraftsRef.current.set(sessionId, value)
+    } else {
+      sessionDraftsRef.current.delete(sessionId) // Clean up empty drafts
+    }
 
     // Debounced persistence to disk (500ms delay)
     const existingTimeout = draftSaveTimeoutRef.current.get(sessionId)
@@ -1308,7 +1311,7 @@ export default function App() {
     activeWorkspaceId: windowWorkspaceId,
     currentModel,
     pendingPermissions,
-    sessionDrafts,
+    getDraft,
     sessionOptions,
     // Session callbacks
     onCreateSession: handleCreateSession,
@@ -1346,7 +1349,7 @@ export default function App() {
     windowWorkspaceId,
     currentModel,
     pendingPermissions,
-    sessionDrafts,
+    getDraft,
     sessionOptions,
     handleCreateSession,
     handleSendMessage,

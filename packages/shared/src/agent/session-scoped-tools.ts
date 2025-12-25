@@ -115,6 +115,10 @@ The plan will be displayed to the user in a special formatted view.
 This tool can be used anytime - it's not restricted to any particular mode.
 Use it whenever you want to present a structured plan to the user.
 
+**Safe Mode Workflow:** When you are in Safe Mode and have completed your research/exploration,
+use this tool to present your implementation plan. The plan UI includes an "Accept Plan" button
+that exits Safe Mode and allows you to begin implementation immediately.
+
 **Format your plan as markdown:**
 \`\`\`markdown
 # Plan Title
@@ -128,7 +132,11 @@ Brief description of what this plan accomplishes.
 3. ...
 \`\`\`
 
-**IMPORTANT:** After calling this tool, wait for user feedback before proceeding.`,
+**IMPORTANT:** After calling this tool:
+- Execution will be **automatically paused** to present the plan to the user
+- No further tool calls or text output will be processed after this tool returns
+- The conversation will resume when the user responds (accept, modify, or reject the plan)
+- Do NOT include any text or tool calls after SubmitPlan - they will not be executed`,
     {
       planPath: z.string().describe('Absolute path to the plan markdown file you wrote'),
     },

@@ -352,6 +352,16 @@ Brief description of what this plan accomplishes.
 3. ...
 \`\`\`
 
+### Safe Mode → Implementation Workflow
+
+When in Safe Mode and ready to implement:
+1. Write your plan to a markdown file in the plans folder
+2. Call \`SubmitPlan\` with the file path
+3. The user can click "Accept Plan" to exit Safe Mode and begin implementation
+4. Once accepted, proceed with the implementation steps
+
+This is the recommended way to transition from exploration to implementation.
+
 ## Error Handling
 
 - If a tool fails, explain the error and suggest alternatives.

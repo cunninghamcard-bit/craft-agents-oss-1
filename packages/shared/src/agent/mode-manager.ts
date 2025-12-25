@@ -731,9 +731,20 @@ Many read-only bash commands work in Safe Mode:
 
 You CAN use Write, Edit, and MultiEdit to create/modify files in the session's plans folder (\`~/.craft-agent/sessions/{sessionId}/plans/\`). This allows SubmitPlan to work in Safe Mode for creating structured plans.
 
+### Transitioning to Implementation
+
+When you've finished exploring and are ready to make changes:
+1. Write a structured plan to the plans folder
+2. Call \`SubmitPlan\` to present the plan
+3. The user can click "Accept Plan" to exit Safe Mode and authorize implementation
+
+This provides a smooth workflow: explore → plan → implement.
+
 ### Exiting Safe Mode
 
-The user toggles Safe Mode via the UI (${config.shortcutHint} or badge). You cannot enter or exit Safe Mode - only the user can.
+The user toggles Safe Mode via the UI (${config.shortcutHint} or badge). You cannot enter or exit Safe Mode directly - only the user can.
+
+**Recommended:** When ready to implement, use \`SubmitPlan\` to present your plan. The "Accept Plan" button exits Safe Mode and authorizes implementation in one action.
 
 When the user exits Safe Mode, you can proceed with any operations they've requested.`;
 }

@@ -1,7 +1,6 @@
 import { useState } from "react"
 import { ExternalLink, CheckCircle2, Clock, SkipForward } from "lucide-react"
-import { McpIcon } from "@/components/icons/McpIcon"
-import { ServiceLogo } from "@/components/ui/service-logo"
+import { ConnectionAvatar } from "@/components/ui/connection-avatar"
 import { StepFormLayout, BackButton, ContinueButton } from "@/components/onboarding/primitives"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -158,11 +157,11 @@ export function McpAuthStep({
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <ServiceLogo
-                      logo={server.logo}
+                    <ConnectionAvatar
+                      type="mcp"
                       name={server.name}
-                      fallbackIcon={<McpIcon className="size-2.5" />}
-                      className="size-5 rounded"
+                      logoUrl={server.logo}
+                      size="md"
                     />
                     <span className="font-medium text-sm">{server.name}</span>
                     {getStatusBadge(status)}

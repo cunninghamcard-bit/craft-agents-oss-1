@@ -9,7 +9,7 @@
 import * as React from 'react'
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, Lock, Globe } from 'lucide-react'
-import { ServiceLogo } from '@/components/ui/service-logo'
+import { ConnectionAvatar } from '@/components/ui/connection-avatar'
 import { McpIcon } from '@/components/icons/McpIcon'
 import { Spinner } from '@/components/ui/loading-indicator'
 import { Badge } from '@/components/ui/badge'
@@ -197,11 +197,12 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
                     return (
                       <li key={i} className="bg-muted/50 rounded-md px-4 py-3 select-none">
                         <div className="flex items-start gap-3">
-                          <ServiceLogo
-                            logo={server.logo}
+                          <ConnectionAvatar
+                            type="mcp"
                             name={server.name}
-                            fallbackIcon={<McpIcon className="h-3.5 w-3.5 text-muted-foreground" />}
-                            className="h-6 w-6 rounded-md ring-1 ring-border/30 shrink-0 mt-0.5"
+                            logoUrl={server.logo}
+                            size="lg"
+                            className="mt-0.5"
                           />
                           <div className="flex-1 min-w-0">
                             <div className="font-medium">{server.name}</div>
@@ -289,11 +290,12 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
                   {authStatus.apis.map((api, i) => (
                     <li key={i} className="bg-muted/50 rounded-md px-4 py-3">
                       <div className="flex items-start gap-3">
-                        <ServiceLogo
-                          logo={api.logo}
+                        <ConnectionAvatar
+                          type="api"
                           name={api.name}
-                          fallbackIcon={<Globe className="h-3.5 w-3.5 text-muted-foreground" />}
-                          className="h-6 w-6 rounded-md ring-1 ring-border/30 shrink-0 mt-0.5"
+                          logoUrl={api.logo}
+                          size="lg"
+                          className="mt-0.5"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="font-medium">{api.name}</div>
@@ -334,11 +336,12 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
                   {definition.apis.map((api, i) => (
                     <li key={i} className="bg-muted/50 rounded-md px-4 py-3">
                       <div className="flex items-start gap-3">
-                        <ServiceLogo
-                          logo={api.logo}
+                        <ConnectionAvatar
+                          type="api"
                           name={api.name}
-                          fallbackIcon={<Globe className="h-3.5 w-3.5 text-muted-foreground" />}
-                          className="h-6 w-6 rounded-md ring-1 ring-border/30 shrink-0 mt-0.5"
+                          logoUrl={api.logo}
+                          size="lg"
+                          className="mt-0.5"
                         />
                         <div className="flex-1 min-w-0">
                           <div className="font-medium">{api.name}</div>

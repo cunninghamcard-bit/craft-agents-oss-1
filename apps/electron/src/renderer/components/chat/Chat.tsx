@@ -35,9 +35,8 @@ import {
 } from "../icons/TodoStateIcons"
 import { Spinner } from "@/components/ui/loading-indicator"
 import { AvatarGroup } from "@/components/ui/avatar-group"
-import { ServiceLogo } from "@/components/ui/service-logo"
-import { getLogoUrl } from '@craft-agent/shared/utils/logo'
-import { getConnectionLogoUrl, getConnectionFallbackIcon } from "@/utils/connection-types"
+import { ConnectionAvatar, type ConnectionType } from "@/components/ui/connection-avatar"
+import { getConnectionLogoUrl } from "@/utils/connection-types"
 import { AppMenu } from "../AppMenu"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
@@ -53,7 +52,6 @@ import {
   StyledDropdownMenuSeparator,
 } from "@/components/ui/styled-dropdown"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Switch } from "@/components/ui/switch"
 import { FadingText } from "@/components/ui/fading-text"
 import {
   Collapsible,
@@ -132,8 +130,8 @@ type SidebarAgentStatus =
  * Used to display avatar group in sidebar when agent is ready
  */
 interface SidebarServiceLogos {
-  mcpLogos: Array<{ name: string; logo?: string }>
-  apiLogos: Array<{ name: string; logo?: string }>
+  mcpLogos: Array<{ name: string; logo?: string; type: 'mcp' }>
+  apiLogos: Array<{ name: string; logo?: string; type: 'api' }>
 }
 
 /**
@@ -302,16 +300,13 @@ function AgentTree({
                   className="shrink-0"
                 >
                   {allServices.map((service, i) => (
-                    <ServiceLogo
+                    <ConnectionAvatar
                       key={i}
-                      logo={service.logo}
+                      type={service.type}
                       name={service.name}
-                      fallbackIcon={
-                        i < logos.mcpLogos.length
-                          ? <McpIcon className="h-2 w-2" />
-                          : <Globe className="h-2 w-2" />
-                      }
-                      className="h-4 w-4 rounded-[4px]"
+                      logoUrl={service.logo}
+                      size="sm"
+                      className="rounded-[4px]"
                     />
                   ))}
                 </AvatarGroup>
@@ -565,48 +560,6 @@ export function Chat({
       console.error('[Chat] Failed to load connections:', err)
     })
   }, [])
-
-  const handleToggleConnection = React.useCallback(async (id: string, enabled: boolean) => {
-    const conn = connections.find(c => c.id === id)
-    if (!conn) return
-
-    // If enabling an MCP connection that needs OAuth, re-authenticate
-    if (enabled && conn.type === 'mcp' && conn.mcpUrl) {
-      try {
-        const result = await window.electronAPI.startConnectionMcpOAuth({
-          name: conn.name,
-          url: conn.mcpUrl,
-          clientId: conn.mcpClientId || undefined,
-          clientSecret: conn.mcpClientSecret || undefined,
-        })
-
-        if (!result.success) {
-          // OAuth failed or was cancelled - don't enable
-          return
-        }
-
-        // Update connection with new token and enable it
-        const updatedConn = {
-          ...conn,
-          enabled: true,
-          mcpAccessToken: result.accessToken,
-          mcpRefreshToken: result.refreshToken,
-          mcpExpiresAt: result.expiresAt,
-          mcpClientId: result.clientId || conn.mcpClientId,
-          isAuthenticated: true,
-        }
-        setConnections(prev => prev.map(c => c.id === id ? updatedConn : c))
-        await window.electronAPI.saveConnection(updatedConn)
-      } catch (error) {
-        console.error('OAuth failed:', error)
-        // Don't enable on error
-      }
-    } else {
-      // For API connections or when disabling, just toggle
-      setConnections(prev => prev.map(c => c.id === id ? { ...c, enabled } : c))
-      await window.electronAPI.saveConnection({ ...conn, enabled })
-    }
-  }, [connections])
 
   const handleAddConnection = React.useCallback(async (config: Omit<ConnectionConfig, 'id' | 'enabled'>) => {
     const newConnection: ConnectionConfig = {
@@ -1108,8 +1061,8 @@ export function Chat({
       return null
     }
     const def = status.definition
-    const mcpLogos = def.mcpServers?.map(s => ({ name: s.name, logo: s.logo })) ?? []
-    const apiLogos = def.apis?.map(a => ({ name: a.name, logo: a.logo })) ?? []
+    const mcpLogos = def.mcpServers?.map(s => ({ name: s.name, logo: s.logo, type: 'mcp' as const })) ?? []
+    const apiLogos = def.apis?.map(a => ({ name: a.name, logo: a.logo, type: 'api' as const })) ?? []
 
     // Don't return anything if there are no services to display
     if (mcpLogos.length === 0 && apiLogos.length === 0) {
@@ -1593,7 +1546,7 @@ export function Chat({
                 </Button>
               </div>
             </div>
-            <div className="flex h-full flex-col pt-[50px]">
+            <div className="flex h-full flex-col pt-[50px] select-none">
               {/* Sidebar Top Section */}
               <div className="flex-1 flex flex-col min-h-0">
                 {/* New Chat Button - Gmail-style */}
@@ -1716,17 +1669,12 @@ export function Chat({
                           </DropdownMenuTrigger>
                           <StyledDropdownMenuContent align="end" minWidth="min-w-0">
                             <StyledDropdownMenuItem onSelect={handleAddGmail}>
-                              {(() => {
-                                const GmailIcon = getConnectionFallbackIcon('gmail')
-                                return (
-                                  <ServiceLogo
-                                    logo={getLogoUrl(getConnectionLogoUrl({ type: 'gmail' } as ConnectionConfig))}
-                                    name="Gmail"
-                                    fallbackIcon={<GmailIcon className="h-3.5 w-3.5" />}
-                                    className="h-3.5 w-3.5"
-                                  />
-                                )
-                              })()}
+                              <ConnectionAvatar
+                                type="gmail"
+                                name="Gmail"
+                                serviceUrl={getConnectionLogoUrl({ type: 'gmail' } as ConnectionConfig)}
+                                size="xs"
+                              />
                               Add Gmail
                             </StyledDropdownMenuItem>
                             <StyledDropdownMenuSeparator />
@@ -1754,38 +1702,41 @@ export function Chat({
                           <Plus className="h-3.5 w-3.5" />
                           Add your first connection
                         </button>
-                      ) : connections.map(conn => {
-                        const FallbackIcon = getConnectionFallbackIcon(conn.type)
-                        return (
-                        <div key={conn.id} className="flex items-center justify-between py-[7px] px-2 rounded-md hover:bg-foreground/5 group/conn">
-                          <div className="flex items-center gap-2">
-                            <ServiceLogo
-                              logo={getLogoUrl(getConnectionLogoUrl(conn))}
+                      ) : connections.map(conn => (
+                        <div key={conn.id} className="flex items-center justify-between py-[7px] px-2 rounded-[6px] hover:bg-foreground/5 group/conn has-[[data-state=open]]:bg-foreground/5">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <ConnectionAvatar
+                              type={conn.type as ConnectionType}
                               name={conn.name}
-                              fallbackIcon={<FallbackIcon className="h-3.5 w-3.5" />}
-                              className="h-3.5 w-3.5"
+                              serviceUrl={getConnectionLogoUrl(conn)}
+                              size="sm"
                             />
-                            <span className="text-[13px]">{conn.name}</span>
-                            <button
-                              onClick={() => handleOpenEditConnection(conn)}
-                              className="p-0.5 rounded opacity-0 group-hover/conn:opacity-100 hover:bg-foreground/10 text-muted-foreground hover:text-foreground transition-opacity"
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteConnection(conn.id)}
-                              className="p-0.5 rounded opacity-0 group-hover/conn:opacity-100 hover:bg-foreground/10 text-muted-foreground hover:text-destructive transition-opacity"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
+                            <span className="text-[13px] truncate">{conn.name}</span>
                           </div>
-                          <Switch
-                            checked={conn.enabled}
-                            onCheckedChange={(checked) => handleToggleConnection(conn.id, checked)}
-                            className="scale-75"
-                          />
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                className="p-0.5 rounded opacity-0 group-hover/conn:opacity-100 data-[state=open]:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
+                              >
+                                <MoreHorizontal className="h-3.5 w-3.5" />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <StyledDropdownMenuContent align="end">
+                              <StyledDropdownMenuItem onClick={() => handleOpenEditConnection(conn)}>
+                                <Pencil className="h-3.5 w-3.5 mr-2" />
+                                Edit
+                              </StyledDropdownMenuItem>
+                              <StyledDropdownMenuItem
+                                onClick={() => handleDeleteConnection(conn.id)}
+                                variant="destructive"
+                              >
+                                <Trash2 className="h-3.5 w-3.5 mr-2" />
+                                Delete
+                              </StyledDropdownMenuItem>
+                            </StyledDropdownMenuContent>
+                          </DropdownMenu>
                         </div>
-                      )})}
+                      ))}
                     </nav>
                   </AnimatedCollapsibleContent>
                 </Collapsible>

@@ -30,8 +30,8 @@ export interface ChatContextType {
   activeWorkspaceId: string | null
   currentModel: string
   pendingPermissions: Map<string, PermissionRequest[]>
-  /** Draft input text per session - preserved across mode switches and conversation changes */
-  sessionDrafts: Map<string, string>
+  /** Get draft input text for a session - reads from ref without triggering re-renders */
+  getDraft: (sessionId: string) => string
   /** All enabled connections (filtered from global connections) - provided by Chat component */
   enabledConnections?: ConnectionConfig[]
 

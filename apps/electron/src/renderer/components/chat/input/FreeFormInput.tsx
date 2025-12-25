@@ -29,9 +29,8 @@ import { StyledDropdownMenuContent, StyledDropdownMenuItem } from '@/components/
 import { cn } from '@/lib/utils'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { MODELS, getModelDisplayName } from '@config/models'
-import { ServiceLogo } from '@/components/ui/service-logo'
-import { getLogoUrl } from '@craft-agent/shared/utils/logo'
-import { getConnectionLogoUrl, getConnectionLabel, getConnectionFallbackIcon } from '@/utils/connection-types'
+import { ConnectionAvatar, type ConnectionType } from '@/components/ui/connection-avatar'
+import { getConnectionLogoUrl, getConnectionLabel } from '@/utils/connection-types'
 import type { FileAttachment, ConnectionConfig } from '../../../../shared/types'
 
 export interface FreeFormInputProps {
@@ -182,7 +181,7 @@ export function FreeFormInput({
   const textareaRef = externalTextareaRef || internalRef
 
   // Listen for craft:insert-text events (generic mechanism for inserting text into input)
-  // Used by PlanCard's Approve button to insert "Go ahead"
+  // Used by components that want to pre-fill the input with text
   React.useEffect(() => {
     const handleInsertText = (e: CustomEvent<{ text: string }>) => {
       const { text } = e.detail
@@ -202,6 +201,21 @@ export function FreeFormInput({
     window.addEventListener('craft:insert-text', handleInsertText as EventListener)
     return () => window.removeEventListener('craft:insert-text', handleInsertText as EventListener)
   }, [syncToParent, textareaRef])
+
+  // Listen for craft:approve-plan events (used by PlanCard's Accept Plan button)
+  // This disables safe mode AND submits the message in one action
+  React.useEffect(() => {
+    const handleApprovePlan = (e: CustomEvent<{ text?: string }>) => {
+      const text = e.detail?.text ?? 'Go ahead'
+      // Disable safe mode first
+      onSafeModeChange?.(false)
+      // Submit the message
+      onSubmit(text, undefined)
+    }
+
+    window.addEventListener('craft:approve-plan', handleApprovePlan as EventListener)
+    return () => window.removeEventListener('craft:approve-plan', handleApprovePlan as EventListener)
+  }, [onSafeModeChange, onSubmit])
 
   // Listen for craft:paste-files events (for global paste when input not focused)
   React.useEffect(() => {
@@ -720,9 +734,7 @@ export function FreeFormInput({
                       </div>
                     ) : (
                       <div className="space-y-1">
-                        {connections.map(conn => {
-                          const FallbackIcon = getConnectionFallbackIcon(conn.type)
-                          return (
+                        {connections.map(conn => (
                           <label
                             key={conn.id}
                             className="flex items-center gap-2 py-1.5 px-2 rounded-lg hover:bg-accent/50 cursor-pointer"
@@ -738,11 +750,11 @@ export function FreeFormInput({
                               }}
                               className="rounded"
                             />
-                            <ServiceLogo
-                              logo={getLogoUrl(getConnectionLogoUrl(conn))}
+                            <ConnectionAvatar
+                              type={conn.type as ConnectionType}
                               name={conn.name}
-                              fallbackIcon={<FallbackIcon className="h-4 w-4" />}
-                              className="h-4 w-4 shrink-0"
+                              serviceUrl={getConnectionLogoUrl(conn)}
+                              size="sm"
                             />
                             <div className="flex-1">
                               <div className="text-sm">{conn.name}</div>
@@ -754,7 +766,7 @@ export function FreeFormInput({
                               <Check className="h-4 w-4 text-primary shrink-0" />
                             )}
                           </label>
-                        )})}
+                        ))}
                       </div>
                     )}
                   </div>

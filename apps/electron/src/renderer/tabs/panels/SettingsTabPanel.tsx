@@ -15,7 +15,7 @@ import { useTheme, type FontFamily } from '@/context/ThemeContext'
 import { useChatContext } from '@/context/ChatContext'
 import { cn } from '@/lib/utils'
 import { Switch } from '@/components/ui/switch'
-import { Monitor, Sun, Moon, Eye, EyeOff, Check, ExternalLink, CheckCircle2, Folder } from 'lucide-react'
+import { Monitor, Sun, Moon, Eye, EyeOff, Check, ExternalLink, CheckCircle2 } from 'lucide-react'
 import { Spinner } from '@/components/ui/loading-indicator'
 import type { Tab } from '../types'
 import type { AuthType } from '../../../shared/types'
@@ -835,24 +835,25 @@ export default function SettingsTabPanel({
             </div>
           </div>
 
-          {/* Working Directory - folder selector */}
+          {/* Default Working Directory - matches ToggleRow pattern */}
           <div>
-            <SectionHeader>Working Directory</SectionHeader>
-            <div className="space-y-1">
+            <SectionHeader>Default Working Directory</SectionHeader>
+            <div className="flex items-center justify-between py-1.5">
+              <div className="flex-1 min-w-0">
+                <span className="text-sm truncate">
+                  {defaultWorkingDirectory ? defaultWorkingDirectory.split('/').pop() : 'Home'}
+                </span>
+                <span className="text-sm text-muted-foreground ml-1.5 truncate">
+                  — {defaultWorkingDirectory || '~'}
+                </span>
+              </div>
               <button
                 type="button"
                 onClick={handleChangeWorkingDirectory}
-                className="w-full flex items-center gap-2 py-1.5 text-left transition-colors rounded hover:bg-foreground/[0.02]"
+                className="text-xs text-muted-foreground ml-4 shrink-0 hover:text-foreground transition-colors"
               >
-                <Folder className="size-4 text-muted-foreground shrink-0" />
-                <span className="text-sm font-medium truncate">
-                  {defaultWorkingDirectory ? defaultWorkingDirectory.split('/').pop() : 'Home'}
-                </span>
-                <span className="text-xs text-muted-foreground ml-auto shrink-0">Change...</span>
+                Change...
               </button>
-              <p className="text-xs text-muted-foreground truncate pl-6">
-                {defaultWorkingDirectory || '~'}
-              </p>
             </div>
           </div>
 

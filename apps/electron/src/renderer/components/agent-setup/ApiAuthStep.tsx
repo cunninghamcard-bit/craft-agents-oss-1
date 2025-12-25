@@ -1,6 +1,6 @@
 import { useState } from "react"
-import { CheckCircle2, Clock, SkipForward, Globe } from "lucide-react"
-import { ServiceLogo } from "@/components/ui/service-logo"
+import { CheckCircle2, Clock, SkipForward } from "lucide-react"
+import { ConnectionAvatar } from "@/components/ui/connection-avatar"
 import { StepFormLayout, BackButton, ContinueButton } from "@/components/onboarding/primitives"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -171,11 +171,11 @@ export function ApiAuthStep({
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <ServiceLogo
-                      logo={api.logo}
+                    <ConnectionAvatar
+                      type="api"
                       name={api.name}
-                      fallbackIcon={<Globe className="size-2.5" />}
-                      className="size-5 rounded"
+                      logoUrl={api.logo}
+                      size="md"
                     />
                     <span className="font-medium text-sm">{api.name}</span>
                     {getStatusBadge(status)}
