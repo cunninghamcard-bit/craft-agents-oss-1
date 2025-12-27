@@ -559,7 +559,6 @@ export function useOnboarding({
       console.log('[Onboarding:Renderer] Calling saveOnboardingConfig (new workspace)', {
         authType,
         workspaceName,
-        mcpUrl,
         hasCredential: !!credential,
         hasMcpCredentials: !!mcpCredentials,
       })
@@ -568,7 +567,6 @@ export function useOnboarding({
         authType,
         workspace: {
           name: workspaceName,
-          mcpUrl,
           iconUrl: state.selectedSpaceIconUrl ?? undefined,
         },
         credential,

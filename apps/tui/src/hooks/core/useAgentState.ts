@@ -19,8 +19,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { AgentStateManager } from '@craft-agent/shared/agents';
-import { SubAgentManager } from '@craft-agent/shared/agents';
+import { AgentStateManager, FolderAgentManager } from '@craft-agent/shared/agents';
 import type {
   AgentStatus,
   SubAgentDefinition,
@@ -79,22 +78,22 @@ export interface UseAgentStateResult {
 
 export function useAgentState(
   workspaceId: string,
-  subAgentManager: SubAgentManager | null
+  folderAgentManager: FolderAgentManager | null
 ): UseAgentStateResult {
   const [status, setStatus] = useState<AgentStatus>({ status: 'idle' });
   const [isLoading, setIsLoading] = useState(false);
   const managerRef = useRef<AgentStateManager | null>(null);
 
-  // Create/update manager when workspace or subAgentManager changes
+  // Create/update manager when workspace or folderAgentManager changes
   useEffect(() => {
-    if (!subAgentManager) {
+    if (!folderAgentManager) {
       managerRef.current = null;
       setStatus({ status: 'idle' });
       return;
     }
 
     debug('[useAgentState] Creating AgentStateManager for workspace:', workspaceId);
-    const manager = new AgentStateManager(workspaceId, subAgentManager);
+    const manager = new AgentStateManager(workspaceId, folderAgentManager);
     managerRef.current = manager;
 
     // Subscribe to status changes
@@ -111,7 +110,7 @@ export function useAgentState(
       unsubscribe();
       managerRef.current = null;
     };
-  }, [workspaceId, subAgentManager]);
+  }, [workspaceId, folderAgentManager]);
 
   // Derive convenience booleans from status
   const isIdle = status.status === 'idle';

@@ -1,5 +1,6 @@
 import * as React from 'react'
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useMemo, useEffect, useRef, useCallback, useState } from 'react'
+import { useAtom } from 'jotai'
 import { motion, AnimatePresence } from 'motion/react'
 import {
   ChevronRight,
@@ -16,6 +17,7 @@ import { Spinner } from '@/components/ui/loading-indicator'
 import { stripMarkdown } from '@/utils/text'
 import { CircleCheckFilled } from '@/components/icons/TodoStateIcons'
 import { computeLastChildSet } from './turn-utils'
+import { expandedTurnsAtomFamily } from '@/atoms/sessions'
 
 // ============================================================================
 // Size Configuration
@@ -47,7 +49,7 @@ const SIZE_CONFIG = {
 // ============================================================================
 
 export type ActivityStatus = 'pending' | 'running' | 'completed' | 'error'
-export type ActivityType = 'tool' | 'thinking' | 'intermediate'
+export type ActivityType = 'tool' | 'thinking' | 'intermediate' | 'status'
 
 // ============================================================================
 // Todo Types (for TodoWrite tool visualization)
@@ -79,6 +81,8 @@ export interface ActivityItem {
   // Parent-child nesting for Task subagents
   parentId?: string  // Parent activity's toolUseId
   depth?: number     // Nesting level (0 = root, 1 = child, etc.)
+  // Status activities (e.g., compacting)
+  statusType?: string  // e.g., 'compacting'
 }
 
 export interface ResponseContent {
@@ -88,6 +92,10 @@ export interface ResponseContent {
 }
 
 export interface TurnCardProps {
+  /** Session ID for state persistence */
+  sessionId: string
+  /** Turn ID for state persistence */
+  turnId: string
   /** All activities in this turn (tools, thinking, intermediate text) */
   activities: ActivityItem[]
   /** Final response content (may be streaming) */
@@ -472,6 +480,31 @@ function ActivityRow({ activity, onOpenDetails, isLastChild }: ActivityRowProps)
     )
   }
 
+  // Status activities (e.g., compacting) - system-level with distinct styling
+  if (activity.type === 'status') {
+    const isRunning = activity.status === 'running'
+    return (
+      <div className="flex items-stretch">
+        <TreeViewConnector depth={depth} isLastChild={isLastChild} />
+        <div
+          className={cn(
+            "flex items-center gap-2 py-0.5 text-muted-foreground flex-1 min-w-0",
+            SIZE_CONFIG.fontSize
+          )}
+        >
+          <div className={cn(SIZE_CONFIG.iconSize, "flex items-center justify-center shrink-0")}>
+            {isRunning ? (
+              <Spinner className={SIZE_CONFIG.spinnerSizeSmall} />
+            ) : (
+              <CheckCircle2 className={cn(SIZE_CONFIG.iconSize, "text-emerald-500")} />
+            )}
+          </div>
+          <span className="truncate">{activity.content}</span>
+        </div>
+      </div>
+    )
+  }
+
   // Tool activities - show with status icon
   // Format: "[DisplayName] · [Intent/Description] [Params]"
   // - DisplayName: LLM-generated (activity.displayName) or fallback to formatted toolName
@@ -788,6 +821,8 @@ function TodoList({ todos }: TodoListProps) {
  * with the final response displayed separately below.
  */
 export function TurnCard({
+  sessionId,
+  turnId,
   activities,
   response,
   intent,
@@ -802,7 +837,22 @@ export function TurnCard({
   todos,
 }: TurnCardProps) {
   const hasRunning = activities.some(a => a.status === 'running')
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded)
+
+  // Use per-session atom to persist expanded state across session switches
+  const [expandedTurns, setExpandedTurns] = useAtom(expandedTurnsAtomFamily(sessionId))
+  const isExpanded = expandedTurns.has(turnId)
+
+  const toggleExpanded = useCallback(() => {
+    setExpandedTurns(prev => {
+      const next = new Set(prev)
+      if (next.has(turnId)) {
+        next.delete(turnId)
+      } else {
+        next.add(turnId)
+      }
+      return next
+    })
+  }, [turnId, setExpandedTurns])
 
   // Check if response is in buffering state
   // No polling needed - parent updates trigger re-evaluation naturally
@@ -849,7 +899,7 @@ export function TurnCard({
         <div className="group select-none">
           {/* Collapsed Header / Toggle */}
           <button
-            onClick={() => setIsExpanded(!isExpanded)}
+            onClick={toggleExpanded}
             className={cn(
               "flex items-center gap-2 w-full px-3 py-1.5 rounded-[8px] text-left",
               SIZE_CONFIG.fontSize,

@@ -121,6 +121,8 @@ function StreamingSimulationTurnCard({
 
   return (
     <TurnCard
+      sessionId="playground-session"
+      turnId="playground-turn"
       activities={activities}
       response={response}
       intent={intent}

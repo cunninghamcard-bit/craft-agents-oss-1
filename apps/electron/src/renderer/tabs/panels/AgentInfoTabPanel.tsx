@@ -279,11 +279,11 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
 
             <Separator />
 
-            {/* API Connections */}
+            {/* APIs */}
             <div>
               <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
                 <Globe className="h-4 w-4" />
-                API Connections
+                APIs
               </h4>
               {authStatus?.apis && authStatus.apis.length > 0 ? (
                 <ul className="text-sm space-y-2">

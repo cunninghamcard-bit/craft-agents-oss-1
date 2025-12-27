@@ -9,7 +9,6 @@ import { CRAFT_LOGO } from '@craft-agent/shared/branding';
 export interface HeaderProps {
   connected: boolean;
   model?: string;
-  mcpUrl?: string;
   workspaceName?: string;
   contextTokens?: number;
   inputTokens?: number;
@@ -29,7 +28,6 @@ export interface HeaderProps {
 export const Header: React.FC<HeaderProps> = memo(({
   connected,
   model = DEFAULT_MODEL,
-  mcpUrl,
   workspaceName,
   contextTokens = 0,
   inputTokens = 0,
@@ -46,11 +44,6 @@ export const Header: React.FC<HeaderProps> = memo(({
 }) => {
   // Map model IDs to friendly names
   const modelDisplay = useMemo(() => getModelDisplayName(model), [model]);
-
-  // Extract MCP server name from URL
-  const mcpDisplay = useMemo(() => mcpUrl
-    ? mcpUrl.replace(/^https?:\/\//, '').split('/')[0]
-    : 'Not connected', [mcpUrl]);
 
   // Format cost from SDK (already in USD) - round to 2 decimal places
   const costDisplay = useMemo(() => {
@@ -84,7 +77,6 @@ export const Header: React.FC<HeaderProps> = memo(({
         <Text color={connected ? 'green' : 'red'}>
           {connected ? '●' : '○'}
         </Text>
-        <Text dimColor> {mcpDisplay}</Text>
         <Text dimColor> | </Text>
         <Text color={authType === 'oauth_token' ? 'green' : authType === 'craft_credits' ? 'magenta' : 'blue'}>
           {authType === 'oauth_token' ? 'Claude Sub' : authType === 'craft_credits' ? 'Craft Credits' : 'API Key'}

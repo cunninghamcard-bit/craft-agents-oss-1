@@ -8,11 +8,11 @@ import type { SubAgentDefinition } from '../agents/types.ts';
 import { parseError, type AgentError } from './errors.ts';
 import { runErrorDiagnostics } from './diagnostics.ts';
 import { updateAgentInstructions as agenticUpdateInstructions, type UpdateInstructionsContext, type UpdateInstructionsResult, type UpdateInstructionsProgressEvent } from '../agents/instruction-updater.ts';
-import { getWorkspaceAccessTokenAsync, isWorkspaceTokenExpiredAsync, updateWorkspaceOAuthTokensAsync, shouldUseExtendedCacheTtl, loadStoredConfig, loadPlanFromPath, type Workspace, type Session } from '../config/storage.ts';
+import { shouldUseExtendedCacheTtl, loadStoredConfig, getWorkspaceSlug, type Workspace } from '../config/storage.ts';
+import { loadPlanFromPath, type SessionConfig as Session } from '../sessions/storage.ts';
 import { DEFAULT_MODEL } from '../config/models.ts';
 import { getCredentialManager } from '../credentials/index.ts';
 import { updatePreferences, loadPreferences, type UserPreferences } from '../config/preferences.ts';
-import { CraftOAuth, getMcpBaseUrl } from '../auth/oauth.ts';
 import type { FileAttachment } from '../utils/files.ts';
 import { debug } from '../utils/debug.ts';
 import { estimateTokens, summarizeLargeResult, TOKEN_LIMIT } from '../utils/summarize.ts';
@@ -37,7 +37,15 @@ import {
   blockWithReason,
   getActiveModes,
 } from './mode-manager.ts';
-import { getPlansDir } from '../config/storage.ts';
+import { getSessionPlansPath } from '../sessions/storage.ts';
+import {
+  ConfigWatcher,
+  createConfigWatcher,
+  type ConfigWatcherCallbacks,
+} from '../config/watcher.ts';
+import type { ValidationIssue } from '../config/validators.ts';
+import type { LoadedSource } from '../sources/types.ts';
+import type { LoadedAgent } from '../agents/folder-types.ts';
 
 // Re-export mode functions for TUI/Electron usage
 export {
@@ -54,6 +62,10 @@ export {
 // Import and re-export AgentEvent from core (single source of truth)
 import type { AgentEvent } from '@craft-agent/core/types';
 export type { AgentEvent };
+
+// Re-export types for UI components
+export type { LoadedSource } from '../sources/types.ts';
+export type { LoadedAgent } from '../agents/folder-types.ts';
 
 export interface CraftAgentConfig {
   workspace: Workspace;
@@ -491,6 +503,8 @@ export class CraftAgent {
   private sdkTools: string[] = [];
   // Ultrathink mode - when enabled, sets maxThinkingTokens for extended reasoning
   private ultrathinkMode: boolean = false;
+  // Config file watcher for hot-reloading connection changes
+  private configWatcher: ConfigWatcher | null = null;
 
   /**
    * Get the session ID for mode operations.
@@ -498,6 +512,14 @@ export class CraftAgent {
    */
   private get modeSessionId(): string {
     return this.config.session?.id || `temp-${Date.now()}`;
+  }
+
+  /**
+   * Get the workspace slug for workspace-scoped operations.
+   * Uses getWorkspaceSlug helper which falls back to id if no slug is set.
+   */
+  private get workspaceSlug(): string {
+    return getWorkspaceSlug(this.config.workspace);
   }
 
   // Callback for permission requests - set by TUI to receive permission prompts
@@ -517,6 +539,21 @@ export class CraftAgent {
 
   // Callback when working directory changes (e.g., Bash cd command)
   public onWorkingDirectoryChange: ((path: string) => void) | null = null;
+
+  // Callback when a source config changes (hot-reload from file watcher)
+  public onSourceChange: ((slug: string, source: LoadedSource | null) => void) | null = null;
+
+  // Callback when the sources list changes (add/remove)
+  public onSourcesListChange: ((sources: LoadedSource[]) => void) | null = null;
+
+  // Callback when an agent changes
+  public onAgentChange: ((slug: string, agent: LoadedAgent | null) => void) | null = null;
+
+  // Callback when the agents list changes
+  public onAgentsListChange: ((agents: LoadedAgent[]) => void) | null = null;
+
+  // Callback when config file validation fails
+  public onConfigValidationError: ((file: string, errors: ValidationIssue[]) => void) | null = null;
 
   constructor(config: CraftAgentConfig) {
     this.config = config;
@@ -555,6 +592,90 @@ export class CraftAgent {
         this.onWorkingDirectoryChange?.(path);
       },
     });
+
+    // Start config watcher for hot-reloading connection changes
+    // Only start in non-headless mode to avoid overhead in batch/script scenarios
+    if (!this.isHeadless) {
+      this.startConfigWatcher();
+    }
+  }
+
+  /**
+   * Start the config file watcher for hot-reloading changes.
+   */
+  private startConfigWatcher(): void {
+    if (this.configWatcher) {
+      return; // Already running
+    }
+
+    this.configWatcher = createConfigWatcher(this.workspaceSlug, {
+      onSourceChange: (slug, source) => {
+        debug('[CraftAgent] Source changed:', slug, source ? 'updated' : 'deleted');
+        this.onSourceChange?.(slug, source);
+      },
+      onSourcesListChange: (sources) => {
+        debug('[CraftAgent] Sources list changed:', sources.length);
+        this.onSourcesListChange?.(sources);
+      },
+      onAgentChange: (slug, agent) => {
+        debug('[CraftAgent] Agent changed:', slug, agent ? 'updated' : 'deleted');
+        this.onAgentChange?.(slug, agent);
+      },
+      onAgentsListChange: (agents) => {
+        debug('[CraftAgent] Agents list changed:', agents.length);
+        this.onAgentsListChange?.(agents);
+      },
+      onValidationError: (file, result) => {
+        debug('[CraftAgent] Config validation error:', file, result.errors);
+        this.onConfigValidationError?.(file, result.errors);
+      },
+      onError: (file, error) => {
+        debug('[CraftAgent] Config file error:', file, error.message);
+      },
+    });
+
+    debug('[CraftAgent] Config watcher started');
+  }
+
+  /**
+   * Stop the config file watcher.
+   */
+  private stopConfigWatcher(): void {
+    if (this.configWatcher) {
+      this.configWatcher.stop();
+      this.configWatcher = null;
+      debug('[CraftAgent] Config watcher stopped');
+    }
+  }
+
+  /**
+   * Handle a connection config update from the file watcher.
+   * Updates internal MCP/API server state when a source changes.
+   */
+  private handleSourceUpdate(slug: string, source: LoadedSource | null): void {
+    if (!source) {
+      // Source was deleted - remove from active servers
+      delete this.connectionMcpServers[slug];
+      delete this.connectionApiServers[slug];
+      this.activeConnectionServerNames.delete(slug);
+      debug('[CraftAgent] Removed source:', slug);
+      return;
+    }
+
+    // Source was updated - check if we need to update server state
+    if (!source.config.enabled) {
+      // Disabled - remove from active servers
+      delete this.connectionMcpServers[slug];
+      delete this.connectionApiServers[slug];
+      this.activeConnectionServerNames.delete(slug);
+      debug('[CraftAgent] Disabled source:', slug);
+    } else {
+      // Enabled - add to active servers (will be rebuilt on next query)
+      this.activeConnectionServerNames.add(slug);
+      debug('[CraftAgent] Enabled source:', slug);
+      // Note: Actual MCP/API server configs are rebuilt in getOptions()
+      // This just marks the source as active for the next run
+    }
   }
 
   /**
@@ -733,56 +854,9 @@ export class CraftAgent {
   }
 
   private async getToken(): Promise<string | null> {
-    if (this.config.mcpToken) {
-      return this.config.mcpToken;
-    }
-
-    const workspace = this.config.workspace;
-
-    // Get token from credential store (handles bearer token, OAuth, and legacy config fallback)
-    const { authType, token } = await getWorkspaceAccessTokenAsync(workspace.id);
-    if (!token && authType !== 'public') {
-      throw new Error('No authentication credentials found for workspace. Please re-add the workspace.');
-    }
-
-    // Check if token is expired and needs refresh
-    const isExpired = await isWorkspaceTokenExpiredAsync(workspace.id);
-    if (isExpired) {
-      // Get full OAuth credentials from credential store for refresh
-      const manager = getCredentialManager();
-      const oauthCreds = await manager.getWorkspaceOAuth(workspace.id);
-
-      if (oauthCreds?.refreshToken && oauthCreds?.clientId) {
-        try {
-          const oauth = new CraftOAuth(
-            { mcpBaseUrl: getMcpBaseUrl(workspace.mcpUrl) },
-            { onStatus: () => {}, onError: () => {} }
-          );
-
-          const newTokens = await oauth.refreshAccessToken(
-            oauthCreds.refreshToken,
-            oauthCreds.clientId
-          );
-
-          // Save refreshed tokens to credential store
-          await updateWorkspaceOAuthTokensAsync(
-            workspace.id,
-            newTokens.accessToken,
-            newTokens.refreshToken,
-            newTokens.expiresAt,
-            oauthCreds.clientId,
-            newTokens.tokenType
-          );
-
-          return newTokens.accessToken;
-        } catch {
-          // Refresh failed, return existing token (may still work)
-          return token;
-        }
-      }
-    }
-
-    return token;
+    // Only return token if explicitly provided via config
+    // Sources handle their own authentication
+    return this.config.mcpToken ?? null;
   }
 
   async *chat(
@@ -811,17 +885,6 @@ export class CraftAgent {
       const disallowedTools: string[] = ['EnterPlanMode', 'ExitPlanMode'];
 
       // Build MCP servers config - always use HTTP (SDK handles connections efficiently)
-      const token = await this.getToken();
-
-      let mcpUrl = this.config.workspace.mcpUrl;
-      mcpUrl = mcpUrl.replace(/\/+$/, '');
-      if (!mcpUrl.endsWith('/mcp')) {
-        mcpUrl = mcpUrl.replace(/\/sse$/, '/mcp');
-        if (!mcpUrl.endsWith('/mcp')) {
-          mcpUrl = mcpUrl + '/mcp';
-        }
-      }
-
       const agentMcpServers = this.getAgentMcpServers();
       const agentApiServers = this.getAgentApiServers();
       debug('[chat] agentMcpServers:', agentMcpServers);
@@ -831,14 +894,9 @@ export class CraftAgent {
 
       const hasActiveAgent = this.activeAgentDefinition !== null;
       const mcpServers: Options['mcpServers'] = {
-        craft: {
-          type: 'http',
-          url: mcpUrl,
-          ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-        },
         preferences: getPreferencesServer(hasActiveAgent),
         // Session-scoped tools (SubmitPlan, change_working_directory, etc.)
-        session: getSessionScopedTools(sessionId),
+        session: getSessionScopedTools(sessionId, this.workspaceSlug),
         // External docs MCP server (public, no auth required)
         // Provides Craft Agent documentation for agents, MCP servers, APIs, and setup
         docs: {
@@ -850,6 +908,7 @@ export class CraftAgent {
         // Add in-process API servers (REST APIs converted to MCP tools)
         ...agentApiServers,
         // Add user-defined connection servers (MCP and API)
+        // Note: Craft MCP server is now added via sources system
         ...this.connectionMcpServers,
         ...this.connectionApiServers,
       };
@@ -918,7 +977,7 @@ export class CraftAgent {
               // All logic is centralized in mode-manager.ts
               // ============================================================
               if (isSafeMode) {
-                const plansFolderPath = sessionId ? getPlansDir(sessionId) : undefined;
+                const plansFolderPath = sessionId ? getSessionPlansPath(this.workspaceSlug, sessionId) : undefined;
                 const result = shouldAllowToolInMode(
                   input.tool_name,
                   input.tool_input,
@@ -945,8 +1004,8 @@ export class CraftAgent {
                 const parts = input.tool_name.split('__');
                 const serverName = parts[1];
                 if (parts.length >= 3 && serverName) {
-                  // Built-in MCP servers that are always available
-                  const builtInMcpServers = new Set(['craft', 'preferences', 'session', 'docs']);
+                  // Built-in MCP servers that are always available (session-scoped tools)
+                  const builtInMcpServers = new Set(['preferences', 'session', 'docs']);
 
                   // Check if this is a connection server (not built-in, not agent server)
                   if (!builtInMcpServers.has(serverName)) {
@@ -1442,7 +1501,6 @@ export class CraftAgent {
           const diagnostics = await runErrorDiagnostics({
             authType: storedConfig?.authType,
             workspaceId: this.config.workspace?.id,
-            mcpUrl: this.config.workspace?.mcpUrl,
             rawError: rawErrorMsg,
           });
 
@@ -1568,7 +1626,9 @@ Only use tools from connections listed above. If a connection was available earl
 
     // Add session state (always includes all modes with true/false state)
     // This lightweight format replaces the verbose mode context
-    parts.push(formatSessionState(this.modeSessionId));
+    // Include plans folder path so agent knows where to write plans in safe mode
+    const plansFolderPath = getSessionPlansPath(this.workspaceSlug, this.modeSessionId);
+    parts.push(formatSessionState(this.modeSessionId, { plansFolderPath }));
 
     // Add connection state (always included to inform agent about available connections)
     parts.push(this.formatConnectionState());
@@ -1610,7 +1670,9 @@ Only use tools from connections listed above. If a connection was available earl
 
     // Add session state (always includes all modes with true/false state)
     // This lightweight format replaces the verbose mode context
-    contentBlocks.push({ type: 'text', text: formatSessionState(this.modeSessionId) });
+    // Include plans folder path so agent knows where to write plans in safe mode
+    const plansFolderPath = getSessionPlansPath(this.workspaceSlug, this.modeSessionId);
+    contentBlocks.push({ type: 'text', text: formatSessionState(this.modeSessionId, { plansFolderPath }) });
 
     // Add connection state (always included to inform agent about available connections)
     contentBlocks.push({ type: 'text', text: this.formatConnectionState() });
@@ -1624,11 +1686,16 @@ Only use tools from connections listed above. If a connection was available earl
     // Add attachments with stored path info
     if (attachments) {
       for (const attachment of attachments) {
-        // Add path info text block before binary attachments so the agent knows where the file is stored
-        if (attachment.storedPath && (attachment.type === 'image' || attachment.type === 'pdf')) {
+        // Add path info text block so the agent knows where the file is stored
+        // This enables the agent to use the Read tool to access text/office files
+        if (attachment.storedPath) {
+          let pathInfo = `[Attached file: ${attachment.name}]\n[Stored at: ${attachment.storedPath}]`;
+          if (attachment.markdownPath) {
+            pathInfo += `\n[Markdown version: ${attachment.markdownPath}]`;
+          }
           contentBlocks.push({
             type: 'text',
-            text: `[Attached file: ${attachment.name}]\n[Stored at: ${attachment.storedPath}]`,
+            text: pathInfo,
           });
         }
 
@@ -1963,17 +2030,48 @@ Only use tools from connections listed above. If a connection was available earl
               // Clean up child-to-parent mapping
               childToParent.delete(firstChild);
             } else {
-              // No more children - this must be the parent's own result
-              console.log(`[CraftAgent] NO CHILDREN LEFT - treating as parent's own result: ${toolUseId}`);
-              this.onDebug?.(`Parent tool completing: ${toolUseId} (no more children)`);
-              toolUse = pendingToolUses.get(toolUseId);
-              // Clean up parent tracking
-              activeParentTools.delete(toolUseId);
-              parentToChildren.delete(toolUseId);
+              // No more children in FIFO queue. But check if there are late-registered
+              // children in childToParent that haven't received results yet.
+              // This handles the race condition where children start after results arrive.
+              const pendingChildId = Array.from(childToParent.entries())
+                .find(([_, parentId]) => parentId === toolUseId)?.[0];
+
+              if (pendingChildId) {
+                // Match to a pending late-started child
+                console.log(`[CraftAgent] MATCHED TO LATE CHILD: ${pendingChildId} (parent=${toolUseId})`);
+                this.onDebug?.(`Matched late child result: parent=${toolUseId}, child=${pendingChildId}`);
+                toolUseId = pendingChildId;
+                toolUse = pendingToolUses.get(toolUseId);
+                childToParent.delete(pendingChildId);
+              } else {
+                // Truly no more children - this is the parent's own result
+                console.log(`[CraftAgent] NO CHILDREN LEFT - treating as parent's own result: ${toolUseId}`);
+                this.onDebug?.(`Parent tool completing: ${toolUseId} (no more children)`);
+                toolUse = pendingToolUses.get(toolUseId);
+                // Clean up parent tracking
+                activeParentTools.delete(toolUseId);
+                parentToChildren.delete(toolUseId);
+              }
             }
           } else if (toolUseId) {
-            // Case 2: Regular tool result - parent_tool_use_id is the tool's own ID
-            toolUse = pendingToolUses.get(toolUseId);
+            // Case 2: parent_tool_use_id points to a tool we don't recognize as a parent
+            // This could be: (a) a regular tool's own result, or
+            // (b) a child result for a parent that already completed
+            // First check if this is a child result for a completed parent
+            const pendingChildId = Array.from(childToParent.entries())
+              .find(([_, parentId]) => parentId === toolUseId)?.[0];
+
+            if (pendingChildId) {
+              // This is a child result for a completed parent - match to the pending child
+              console.log(`[CraftAgent] MATCHED TO ORPHANED CHILD: ${pendingChildId} (parent=${toolUseId})`);
+              this.onDebug?.(`Matched orphaned child result: parent=${toolUseId}, child=${pendingChildId}`);
+              toolUseId = pendingChildId;
+              toolUse = pendingToolUses.get(toolUseId);
+              childToParent.delete(pendingChildId);
+            } else {
+              // Regular tool result - parent_tool_use_id is the tool's own ID
+              toolUse = pendingToolUses.get(toolUseId);
+            }
           } else if (pendingToolUses.size > 0) {
             // Case 3: parent_tool_use_id is null (in-process MCP tools)
             // Match with first pending tool not yet matched (FIFO)
@@ -2308,6 +2406,14 @@ Only use tools from connections listed above. If a connection was available earl
     this.onAskUserQuestion = null;
     this.onSafeModeChange = null;
     this.onPlanSubmitted = null;
+    this.onSourceChange = null;
+    this.onSourcesListChange = null;
+    this.onAgentChange = null;
+    this.onAgentsListChange = null;
+    this.onConfigValidationError = null;
+
+    // Stop config watcher
+    this.stopConfigWatcher();
 
     // Clean up session-specific state
     const configSessionId = this.config.session?.id;

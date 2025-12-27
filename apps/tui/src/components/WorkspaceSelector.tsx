@@ -112,7 +112,6 @@ export const WorkspaceSelector: React.FC<WorkspaceSelectorProps> = ({
             >
               {' '}
               {isCurrentWorkspace ? '●' : '○'} {index + 1}. {workspace.name}
-              <Text dimColor={!isHighlighted}> - {getUrlDisplay(workspace.mcpUrl)}</Text>
               {' '}
             </Text>
           </Box>

@@ -236,8 +236,53 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
       continue
     }
 
-    // Error/status/info/warning messages are standalone
-    if (message.role === 'error' || message.role === 'status' || message.role === 'info' || message.role === 'warning') {
+    // Status messages become activities within the current turn (don't break turn)
+    if (message.role === 'status') {
+      if (!currentTurn) {
+        // Start a new turn for this status
+        currentTurn = {
+          type: 'assistant',
+          turnId: message.id,
+          activities: [],
+          response: undefined,
+          intent: undefined,
+          isStreaming: true,
+          isComplete: false,
+          timestamp: message.timestamp,
+        }
+      }
+      const statusActivity: ActivityItem = {
+        id: message.id,
+        type: 'status',
+        status: 'running',
+        content: message.content,
+        timestamp: message.timestamp,
+        statusType: message.statusType,
+        depth: 0,
+      }
+      currentTurn.activities.push(statusActivity)
+      continue
+    }
+
+    // Info messages with compaction_complete update the matching status activity
+    if (message.role === 'info' && message.statusType === 'compaction_complete') {
+      if (currentTurn) {
+        const statusIdx = currentTurn.activities.findIndex(
+          a => a.type === 'status' && a.statusType === 'compacting'
+        )
+        if (statusIdx !== -1) {
+          currentTurn.activities[statusIdx] = {
+            ...currentTurn.activities[statusIdx],
+            status: 'completed',
+            content: message.content,
+          }
+        }
+      }
+      continue  // Don't create a separate system turn
+    }
+
+    // Error/info/warning messages are standalone
+    if (message.role === 'error' || message.role === 'info' || message.role === 'warning') {
       // Flush current turn first (mark as interrupted if info message)
       const isInterruption = message.role === 'info'
       flushCurrentTurn(isInterruption)
@@ -322,6 +367,12 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
           intermediateActivity.depth = 0
         }
         currentTurn.activities.push(intermediateActivity)
+
+        // Update turn streaming state based on this message
+        // If message is no longer pending/streaming, update turn state accordingly
+        if (!message.isPending && !message.isStreaming) {
+          currentTurn.isStreaming = false
+        }
         continue
       }
 

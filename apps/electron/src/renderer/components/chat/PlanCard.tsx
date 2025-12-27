@@ -9,7 +9,7 @@
 
 import * as React from 'react'
 import { useState } from 'react'
-import { Check, ListTodo, ChevronRight, ChevronDown } from 'lucide-react'
+import { Check, ListTodo, ChevronRight, ChevronDown, ExternalLink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Markdown } from '@/components/markdown'
 import type { Message } from '../../../shared/types'
@@ -36,6 +36,8 @@ export interface PlanCardProps {
   onOpenFile?: (path: string) => void
   /** Callback to open URL */
   onOpenUrl?: (url: string) => void
+  /** Callback to open plan content in Monaco editor */
+  onPopOut?: (text: string) => void
   /** Whether a user message has been sent after this plan (hides the approve footer) */
   hasUserResponse?: boolean
 }
@@ -49,6 +51,7 @@ export function PlanCard({
   sessionId,
   onOpenFile,
   onOpenUrl,
+  onPopOut,
   hasUserResponse = false,
 }: PlanCardProps) {
   const [isExpanded, setIsExpanded] = useState(true)
@@ -100,24 +103,44 @@ export function PlanCard({
             </Markdown>
           </div>
 
-          {/* Footer with Accept Plan button - only shown until user responds */}
+          {/* Footer with View as Markdown on left, Accept Plan on right - only shown until user responds */}
           {!hasUserResponse && (
             <div className={cn(
-              "pl-4 pr-2.5 py-2 border-t border-border/30 flex items-center justify-end gap-3 bg-muted/20",
+              "pl-4 pr-2.5 py-2 border-t border-border/30 flex items-center justify-between bg-muted/20",
               SIZE_CONFIG.fontSize
             )}>
-              <span className="text-xs text-muted-foreground">
-                Type your feedback in chat or
-              </span>
-              <button
-                type="button"
-                onClick={handleAcceptPlan}
-                className="h-[28px] pl-2.5 pr-2.5 text-xs font-medium rounded-[6px] flex items-center gap-1.5 transition-all bg-emerald-500/5 text-emerald-700 hover:bg-emerald-500/10 shadow-tinted"
-                style={{ '--shadow-color': '6, 95, 70' } as React.CSSProperties}
-              >
-                <Check className="h-3.5 w-3.5" />
-                <span>Accept Plan</span>
-              </button>
+              {/* Left side - View as Markdown */}
+              {onPopOut ? (
+                <button
+                  onClick={() => onPopOut(message.content)}
+                  className={cn(
+                    "flex items-center gap-1.5 transition-colors",
+                    "text-muted-foreground hover:text-foreground",
+                    "focus:outline-none focus-visible:underline"
+                  )}
+                >
+                  <ExternalLink className={SIZE_CONFIG.iconSize} />
+                  <span>View as Markdown</span>
+                </button>
+              ) : (
+                <div />
+              )}
+
+              {/* Right side - Accept Plan */}
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-muted-foreground">
+                  Type your feedback in chat or
+                </span>
+                <button
+                  type="button"
+                  onClick={handleAcceptPlan}
+                  className="h-[28px] pl-2.5 pr-2.5 text-xs font-medium rounded-[6px] flex items-center gap-1.5 transition-all bg-emerald-500/5 text-emerald-700 hover:bg-emerald-500/10 shadow-tinted"
+                  style={{ '--shadow-color': '6, 95, 70' } as React.CSSProperties}
+                >
+                  <Check className="h-3.5 w-3.5" />
+                  <span>Accept Plan</span>
+                </button>
+              </div>
             </div>
           )}
         </>

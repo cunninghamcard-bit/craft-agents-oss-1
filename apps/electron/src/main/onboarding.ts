@@ -268,7 +268,7 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
   // Save onboarding configuration
   ipcMain.handle(IPC_CHANNELS.ONBOARDING_SAVE_CONFIG, async (_event, config: {
     authType?: AuthType  // Optional - if not provided, preserves existing auth type
-    workspace?: { name: string; mcpUrl: string; iconUrl?: string }  // Optional - if not provided, only updates billing
+    workspace?: { name: string; iconUrl?: string }  // Optional - if not provided, only updates billing
     credential?: string
     mcpCredentials?: { accessToken: string; clientId?: string }
   }): Promise<OnboardingSaveResult> => {
@@ -276,7 +276,6 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
       authType: config.authType,
       hasWorkspace: !!config.workspace,
       workspaceName: config.workspace?.name,
-      mcpUrl: config.workspace?.mcpUrl,
       hasCredential: !!config.credential,
       credentialLength: config.credential?.length,
       hasMcpCredentials: !!config.mcpCredentials,
@@ -326,18 +325,17 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
       // 4. Create workspace only if workspace info is provided
       let workspaceId: string | undefined
       if (config.workspace) {
-        workspaceId = generateWorkspaceId(config.workspace.mcpUrl)
-        console.log('[Onboarding:Main] Creating workspace:', workspaceId)
-
-        // Check if workspace with this ID already exists (same MCP URL)
-        const existingIndex = newConfig.workspaces.findIndex(w => w.id === workspaceId)
+        // Check if workspace with same name already exists
+        const existingIndex = newConfig.workspaces.findIndex(w => w.name.toLowerCase() === config.workspace!.name.toLowerCase())
         const existingWorkspace = existingIndex !== -1 ? newConfig.workspaces[existingIndex] : null
+
+        // Use existing ID if updating, otherwise generate new one
+        workspaceId = existingWorkspace?.id ?? generateWorkspaceId()
+        console.log('[Onboarding:Main] Creating workspace:', workspaceId)
 
         const workspace = {
           id: workspaceId,
           name: config.workspace.name,
-          mcpUrl: config.workspace.mcpUrl,
-          mcpAuthType: (config.mcpCredentials ? 'workspace_oauth' : 'public') as 'workspace_oauth' | 'workspace_bearer' | 'public',
           createdAt: existingWorkspace?.createdAt ?? Date.now(), // Preserve original creation time
           iconUrl: config.workspace.iconUrl,
         }

@@ -439,6 +439,8 @@ const config = {
       <section>
         <h2 className="text-lg font-semibold mb-4 text-foreground/80">TurnCard - Complete Turn</h2>
         <TurnCard
+          sessionId="playground-session"
+          turnId="turn-1"
           activities={[completedGrepActivity, completedReadActivity]}
           response={shortResponse}
           intent="Analyzing authentication system"
@@ -453,6 +455,8 @@ const config = {
       <section>
         <h2 className="text-lg font-semibold mb-4 text-foreground/80">TurnCard - Streaming Response</h2>
         <TurnCard
+          sessionId="playground-session"
+          turnId="turn-2"
           activities={[completedGrepActivity]}
           response={streamingResponse}
           isStreaming={true}
@@ -466,6 +470,8 @@ const config = {
       <section>
         <h2 className="text-lg font-semibold mb-4 text-foreground/80">TurnCard - Tool Running</h2>
         <TurnCard
+          sessionId="playground-session"
+          turnId="turn-3"
           activities={[runningGrepActivity]}
           response={undefined}
           intent="Finding error handling patterns"
@@ -480,6 +486,8 @@ const config = {
       <section>
         <h2 className="text-lg font-semibold mb-4 text-foreground/80">TurnCard - Response Only (No Tools)</h2>
         <TurnCard
+          sessionId="playground-session"
+          turnId="turn-4"
           activities={[]}
           response={shortResponse}
           isStreaming={false}

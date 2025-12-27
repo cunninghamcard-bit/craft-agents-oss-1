@@ -33,9 +33,9 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
     // Input drafts
     getDraft,
     onInputChange,
-    // Connections
-    enabledConnections,
-    onSessionConnectionsChange,
+    // Sources
+    enabledSources,
+    onSessionSourcesChange,
   } = useChatContext()
 
   // Use the unified session options hook for clean access
@@ -207,9 +207,9 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
       // Input draft preservation - initial value only, FreeFormInput manages its own state
       inputValue={initialInputValue}
       onInputChange={handleInputChange}
-      // Connections
-      connections={enabledConnections}
-      onConnectionsChange={(ids) => onSessionConnectionsChange?.(chatTab.sessionId, ids)}
+      // Sources
+      sources={enabledSources}
+      onSourcesChange={(slugs) => onSessionSourcesChange?.(chatTab.sessionId, slugs)}
       // Working directory (per session)
       workingDirectory={workingDirectory}
       onWorkingDirectoryChange={handleWorkingDirectoryChange}

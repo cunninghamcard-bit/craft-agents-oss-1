@@ -49,15 +49,18 @@ import {
   clearAllConfig,
   getTokenDisplay,
   getShowCost,
+  getWorkspaceSlug,
+  type TokenDisplayMode,
+} from '@craft-agent/shared/config';
+import {
   loadSession,
   listPlanFiles,
   deletePlanFile,
   listSessions,
   getOrCreateSessionById,
-  type TokenDisplayMode,
-  type Session,
+  type SessionConfig,
   type SessionMetadata,
-} from '@craft-agent/shared/config';
+} from '@craft-agent/shared/sessions';
 import { processInputWithFiles, readClipboard, readFileAttachment, type FileAttachment } from '@craft-agent/shared/utils';
 import { debug } from '@craft-agent/shared/utils';
 import type { CraftAgentConfig } from '@craft-agent/shared/agent';
@@ -66,7 +69,7 @@ import { checkAndUpdate } from '@craft-agent/shared/version';
 
 export interface SessionContainerProps {
   config: CraftAgentConfig;
-  session: Session;  // Current session (primary isolation boundary)
+  session: SessionConfig;  // Current session (primary isolation boundary)
   onRequestSetup?: () => void;
   initialAgent?: string;
   initialPrompt?: string;
@@ -228,7 +231,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
   // Only show welcome banner on truly new sessions (no prior messages)
   // This prevents duplicate banners when switching to workspaces with existing sessions
   const [showWelcome, setShowWelcome] = useState(() => {
-    const storedSession = loadSession(session.id);
+    const storedSession = loadSession(session.workspaceSlug, session.id);
     return !storedSession?.messages?.length;
   });
   const [staticResetKey, setStaticResetKey] = useState(0);
@@ -460,7 +463,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     switch (action.type) {
       case 'start':
         // Start Craft Agents safe mode (same as /safe and SHIFT+TAB)
-        startCraftPlanning();
+        startSafeMode();
         addLocalMessage(SAFE_MODE_ENTER_MESSAGE, 'system');
         sendMessage(SAFE_MODE_ENTER_PROMPT);
         break;
@@ -489,7 +492,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         }
         break;
     }
-  }, [activePlan, approvePlan, cancelPlan, closeModal, openModal, addLocalMessage, sendMessage, startCraftPlanning]);
+  }, [activePlan, approvePlan, cancelPlan, closeModal, openModal, addLocalMessage, sendMessage, startSafeMode]);
 
   // Plan selector handler - loads selected plan as attachment
   const handlePlanSelect = useCallback((plan: PlanFile) => {
@@ -513,7 +516,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     closeModal();
     let deleted = 0;
     for (const plan of plans) {
-      if (deletePlanFile(session.id, plan.name)) {
+      if (deletePlanFile(session.workspaceSlug, session.id, plan.name)) {
         deleted++;
       }
     }
@@ -526,10 +529,11 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
 
   // Session menu handler - resumes selected session
   const handleSessionSelect = useCallback((selectedSession: SessionMetadata) => {
-    const fullSession = getOrCreateSessionById(selectedSession.id, workspace.id);
+    const workspaceSlug = getWorkspaceSlug(workspace);
+    const fullSession = getOrCreateSessionById(workspaceSlug, selectedSession.id);
     setSession(fullSession);
     closeModal();
-  }, [workspace.id, setSession, closeModal]);
+  }, [workspace, setSession, closeModal]);
 
   const handlePaste = useCallback(() => {
     try {
@@ -824,7 +828,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       {/* Plan selector overlay */}
       {isOpen('planSelector') && (
         <PlanSelector
-          plans={listPlanFiles(session.id)}
+          plans={listPlanFiles(session.workspaceSlug, session.id)}
           onSelect={handlePlanSelect}
           onDelete={handlePlanDelete}
           onCancel={closeModal}
@@ -834,7 +838,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       {/* Session menu overlay */}
       {isOpen('sessionMenu') && (
         <SessionMenu
-          sessions={listSessions(workspace.id)}
+          sessions={listSessions(getWorkspaceSlug(workspace))}
           currentSessionId={session.id}
           onSelect={handleSessionSelect}
           onCancel={closeModal}
@@ -1019,7 +1023,6 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         <Header
           connected={connected}
           model={model}
-          mcpUrl={workspace.mcpUrl}
           workspaceName={workspace.name}
           contextTokens={tokenUsage.contextTokens}
           inputTokens={tokenUsage.inputTokens}

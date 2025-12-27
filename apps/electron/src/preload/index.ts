@@ -43,6 +43,7 @@ const api: ElectronAPI = {
   getAgentDefinition: (workspaceId: string, agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_AGENT_DEFINITION, workspaceId, agentId),
   reloadAgent: (workspaceId: string, agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.RELOAD_AGENT, workspaceId, agentId),
   resetAgent: (workspaceId: string, agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.RESET_AGENT, workspaceId, agentId),
+  ensureBuiltinAgent: (workspaceId: string, slug: string) => ipcRenderer.invoke(IPC_CHANNELS.ENSURE_BUILTIN_AGENT, workspaceId, slug),
 
   // Agent authentication
   getAgentAuthRequirements: (workspaceId: string, agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_AGENT_AUTH_REQUIREMENTS, workspaceId, agentId),
@@ -164,8 +165,8 @@ const api: ElectronAPI = {
   createMcpLink: (spaceId: string, authToken: string) => ipcRenderer.invoke(IPC_CHANNELS.ONBOARDING_CREATE_MCP_LINK, spaceId, authToken),
   startWorkspaceMcpOAuth: (mcpUrl: string) => ipcRenderer.invoke(IPC_CHANNELS.ONBOARDING_START_MCP_OAUTH, mcpUrl),
   saveOnboardingConfig: (config: {
-    authType: AuthType
-    workspace: { name: string; mcpUrl: string }
+    authType?: AuthType
+    workspace?: { name: string; iconUrl?: string }
     credential?: string
     mcpCredentials?: { accessToken: string; clientId?: string }
   }) => ipcRenderer.invoke(IPC_CHANNELS.ONBOARDING_SAVE_CONFIG, config),
@@ -231,21 +232,22 @@ const api: ElectronAPI = {
   deleteDraft: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRAFTS_DELETE, sessionId),
   getAllDrafts: () => ipcRenderer.invoke(IPC_CHANNELS.DRAFTS_GET_ALL),
 
-  // Connections
-  startConnectionMcpOAuth: (config: { name: string; url: string; clientId?: string; clientSecret?: string }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.CONNECTIONS_START_MCP_OAUTH, config),
-  startGmailOAuth: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECTIONS_START_GMAIL_OAUTH),
-  getConnections: () => ipcRenderer.invoke(IPC_CHANNELS.CONNECTIONS_GET),
-  saveConnection: (connection: import('../shared/types').ConnectionConfig) =>
-    ipcRenderer.invoke(IPC_CHANNELS.CONNECTIONS_SAVE, connection),
-  deleteConnection: (connectionId: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.CONNECTIONS_DELETE, connectionId),
+  // Sources
+  getSources: (workspaceSlug: string) => ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET, workspaceSlug),
+  createSource: (workspaceSlug: string, config: Partial<import('@craft-agent/shared/sources').FolderSourceConfig>) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SOURCES_CREATE, workspaceSlug, config),
+  deleteSource: (workspaceSlug: string, sourceSlug: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SOURCES_DELETE, workspaceSlug, sourceSlug),
+  startSourceOAuth: (workspaceSlug: string, sourceSlug: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SOURCES_START_OAUTH, workspaceSlug, sourceSlug),
+  saveSourceCredentials: (workspaceSlug: string, sourceSlug: string, credential: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SOURCES_SAVE_CREDENTIALS, workspaceSlug, sourceSlug, credential),
 
-  // Session connections
-  setSessionConnections: (sessionId: string, connectionIds: string[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SESSION_SET_CONNECTIONS, sessionId, connectionIds),
-  getSessionConnections: (sessionId: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_CONNECTIONS, sessionId),
+  // Session sources
+  setSessionSources: (sessionId: string, sourceSlugs: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_SET_SOURCES, sessionId, sourceSlugs),
+  getSessionSources: (sessionId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SESSION_GET_SOURCES, sessionId),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

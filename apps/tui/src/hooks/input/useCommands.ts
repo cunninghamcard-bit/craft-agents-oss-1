@@ -1,14 +1,8 @@
 import { useCallback } from 'react';
 import { homedir } from 'os';
-import { MODELS } from '@craft-agent/shared/config';
-import {
-  getWorkspaces,
-  removeWorkspace,
-  listPlanFiles,
-  type Workspace,
-  type Session,
-} from '@craft-agent/shared/config';
+import { MODELS, getWorkspaces, removeWorkspace, type Workspace } from '@craft-agent/shared/config';
 import { formatPreferencesDisplay } from '@craft-agent/shared/config';
+import { listPlanFiles, type SessionConfig } from '@craft-agent/shared/sessions';
 import { resolveCommand } from '../../utils/filtering.ts';
 import { readClipboard, readFileAttachment, type FileAttachment } from '@craft-agent/shared/utils';
 import { getCurrentVersion } from '@craft-agent/shared/version';
@@ -44,11 +38,11 @@ export interface ToolGroup {
 export interface UseCommandsProps {
   // Global context
   workspace: Workspace;
-  session: Session;
+  session: SessionConfig;
   model: string;
   setModel: (model: string) => void;
   setWorkspace: (workspace: Workspace) => void;
-  startNewSession: () => Session;
+  startNewSession: () => SessionConfig;
 
   // Modal control
   openModal: (name: ModalName) => void;
@@ -511,7 +505,7 @@ export function useCommands(props: UseCommandsProps) {
             return { handled: true };
           }
 
-          const planFiles = listPlanFiles(session.id);
+          const planFiles = listPlanFiles(session.workspaceSlug, session.id);
           if (planFiles.length === 0) {
             return {
               handled: true,

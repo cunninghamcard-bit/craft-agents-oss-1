@@ -21,7 +21,7 @@ import { AnimatedCollapsibleContent } from "@/components/ui/collapsible"
 import { FileTypeIcon, getFileTypeLabel } from "./AttachmentPreview"
 import { Spinner } from "@/components/ui/loading-indicator"
 import { useFocusZone } from "@/hooks/keyboard"
-import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, ConnectionConfig } from "../../../shared/types"
+import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, LoadedSource } from "../../../shared/types"
 import { SetupAuthBanner, type BannerState } from "./SetupAuthBanner"
 import { TurnCard } from "./TurnCard"
 import { PlanCard } from "./PlanCard"
@@ -72,11 +72,11 @@ interface ChatDisplayProps {
   inputValue?: string
   /** Callback when input value changes */
   onInputChange?: (value: string) => void
-  // Connection selection
-  /** Available connections (enabled only) */
-  connections?: ConnectionConfig[]
-  /** Callback when connection selection changes */
-  onConnectionsChange?: (ids: string[]) => void
+  // Source selection
+  /** Available sources (enabled only) */
+  sources?: LoadedSource[]
+  /** Callback when source selection changes */
+  onSourcesChange?: (slugs: string[]) => void
   // Working directory (per session)
   /** Current working directory for this session */
   workingDirectory?: string
@@ -154,13 +154,15 @@ function formatElapsed(seconds: number): string {
 interface ProcessingIndicatorProps {
   /** Start timestamp (persists across remounts) */
   startTime?: number
+  /** Override cycling messages with explicit status (e.g., "Compacting...") */
+  statusMessage?: string
 }
 
 /**
  * ProcessingIndicator - Shows cycling status messages with elapsed time
  * Matches TurnCard header layout for visual continuity
  */
-function ProcessingIndicator({ startTime }: ProcessingIndicatorProps) {
+function ProcessingIndicator({ startTime, statusMessage }: ProcessingIndicatorProps) {
   const [elapsed, setElapsed] = React.useState(0)
   const [messageIndex, setMessageIndex] = React.useState(() =>
     Math.floor(Math.random() * PROCESSING_MESSAGES.length)
@@ -178,8 +180,9 @@ function ProcessingIndicator({ startTime }: ProcessingIndicatorProps) {
     return () => clearInterval(interval)
   }, [startTime])
 
-  // Cycle through messages every 10 seconds
+  // Cycle through messages every 10 seconds (only when not showing status)
   React.useEffect(() => {
+    if (statusMessage) return  // Don't cycle when showing status
     const interval = setInterval(() => {
       setMessageIndex(prev => {
         // Pick a random different message
@@ -191,9 +194,10 @@ function ProcessingIndicator({ startTime }: ProcessingIndicatorProps) {
       })
     }, 10000)
     return () => clearInterval(interval)
-  }, [])
+  }, [statusMessage])
 
-  const currentMessage = PROCESSING_MESSAGES[messageIndex]
+  // Use status message if provided, otherwise cycle through default messages
+  const displayMessage = statusMessage || PROCESSING_MESSAGES[messageIndex]
 
   return (
     <div className="flex items-center gap-2 px-3 py-1 -mb-1 text-[13px] text-muted-foreground">
@@ -205,13 +209,13 @@ function ProcessingIndicator({ startTime }: ProcessingIndicatorProps) {
       <span className="relative h-5 flex items-center">
         <AnimatePresence mode="wait" initial={false}>
           <motion.span
-            key={currentMessage}
+            key={displayMessage}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.4, ease: 'easeInOut' }}
           >
-            {currentMessage}
+            {displayMessage}
           </motion.span>
         </AnimatePresence>
         {elapsed >= 1 && (
@@ -256,9 +260,9 @@ export function ChatDisplay({
   // Input value preservation
   inputValue,
   onInputChange,
-  // Connections
-  connections,
-  onConnectionsChange,
+  // Sources
+  sources,
+  onSourcesChange,
   // Working directory
   workingDirectory,
   onWorkingDirectoryChange,
@@ -476,6 +480,15 @@ export function ChatDisplay({
                           sessionId={session?.id}
                           onOpenFile={onOpenFile}
                           onOpenUrl={onOpenUrl}
+                          onPopOut={(text) => {
+                            if (session) {
+                              window.electronAPI.openMarkdownPreview(`${session.id}:plan-${turn.message.id}`, {
+                                mode: 'readOnly',
+                                content: text,
+                                title: 'Plan Preview',
+                              })
+                            }
+                          }}
                           hasUserResponse={hasUserResponse}
                         />
                       )
@@ -485,6 +498,8 @@ export function ChatDisplay({
                     return (
                       <TurnCard
                         key={`turn-${turn.turnId}`}
+                        sessionId={session.id}
+                        turnId={turn.turnId}
                         activities={turn.activities}
                         response={turn.response}
                         intent={turn.intent}
@@ -696,7 +711,12 @@ export function ChatDisplay({
               {session.isProcessing && (() => {
                 // Find the last user message timestamp for accurate elapsed time
                 const lastUserMsg = [...session.messages].reverse().find(m => m.role === 'user')
-                return <ProcessingIndicator startTime={lastUserMsg?.timestamp} />
+                return (
+                  <ProcessingIndicator
+                    startTime={lastUserMsg?.timestamp}
+                    statusMessage={session.currentStatus?.message}
+                  />
+                )
               })()}
               {/* Scroll Anchor: For auto-scroll to bottom */}
               <div ref={messagesEndRef} />
@@ -778,9 +798,9 @@ export function ChatDisplay({
                 onStructuredResponse={handleStructuredResponse}
                 inputValue={inputValue}
                 onInputChange={onInputChange}
-                connections={connections}
-                selectedConnectionIds={session.selectedConnectionIds}
-                onConnectionsChange={onConnectionsChange}
+                sources={sources}
+                enabledSourceSlugs={session.enabledSourceSlugs}
+                onSourcesChange={onSourcesChange}
                 workingDirectory={workingDirectory}
                 onWorkingDirectoryChange={onWorkingDirectoryChange}
                 sessionId={session.id}

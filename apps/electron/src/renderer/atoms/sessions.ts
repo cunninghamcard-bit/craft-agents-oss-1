@@ -27,7 +27,7 @@ export interface SessionMeta {
   isFlagged?: boolean
   lastReadMessageId?: string
   workingDirectory?: string
-  selectedConnectionIds?: string[]
+  enabledSourceSlugs?: string[]
 }
 
 /**
@@ -45,7 +45,7 @@ export function extractSessionMeta(session: Session): SessionMeta {
     isFlagged: session.isFlagged,
     lastReadMessageId: session.lastReadMessageId,
     workingDirectory: session.workingDirectory,
-    selectedConnectionIds: session.selectedConnectionIds,
+    enabledSourceSlugs: session.enabledSourceSlugs,
   }
 }
 
@@ -111,6 +111,8 @@ export const updateSessionMetaAtom = atom(
 /**
  * Action atom: append message to session (for streaming)
  * Optimized to only update the specific session
+ * Note: Does NOT update lastMessageAt - caller must handle timestamp updates
+ * to avoid session list jumping on intermediate/tool messages
  */
 export const appendMessageAtom = atom(
   null,
@@ -121,7 +123,7 @@ export const appendMessageAtom = atom(
       set(sessionAtom, {
         ...session,
         messages: [...session.messages, message],
-        lastMessageAt: Date.now(),
+        // Don't update lastMessageAt here - only user messages and final responses should update it
       })
     }
   }
@@ -229,26 +231,39 @@ export const removeSessionAtom = atom(
  * - This atom syncs changes to per-session atoms automatically
  * - Components using useSession(id) get isolated updates
  * - Jotai's referential equality prevents unnecessary re-renders
+ *
+ * IMPORTANT: During streaming, the atom is the source of truth.
+ * Streaming events (text_delta, tool_start, tool_result) update atoms directly
+ * and bypass React state for performance. We must NOT overwrite atoms for
+ * sessions that are processing, or we lose streaming data (tool calls, text).
+ * Once a "handoff" event (complete, error, etc.) occurs, React state catches up
+ * and sync works normally again.
  */
 export const syncSessionsToAtomsAtom = atom(
   null,
   (get, set, sessions: Session[]) => {
-    // Track which session IDs we've seen for cleanup
-    const currentIds = new Set(sessions.map(s => s.id))
-
     // Update each session atom
     for (const session of sessions) {
       const sessionAtom = sessionAtomFamily(session.id)
-      const current = get(sessionAtom)
+      const atomSession = get(sessionAtom)
+
+      // CRITICAL: If the atom's session is processing, it has streaming updates
+      // that React state doesn't know about yet. Don't overwrite - atom is
+      // source of truth during streaming. The handoff event will reconcile.
+      if (atomSession?.isProcessing) {
+        continue
+      }
 
       // Only update if the session object is different (referential check)
       // This prevents unnecessary re-renders when the session hasn't changed
-      if (current !== session) {
+      if (atomSession !== session) {
         set(sessionAtom, session)
       }
     }
 
     // Update metadata map for list display
+    // Note: We still update metadata from React state, which is fine because
+    // metadata doesn't include messages - the streaming content we're protecting
     const metaMap = new Map<string, SessionMeta>()
     for (const session of sessions) {
       metaMap.set(session.id, extractSessionMeta(session))
@@ -258,4 +273,13 @@ export const syncSessionsToAtomsAtom = atom(
     // Update ordered IDs (preserve order from React state)
     set(sessionIdsAtom, sessions.map(s => s.id))
   }
+)
+
+/**
+ * Atom family for tracking expanded turn IDs per session
+ * Persists expanded/collapsed state across session switches
+ */
+export const expandedTurnsAtomFamily = atomFamily(
+  (_sessionId: string) => atom<Set<string>>(new Set<string>()),
+  (a, b) => a === b
 )

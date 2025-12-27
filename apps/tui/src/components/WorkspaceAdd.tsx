@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
-import { addWorkspace, getWorkspaces, type Workspace, type OAuthCredentials, type McpAuthType } from '@craft-agent/shared/config';
+import { addWorkspace, getWorkspaces, type Workspace, type OAuthCredentials } from '@craft-agent/shared/config';
 import { CraftOAuth, getMcpBaseUrl } from '@craft-agent/shared/auth';
 import { getCredentialManager } from '@craft-agent/shared/credentials';
 import { validateMcpConnection, getValidationErrorMessage } from '@craft-agent/shared/mcp';
@@ -134,31 +134,14 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
         // Save profile for CraftSpaceSelector (needed for categorization)
         setCraftProfile(profile);
 
-        // Get existing workspace MCP URLs to filter out already-connected spaces
-        const existingUrls = getWorkspaces().map(w => w.mcpUrl);
+        // Get existing workspace names to filter out already-connected spaces
+        const existingNames = getWorkspaces().map(w => w.name.toLowerCase());
 
-        // Fetch links for all spaces in parallel (much faster than sequential)
-        const spacesWithLinks = await Promise.all(
-          profile.spaces.map(async (space) => {
-            try {
-              const links = await craftApi.getWorkflowLinks({ authToken: craftToken, spaceId: space.id });
-              const mcpLinks = links.filter(
-                (l: { type: string; enabled: boolean; urls?: { mcp?: string } }) =>
-                  l.type === 'mcp' && l.enabled && l.urls?.mcp
-              );
-
-              // Check if any of this space's MCP links are already used
-              const alreadyConnected = mcpLinks.some((link: { linkId: string }) =>
-                existingUrls.some(url => url.includes(link.linkId))
-              );
-
-              return { id: space.id, name: space.name, hasConnection: alreadyConnected };
-            } catch {
-              // If we can't fetch links for a space, include it anyway
-              return { id: space.id, name: space.name, hasConnection: false };
-            }
-          })
-        );
+        // Filter to spaces that don't already have a workspace with the same name
+        const spacesWithLinks = profile.spaces.map((space) => {
+          const alreadyConnected = existingNames.includes(space.name.toLowerCase());
+          return { id: space.id, name: space.name, hasConnection: alreadyConnected };
+        });
 
         if (cancelled) return;
 
@@ -462,20 +445,11 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
       }
 
       // Validation passed - create workspace
-      // Determine mcpAuthType based on auth method used
-      let mcpAuthType: McpAuthType;
-      if (oauth) {
-        mcpAuthType = 'workspace_oauth';
-      } else if (token) {
-        mcpAuthType = 'workspace_bearer';
-      } else {
-        mcpAuthType = 'public';
-      }
+      // TODO: When sources system is integrated, create a Craft MCP source
+      // using the mcpUrl, oauth, and token values
 
       const workspace = addWorkspace({
         name,
-        mcpUrl,
-        mcpAuthType,
       });
 
       // Save credentials to credential store

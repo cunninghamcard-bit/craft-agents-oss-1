@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { useSetAtom } from 'jotai'
+import { useSetAtom, useStore } from 'jotai'
 import type { Session, Workspace, SessionEvent, Message, SubAgentMetadata, FileAttachment, StoredAttachment, PermissionRequest, SetupNeeds, TodoState, Mode } from '../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
-import { getToolDisplayName } from '@craft-agent/shared/utils/toolNames'
 import { generateMessageId } from '../shared/types'
+import { useEventProcessor } from './event-processor'
+import type { AgentEvent, Effect } from './event-processor'
 import { Chat } from '@/components/chat/Chat'
 import type { ChatContextType } from '@/context/ChatContext'
 import { OnboardingWizard, ReauthScreen } from '@/components/onboarding'
@@ -21,9 +22,9 @@ import {
   initializeSessionsAtom,
   addSessionAtom,
   removeSessionAtom,
-  updateSessionAtom,
-  updateStreamingContentAtom,
   syncSessionsToAtomsAtom,
+  updateSessionAtom,
+  sessionAtomFamily,
 } from '@/atoms/sessions'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'ready' | 'adding-workspace'
@@ -40,9 +41,9 @@ export default function App() {
   const initializeSessions = useSetAtom(initializeSessionsAtom)
   const addSession = useSetAtom(addSessionAtom)
   const removeSession = useSetAtom(removeSessionAtom)
-  const updateSession = useSetAtom(updateSessionAtom)
-  const updateStreamingContent = useSetAtom(updateStreamingContentAtom)
   const syncSessionsToAtoms = useSetAtom(syncSessionsToAtomsAtom)
+  const updateSessionDirect = useSetAtom(updateSessionAtom)
+  const store = useStore()
 
   // Auto-sync React state to per-session atoms
   // This enables components using useSession(id) to get isolated updates
@@ -70,9 +71,6 @@ export default function App() {
   // All session-scoped options in one place (ultrathink, skipPermissions, activeModes, etc.)
   const [sessionOptions, setSessionOptions] = useState<Map<string, SessionOptions>>(new Map())
 
-  // Queue for tool_result events that arrive before their tool_start (out-of-order handling)
-  // Using ref to avoid stale closure issues in the useEffect event handler
-  const orphanedToolResultsRef = useRef<Map<string, { result: string; toolName: string; turnId?: string; parentToolUseId?: string; isError?: boolean }>>(new Map())
   // Ref for sessionOptions to access current value in event handlers without re-registering
   const sessionOptionsRef = useRef(sessionOptions)
   // Keep ref in sync with state
@@ -80,80 +78,10 @@ export default function App() {
     sessionOptionsRef.current = sessionOptions
   }, [sessionOptions])
 
-  // Performance: Throttle streaming text state updates to reduce React re-renders
-  // Accumulates deltas in ref, flushes to state every 200ms (or immediately on complete)
-  const STREAMING_THROTTLE_MS = 200
+  // Event processor hook - handles all agent events through pure functions
+  const { processAgentEvent } = useEventProcessor()
+
   const DRAFT_SAVE_DEBOUNCE_MS = 500
-  const streamingTextRef = useRef<Map<string, { content: string; turnId?: string; timer?: ReturnType<typeof setTimeout> }>>(new Map())
-
-  // Helper to flush accumulated streaming text to React state
-  // Uses per-session atoms for isolated updates - only the streaming session re-renders
-  const flushStreamingText = useCallback((sessionId: string, createNew: boolean = false) => {
-    const streaming = streamingTextRef.current.get(sessionId)
-    if (!streaming) return
-
-    // Clear timer first, then atomically read and clear content
-    // This prevents race conditions where new deltas arrive mid-flush
-    if (streaming.timer) {
-      clearTimeout(streaming.timer)
-      streaming.timer = undefined
-    }
-
-    // Atomically grab and clear content (new deltas will start fresh accumulation)
-    const content = streaming.content
-    const turnId = streaming.turnId
-    streaming.content = ''
-
-    // If no content accumulated, nothing to flush
-    if (!content) {
-      streamingTextRef.current.delete(sessionId)
-      return
-    }
-
-    // Update per-session atom (only this session's subscribers re-render)
-    updateStreamingContent(sessionId, content, turnId)
-
-    // Also update React state for components still using sessions array
-    // TODO: Remove this once all components migrate to atoms
-    setSessions(prev => prev.map(session => {
-      if (session.id !== sessionId) return session
-
-      const lastMsg = session.messages[session.messages.length - 1]
-
-      // Append to existing streaming message
-      if (lastMsg?.role === 'assistant' && lastMsg.isStreaming &&
-          (!turnId || lastMsg.turnId === turnId)) {
-        return {
-          ...session,
-          messages: [
-            ...session.messages.slice(0, -1),
-            { ...lastMsg, content: lastMsg.content + content }
-          ]
-        }
-      }
-
-      // Create new streaming message if needed
-      if (createNew) {
-        return {
-          ...session,
-          messages: [
-            ...session.messages,
-            {
-              id: generateMessageId(),
-              role: 'assistant' as const,
-              content,
-              timestamp: Date.now(),
-              isStreaming: true,
-              isPending: true,
-              turnId
-            }
-          ]
-        }
-      }
-
-      return session
-    }))
-  }, [updateStreamingContent])
 
   // Handle onboarding completion
   const handleOnboardingComplete = useCallback(() => {
@@ -339,536 +267,144 @@ export default function App() {
     }
   }, [windowWorkspaceId])
 
-  // Listen for session events
+  // Listen for session events - uses centralized event processor for consistent state transitions
+  //
+  // SOURCE OF TRUTH LOGIC:
+  // - During streaming (atom.isProcessing = true): Atom is source of truth
+  //   All events read from and write to atom. This preserves streaming data.
+  // - When not streaming: React state is source of truth
+  //   Events read/write React state, which syncs to atoms via useEffect.
+  // - Handoff events (complete, error, etc.): End streaming, sync atom → React state
+  //
+  // This is simpler and more robust than checking event types - we just ask
+  // "is this session currently streaming?" and route accordingly.
   useEffect(() => {
-    const cleanup = window.electronAPI.onSessionEvent((event: SessionEvent) => {
-      // Handle permission requests separately (outside session state)
-      // Use a queue to handle multiple concurrent permission requests
-      if (event.type === 'permission_request') {
-        console.log('[App] permission_request received:', {
-          sessionId: event.sessionId,
-          requestId: event.request.requestId,
-          toolName: event.request.toolName,
-        })
+    // Handoff events signal end of streaming - need to sync back to React state
+    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error'])
 
-        // Auto-approve if skipPermissions is enabled for this session
-        if (sessionOptionsRef.current.get(event.sessionId)?.skipPermissions) {
-          console.log('[App] permission_request: auto-approving (skipPermissions enabled)')
-          window.electronAPI.respondToPermission(event.sessionId, event.request.requestId, true, false)
-          return
+    // Helper to handle side effects (same logic for both paths)
+    const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
+      for (const effect of effects) {
+        switch (effect.type) {
+          case 'permission_request': {
+            if (sessionOptionsRef.current.get(sessionId)?.skipPermissions) {
+              console.log('[App] permission_request: auto-approving (skipPermissions enabled)')
+              window.electronAPI.respondToPermission(sessionId, effect.request.requestId, true, false)
+            } else {
+              setPendingPermissions(prevPerms => {
+                const next = new Map(prevPerms)
+                const existingQueue = next.get(sessionId) || []
+                next.set(sessionId, [...existingQueue, effect.request])
+                return next
+              })
+            }
+            break
+          }
+          case 'mode_changed': {
+            console.log('[App] mode_changed:', effect.sessionId, effect.mode, effect.enabled)
+            setSessionOptions(prevOpts => {
+              const next = new Map(prevOpts)
+              const current = next.get(effect.sessionId) ?? defaultSessionOptions
+              const currentModes = current.activeModes
+              let newModes: Mode[]
+              if (effect.enabled) {
+                newModes = currentModes.includes(effect.mode) ? currentModes : [...currentModes, effect.mode]
+              } else {
+                newModes = currentModes.filter(m => m !== effect.mode)
+              }
+              next.set(effect.sessionId, { ...current, activeModes: newModes })
+              return next
+            })
+            break
+          }
+          case 'ask_question_request': {
+            console.log('[App] ask_question_request:', effect.sessionId, effect.request)
+            break
+          }
         }
-        setPendingPermissions(prev => {
-          const next = new Map(prev)
-          const existingQueue = next.get(event.sessionId) || []
-          console.log('[App] permission_request: queuing, current queue size:', existingQueue.length)
-          next.set(event.sessionId, [...existingQueue, event.request])
-          return next
-        })
-        return
       }
 
-      // Handle mode change events (generic for any mode type)
-      if (event.type === 'mode_changed') {
-        console.log('[App] mode_changed:', event.sessionId, event.mode, event.enabled)
-        setSessionOptions(prev => {
-          const next = new Map(prev)
-          const current = next.get(event.sessionId) ?? defaultSessionOptions
-          const currentModes = current.activeModes
-          let newModes: Mode[]
-          if (event.enabled) {
-            newModes = currentModes.includes(event.mode) ? currentModes : [...currentModes, event.mode]
-          } else {
-            newModes = currentModes.filter(m => m !== event.mode)
-          }
-          next.set(event.sessionId, { ...current, activeModes: newModes })
-          return next
-        })
-        return
-      }
-
-      // Handle plan submitted event - add plan message to session
-      // The main process sends a 'complete' event after this to clear isProcessing
-      if (event.type === 'plan_submitted') {
-        console.log('[App] plan_submitted:', event.sessionId)
-        setSessions(prev => prev.map(session => {
-          if (session.id !== event.sessionId) return session
-          return {
-            ...session,
-            messages: [...session.messages, event.message],
-          }
-        }))
-        return
-      }
-
-      // Handle complete event - clear any pending requests for the session
-      if (event.type === 'complete') {
-        setPendingPermissions(prev => {
-          if (prev.has(event.sessionId)) {
-            const next = new Map(prev)
-            next.delete(event.sessionId)
+      // Clear pending permissions on complete
+      if (eventType === 'complete') {
+        setPendingPermissions(prevPerms => {
+          if (prevPerms.has(sessionId)) {
+            const next = new Map(prevPerms)
+            next.delete(sessionId)
             return next
           }
-          return prev
+          return prevPerms
         })
       }
+    }
 
-      // Handle connections_changed event - update session's selectedConnectionIds (preserves messages)
-      if (event.type === 'connections_changed') {
-        console.log('[App] connections_changed:', event.sessionId, event.selectedConnectionIds)
-        setSessions(prev => prev.map(session => {
-          if (session.id !== event.sessionId) return session
-          return {
-            ...session,
-            selectedConnectionIds: event.selectedConnectionIds,
-          }
-        }))
+    const cleanup = window.electronAPI.onSessionEvent((event: SessionEvent) => {
+      const sessionId = event.sessionId
+      const workspaceId = windowWorkspaceId ?? ''
+      const agentEvent = event as unknown as AgentEvent
+
+      // Check if session is currently streaming (atom is source of truth)
+      const atomSession = store.get(sessionAtomFamily(sessionId))
+      const isStreaming = atomSession?.isProcessing === true
+      const isHandoff = handoffEventTypes.has(event.type)
+
+      // During streaming OR for handoff events: use atom as source of truth
+      // This ensures all events during streaming see the complete state
+      if (isStreaming || isHandoff) {
+        const currentSession = atomSession ?? null
+
+        // Process the event
+        const { session: updatedSession, effects } = processAgentEvent(
+          agentEvent,
+          currentSession,
+          workspaceId
+        )
+
+        // Update atom directly (UI sees update immediately)
+        updateSessionDirect(sessionId, () => updatedSession)
+
+        // Handle side effects
+        handleEffects(effects, sessionId, event.type)
+
+        // For handoff events, also sync to React state
+        // This reconciles React state with all the streaming updates
+        if (isHandoff) {
+          setSessions(prev => {
+            const exists = prev.some(s => s.id === sessionId)
+            if (!exists) {
+              return [...prev, updatedSession]
+            }
+            return prev.map(s => s.id === sessionId ? updatedSession : s)
+          })
+        }
+
         return
       }
 
-      // Performance: Handle text_delta with throttled updates
-      // Accumulates deltas in ref, only triggers React state update every 100ms
-      if (event.type === 'text_delta') {
-        const sessionId = event.sessionId
-        const existing = streamingTextRef.current.get(sessionId)
+      // Not streaming: React state is source of truth (syncs to atoms via useEffect)
+      setSessions(prev => {
+        const currentSession = prev.find(s => s.id === sessionId) ?? null
 
-        if (existing) {
-          // Append to existing accumulated content
-          existing.content += event.delta
-          if (event.turnId) existing.turnId = event.turnId
-          // Schedule timer if not already scheduled (might have been cleared by flush)
-          if (!existing.timer) {
-            existing.timer = setTimeout(() => flushStreamingText(sessionId, false), STREAMING_THROTTLE_MS)
-          }
-        } else {
-          // First delta for this session - need to check if we should create new message
-          // Check current state to see if there's an existing streaming message
-          setSessions(prev => {
-            const session = prev.find(s => s.id === sessionId)
-            if (!session) return prev
+        const { session: updatedSession, effects } = processAgentEvent(
+          agentEvent,
+          currentSession,
+          workspaceId
+        )
 
-            const lastMsg = session.messages[session.messages.length - 1]
-            const hasExistingStreaming = lastMsg?.role === 'assistant' && lastMsg.isStreaming &&
-              (!event.turnId || lastMsg.turnId === event.turnId)
+        // Handle side effects
+        handleEffects(effects, sessionId, event.type)
 
-            if (hasExistingStreaming) {
-              // Will append to existing message on flush
-              streamingTextRef.current.set(sessionId, {
-                content: event.delta,
-                turnId: event.turnId,
-                timer: setTimeout(() => flushStreamingText(sessionId, false), STREAMING_THROTTLE_MS)
-              })
-              return prev // Don't update state yet
-            } else {
-              // Need to create new streaming message immediately (first delta of a turn)
-              streamingTextRef.current.set(sessionId, {
-                content: '',
-                turnId: event.turnId,
-                timer: setTimeout(() => flushStreamingText(sessionId, false), STREAMING_THROTTLE_MS)
-              })
-              return prev.map(s => {
-                if (s.id !== sessionId) return s
-                return {
-                  ...s,
-                  messages: [
-                    ...s.messages,
-                    {
-                      id: generateMessageId(),
-                      role: 'assistant' as const,
-                      content: event.delta,
-                      timestamp: Date.now(),
-                      isStreaming: true,
-                      isPending: true,
-                      turnId: event.turnId
-                    }
-                  ]
-                }
-              })
-            }
-          })
-        }
-        return // Don't process through normal setSessions below
-      }
-
-      // Handle text_complete - flush pending deltas AND update message state in ONE atomic operation
-      // This prevents race conditions where separate setSessions calls could leave the message
-      // in a partially-updated state (content flushed but isStreaming still true)
-      if (event.type === 'text_complete') {
-        const streaming = streamingTextRef.current.get(event.sessionId)
-
-        // Clear timer and discard any pending content (event.text has the complete final text)
-        if (streaming) {
-          if (streaming.timer) {
-            clearTimeout(streaming.timer)
-            streaming.timer = undefined
-          }
-          // Full cleanup - streaming for this session is done
-          streamingTextRef.current.delete(event.sessionId)
+        // If session didn't exist before, add it
+        if (!currentSession) {
+          return [...prev, updatedSession]
         }
 
-        // Single atomic state update: flush pending content AND mark complete
-        setSessions(prev => prev.map(session => {
-          if (session.id !== event.sessionId) return session
-
-          const msgs = session.messages
-          // Find assistant message by turnId (not by position, since tools may be inserted after)
-          const assistantIndex = event.turnId
-            ? msgs.findIndex(m => m.role === 'assistant' && m.turnId === event.turnId)
-            : msgs.findLastIndex(m => m.role === 'assistant' && m.isStreaming)
-
-          if (assistantIndex !== -1) {
-            const assistantMsg = msgs[assistantIndex]
-            // event.text contains the complete final text from the SDK
-            return {
-              ...session,
-              // Note: Do NOT set isProcessing here - only 'complete' event signals the agent loop is done.
-              // Setting it false here causes a brief "idle" flash before the next tool_start.
-              messages: [
-                ...msgs.slice(0, assistantIndex),
-                {
-                  ...assistantMsg,
-                  content: event.text,
-                  isStreaming: false,
-                  isPending: false,
-                  isIntermediate: event.isIntermediate,
-                  turnId: event.turnId,
-                  // For intermediate messages, parentToolUseId enables nesting under parent tool
-                  parentToolUseId: event.parentToolUseId,
-                },
-                ...msgs.slice(assistantIndex + 1)
-              ]
-            }
-          }
-          return session
-        }))
-        return // Don't fall through to the switch below
-      }
-
-      setSessions(prev => prev.map(session => {
-          if (session.id !== event.sessionId) return session
-
-          switch (event.type) {
-            // Note: text_delta is handled above with throttling for performance
-            // It accumulates deltas in a ref and flushes every 100ms
-            // Note: text_complete is also handled above with atomic flush + state update
-
-            case 'tool_start': {
-              console.log('[App] tool_start received:', {
-                sessionId: session.id,
-                toolUseId: event.toolUseId,
-                toolName: event.toolName,
-              })
-
-              // Check if a message with this toolUseId already exists
-              // SDK sends two events per tool: first from stream_event (empty input),
-              // second from assistant message (complete input)
-              const existingIndex = session.messages.findIndex(m => m.toolUseId === event.toolUseId)
-              if (existingIndex !== -1) {
-                // Update existing message with complete input (second event has full input)
-                return {
-                  ...session,
-                  // isProcessing already true from user message send, stays true until 'complete'
-                  messages: session.messages.map((m, i) =>
-                    i === existingIndex
-                      ? {
-                          ...m,
-                          toolInput: event.toolInput,
-                          toolIntent: event.toolIntent || m.toolIntent,
-                          toolDisplayName: event.toolDisplayName || m.toolDisplayName,
-                          parentToolUseId: event.parentToolUseId || m.parentToolUseId,
-                        }
-                      : m
-                  )
-                }
-              }
-
-              // Check if we have a queued result for this tool (out-of-order case)
-              // This handles tool_result arriving before tool_start
-              const queuedResult = orphanedToolResultsRef.current.get(event.toolUseId)
-              if (queuedResult) {
-                orphanedToolResultsRef.current.delete(event.toolUseId)
-
-                // Create message AND apply result in one update
-                return {
-                  ...session,
-                  // isProcessing already true from user message send, stays true until 'complete'
-                  messages: [
-                    ...session.messages,
-                    {
-                      id: generateMessageId(),
-                      role: 'tool' as const,
-                      content: queuedResult.result,
-                      timestamp: Date.now(),
-                      toolName: event.toolName,
-                      toolUseId: event.toolUseId,
-                      toolInput: event.toolInput,
-                      toolResult: queuedResult.result,
-                      toolStatus: 'completed',  // Already complete!
-                      toolIntent: event.toolIntent,
-                      toolDisplayName: event.toolDisplayName,
-                      turnId: event.turnId,
-                      parentToolUseId: event.parentToolUseId || queuedResult.parentToolUseId,  // Preserve hierarchy from either source
-                      isError: queuedResult.isError,
-                    }
-                  ]
-                }
-              }
-
-              // Normal case - create new pending tool message
-              return {
-                ...session,
-                // isProcessing already true from user message send, stays true until 'complete'
-                messages: [
-                  ...session.messages,
-                  {
-                    id: generateMessageId(),
-                    role: 'tool' as const,
-                    content: `Running ${getToolDisplayName(event.toolName)}...`,
-                    timestamp: Date.now(),
-                    toolName: event.toolName,
-                    toolUseId: event.toolUseId,
-                    toolInput: event.toolInput,
-                    toolIntent: event.toolIntent,
-                    toolDisplayName: event.toolDisplayName,
-                    turnId: event.turnId,
-                    parentToolUseId: event.parentToolUseId,  // Preserve hierarchy
-                  }
-                ]
-              }
-            }
-
-            case 'tool_result': {
-              const toolMsgs = session.messages
-              // Explicit role check to avoid matching non-tool messages
-              const matchingTool = toolMsgs.find(m => m.role === 'tool' && m.toolUseId === event.toolUseId)
-
-              // Debug logging for tool_result handling
-              const allToolMessages = toolMsgs.filter(m => m.role === 'tool')
-              console.log('[App] tool_result received:', {
-                sessionId: session.id,
-                eventToolUseId: event.toolUseId,
-                eventToolName: event.toolName,
-                foundMatch: !!matchingTool,
-                matchingToolStatus: matchingTool?.toolStatus,
-                matchingToolHasResult: matchingTool?.toolResult !== undefined,
-                allToolsCount: allToolMessages.length,
-                allToolStatuses: allToolMessages.map(m => ({
-                  toolUseId: m.toolUseId,
-                  toolName: m.toolName,
-                  toolStatus: m.toolStatus,
-                  hasResult: m.toolResult !== undefined,
-                })),
-              })
-
-              if (matchingTool) {
-                console.log('[App] tool_result: marking tool as completed:', event.toolUseId, 'isError:', event.isError)
-                // Normal case - message exists, update it
-                // Preserve parentToolUseId (from tool_start) or use event's if available
-                return {
-                  ...session,
-                  messages: toolMsgs.map(m =>
-                    m.toolUseId === event.toolUseId
-                      ? { ...m, content: event.result, toolResult: event.result, toolStatus: 'completed', parentToolUseId: event.parentToolUseId || m.parentToolUseId, isError: event.isError }
-                      : m
-                  )
-                }
-              }
-
-              // Message doesn't exist yet - queue the result for when tool_start arrives
-              // This handles out-of-order events (result before start)
-              orphanedToolResultsRef.current.set(event.toolUseId, {
-                result: event.result,
-                toolName: event.toolName,
-                turnId: event.turnId,
-                parentToolUseId: event.parentToolUseId,  // Preserve hierarchy for out-of-order case
-                isError: event.isError,
-              })
-              console.warn(`[App] tool_result arrived before tool_start for ${event.toolUseId} (${event.toolName}) - queued`)
-
-              return session  // No change yet - will be applied when tool_start arrives
-            }
-
-            case 'error': {
-              // Fail-safe: Mark any running tools as failed
-              const messagesWithFailedTools = session.messages.map(m =>
-                m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error'
-                  ? { ...m, toolStatus: 'error' as const, toolResult: 'Error occurred', isError: true }
-                  : m
-              )
-              return {
-                ...session,
-                messages: [
-                  ...messagesWithFailedTools,
-                  {
-                    id: generateMessageId(),
-                    role: 'error' as const,
-                    content: event.error,
-                    timestamp: Date.now()
-                  }
-                ]
-              }
-            }
-
-            case 'typed_error': {
-              // Fail-safe: Mark any running tools as failed
-              const messagesWithFailedTools = session.messages.map(m =>
-                m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error'
-                  ? { ...m, toolStatus: 'error' as const, toolResult: 'Error occurred', isError: true }
-                  : m
-              )
-              return {
-                ...session,
-                messages: [
-                  ...messagesWithFailedTools,
-                  {
-                    id: generateMessageId(),
-                    role: 'error' as const,
-                    content: event.error.title
-                      ? `${event.error.title}: ${event.error.message}`
-                      : event.error.message,
-                    timestamp: Date.now(),
-                    // Include error details for collapsible display
-                    errorCode: event.error.code,
-                    errorTitle: event.error.title,
-                    errorDetails: event.error.details,
-                    errorOriginal: event.error.originalError,
-                    errorCanRetry: event.error.canRetry,
-                  }
-                ]
-              }
-            }
-
-            case 'status':
-              return {
-                ...session,
-                messages: [
-                  ...session.messages,
-                  {
-                    id: generateMessageId(),
-                    role: 'status' as const,
-                    content: event.message,
-                    timestamp: Date.now(),
-                    statusType: event.statusType
-                  }
-                ]
-              }
-
-            case 'info': {
-              // If this is a compaction complete, update the existing compacting message
-              if (event.statusType === 'compaction_complete') {
-                return {
-                  ...session,
-                  messages: session.messages.map(m =>
-                    m.role === 'status' && m.statusType === 'compacting'
-                      ? { ...m, role: 'info' as const, content: event.message, statusType: 'compaction_complete' as const, infoLevel: event.level }
-                      : m
-                  )
-                }
-              }
-              // Otherwise, add as new info message
-              return {
-                ...session,
-                messages: [
-                  ...session.messages,
-                  {
-                    id: generateMessageId(),
-                    role: 'info' as const,
-                    content: event.message,
-                    timestamp: Date.now(),
-                    infoLevel: event.level
-                  }
-                ]
-              }
-            }
-
-            case 'complete': {
-              // Clear any orphaned tool results (memory cleanup)
-              orphanedToolResultsRef.current.clear()
-
-              // Fail-safe: Mark any still-running tools as complete
-              // This ensures tools never get stuck in "running" state if tool_result was lost
-              const runningTools = session.messages.filter(m =>
-                m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error'
-              )
-              const hasRunningTools = runningTools.length > 0
-
-              console.log('[App] complete received:', {
-                sessionId: session.id,
-                hasRunningTools,
-                runningToolIds: runningTools.map(m => m.toolUseId),
-                allToolStatuses: session.messages.filter(m => m.role === 'tool').map(m => ({
-                  toolUseId: m.toolUseId,
-                  toolName: m.toolName,
-                  toolStatus: m.toolStatus,
-                  hasResult: m.toolResult !== undefined,
-                })),
-              })
-
-              if (hasRunningTools) {
-                return {
-                  ...session,
-                  isProcessing: false,
-                  messages: session.messages.map(m =>
-                    m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error'
-                      ? { ...m, toolStatus: 'completed' as const, toolResult: '' }
-                      : m
-                  )
-                }
-              }
-
-              return { ...session, isProcessing: false }
-            }
-
-            case 'interrupted': {
-              // Fail-safe: Mark any running tools as interrupted
-              const messagesWithInterruptedTools = session.messages.map(m =>
-                m.role === 'tool' && m.toolResult === undefined && m.toolStatus !== 'completed' && m.toolStatus !== 'error'
-                  ? { ...m, toolStatus: 'error' as const, toolResult: 'Interrupted', isError: true }
-                  : m
-              )
-              return {
-                ...session,
-                isProcessing: false,
-                messages: [
-                  ...messagesWithInterruptedTools,
-                  // Use message from main process (already persisted)
-                  event.message as Message
-                ]
-              }
-            }
-
-            case 'title_generated':
-              return { ...session, name: event.title }
-
-            case 'working_directory_changed':
-              return { ...session, workingDirectory: event.workingDirectory }
-
-            default:
-              return session
-          }
-        }
-      ))
+        // Update existing session
+        return prev.map(s => s.id === sessionId ? updatedSession : s)
+      })
     })
 
     return cleanup
-  }, [])
-
-  // Debug: Log sessions state changes to verify tool updates are persisting
-  useEffect(() => {
-    const toolMessages = sessions.flatMap(s =>
-      s.messages.filter(m => m.role === 'tool')
-    )
-    if (toolMessages.length > 0) {
-      console.log('[App] sessions state updated - tool messages:',
-        toolMessages.map(m => ({
-          sessionId: sessions.find(s => s.messages.includes(m))?.id,
-          toolUseId: m.toolUseId,
-          toolName: m.toolName,
-          toolStatus: m.toolStatus,
-          hasResult: m.toolResult !== undefined,
-        }))
-      )
-    }
-  }, [sessions])
+  }, [processAgentEvent, windowWorkspaceId, store, updateSessionDirect])
 
   // Listen for menu bar events
   useEffect(() => {
@@ -1064,21 +600,12 @@ export default function App() {
               console.error(`Missing stored attachment at index ${i}`)
               return att // Fall back to original
             }
-            if (att.type === 'office' && stored.markdownPath) {
-              // Read the converted markdown and send as text
-              const markdown = await window.electronAPI.readFile(stored.markdownPath)
-              return {
-                ...att,
-                type: 'text' as const,
-                text: markdown,
-                base64: undefined, // Don't send binary
-                storedPath: stored.storedPath, // Include storage path for agent reference
-              }
-            }
-            // Include storedPath for all attachment types
+            // Include storedPath and markdownPath for all attachment types
+            // Agent will use Read tool to access text/office files via these paths
             return {
               ...att,
               storedPath: stored.storedPath,
+              markdownPath: stored.markdownPath,
             }
           })
         )

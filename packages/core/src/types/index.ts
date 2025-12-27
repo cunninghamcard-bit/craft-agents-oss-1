@@ -4,14 +4,12 @@
 
 // Workspace and config types
 export type {
-  McpAuthType,
   Workspace,
   AuthType,
   OAuthCredentials,
   TokenDisplayMode,
   CumulativeUsage,
   StoredConfig,
-  WorkspaceAuthStatus,
 } from './workspace.ts';
 
 // Session types

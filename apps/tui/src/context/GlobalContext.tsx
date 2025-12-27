@@ -1,12 +1,12 @@
 import React, { createContext, useContext, useState, useCallback, useMemo } from 'react';
-import type { Workspace, CumulativeUsage, Session } from '@craft-agent/shared/config';
+import type { Workspace, CumulativeUsage } from '@craft-agent/shared/config';
 import {
   getCumulativeUsage,
   addToCumulativeUsage,
-  createSession,
-  setActiveSession,
   switchWorkspaceAtomic,
+  getWorkspaceSlug,
 } from '@craft-agent/shared/config';
+import { createSession, type SessionConfig } from '@craft-agent/shared/sessions';
 
 /**
  * GlobalContext holds state that PERSISTS across session switches.
@@ -40,11 +40,11 @@ export interface GlobalContextValue {
 
   // Current session (primary isolation boundary)
   // Changing session triggers SessionContainer remount via key={session.id}
-  session: Session;
-  setSession: (session: Session | ((prev: Session) => Session)) => void;
+  session: SessionConfig;
+  setSession: (session: SessionConfig | ((prev: SessionConfig) => SessionConfig)) => void;
 
   // Start a new session in the current workspace (e.g., /clear command)
-  startNewSession: () => Session;
+  startNewSession: () => SessionConfig;
 
   // Global cumulative usage across all sessions
   cumulativeUsage: CumulativeUsage;
@@ -57,7 +57,7 @@ export interface GlobalProviderProps {
   children: React.ReactNode;
   initialModel: string;
   initialWorkspace: Workspace;
-  initialSession: Session;
+  initialSession: SessionConfig;
   onModelChange?: (model: string) => void;
 }
 
@@ -78,11 +78,10 @@ export function GlobalProvider({
     onModelChange?.(newModel);
   }, [onModelChange]);
 
-  const setSession = useCallback((sessionOrUpdater: Session | ((prev: Session) => Session)) => {
+  const setSession = useCallback((sessionOrUpdater: SessionConfig | ((prev: SessionConfig) => SessionConfig)) => {
     setSessionState(prev => {
       const newSession = typeof sessionOrUpdater === 'function' ? sessionOrUpdater(prev) : sessionOrUpdater;
-      // Persist active session to storage
-      setActiveSession(newSession.id);
+      // Session persistence is handled by saveSession() in the sessions storage module
       return newSession;
     });
   }, []);
@@ -104,12 +103,12 @@ export function GlobalProvider({
 
   const startNewSession = useCallback(() => {
     // Create a new session in the current workspace
-    // Note: createSession() already saves config with activeSessionId
-    const newSession = createSession(workspace.id);
+    const workspaceSlug = getWorkspaceSlug(workspace);
+    const newSession = createSession(workspaceSlug);
     // Update state (triggers SessionContainer remount via key)
     setSessionState(newSession);
     return newSession;
-  }, [workspace.id]);
+  }, [workspace]);
 
   const addUsage = useCallback((delta: { costUsd: number; inputTokens: number; outputTokens: number }) => {
     // Only add if there's actual new usage

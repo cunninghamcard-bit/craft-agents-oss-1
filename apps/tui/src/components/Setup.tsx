@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
-import { saveConfig, getConfigPath, generateWorkspaceId, loadStoredConfig, getActiveWorkspace, type StoredConfig, type Workspace, type AuthType, type OAuthCredentials, type McpAuthType } from '@craft-agent/shared/config';
+import { saveConfig, getConfigPath, generateWorkspaceId, loadStoredConfig, getActiveWorkspace, type StoredConfig, type Workspace, type AuthType, type OAuthCredentials } from '@craft-agent/shared/config';
 import { type AuthState, type SetupNeeds } from '@craft-agent/shared/auth';
 import { getExistingClaudeToken, isClaudeCliInstalled, runClaudeSetupToken } from '@craft-agent/shared/auth';
 import { getCredentialManager } from '@craft-agent/shared/credentials';
@@ -74,7 +74,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
     authState.workspace.active?.name || ''
   );
   const [mcpLinks, setMcpLinks] = useState<Array<{ name: string; linkId: string; mcpUrl: string }>>([]);
-  const [mcpUrl, setMcpUrl] = useState(authState.workspace.active?.mcpUrl || '');
+  const [mcpUrl, setMcpUrl] = useState('');
 
   // MCP OAuth state (for servers that require additional OAuth)
   const [mcpOAuthStatus, setMcpOAuthStatus] = useState('');
@@ -348,16 +348,17 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
         workspace = existingWorkspace;
         workspaceId = existingWorkspace.id;
       } else {
-        // Create new workspace from MCP URL
+        // Create new workspace
         workspaceId = generateWorkspaceId();
         workspace = {
           id: workspaceId,
           name: selectedSpaceName || 'Craft Workspace',
-          mcpUrl: mcpUrl,
-          mcpAuthType: mcpOAuthResult ? 'workspace_oauth' as McpAuthType : 'public' as McpAuthType,
           createdAt: Date.now(),
         };
       }
+
+      // TODO: When sources system is integrated, create a Craft MCP source here
+      // using the mcpUrl and mcpOAuthResult
 
       // Save MCP OAuth credentials to workspace if obtained
       if (mcpOAuthResult) {

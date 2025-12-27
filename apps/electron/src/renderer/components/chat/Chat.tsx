@@ -20,10 +20,6 @@ import {
   Check,
   Search,
   Plus,
-  Plug,
-  Pencil,
-  Trash2,
-  Mail,
 } from "lucide-react"
 import { McpIcon } from "../icons/McpIcon"
 import {
@@ -35,8 +31,8 @@ import {
 } from "../icons/TodoStateIcons"
 import { Spinner } from "@/components/ui/loading-indicator"
 import { AvatarGroup } from "@/components/ui/avatar-group"
-import { ConnectionAvatar, type ConnectionType } from "@/components/ui/connection-avatar"
-import { getConnectionLogoUrl } from "@/utils/connection-types"
+import { ConnectionAvatar } from "@/components/ui/connection-avatar"
+import { SourceAvatar } from "@/components/ui/source-avatar"
 import { AppMenu } from "../AppMenu"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
@@ -73,8 +69,7 @@ import { useFocusZone, useGlobalShortcuts } from "@/hooks/keyboard"
 import { useFocusContext } from "@/context/FocusContext"
 import { getSessionTitle } from "@/utils/session"
 import { closeTabWithCleanup } from "@/utils/closeTabWithCleanup"
-import type { Session, Workspace, SubAgentMetadata, FileAttachment, PermissionRequest, TodoState, ConnectionConfig } from "../../../shared/types"
-import { AddConnectionDialog } from "../connections/AddConnectionDialog"
+import type { Session, Workspace, SubAgentMetadata, FileAttachment, PermissionRequest, TodoState, LoadedSource } from "../../../shared/types"
 import { type TodoStateId, DEFAULT_TODO_STATES, getStateColor } from "@/config/todo-states"
 import * as storage from "@/lib/local-storage"
 import { toast } from "sonner"
@@ -545,122 +540,32 @@ export function Chat({
   const [agentsCollapsed, setAgentsCollapsed] = React.useState(() => {
     return storage.get(storage.KEYS.agentsCollapsed, false)
   })
+  const [sourcesCollapsed, setSourcesCollapsed] = React.useState(() => {
+    return storage.get(storage.KEYS.sourcesCollapsed, false)
+  })
 
-  // Connections state
-  const [connections, setConnections] = React.useState<ConnectionConfig[]>([])
-  const [isConnectionsCollapsed, setIsConnectionsCollapsed] = React.useState(false)
-  const [isAddConnectionOpen, setIsAddConnectionOpen] = React.useState(false)
-  const [editingConnection, setEditingConnection] = React.useState<ConnectionConfig | null>(null)
+  // Sources state (replaces connections)
+  const [sources, setSources] = React.useState<LoadedSource[]>([])
 
-  // Load connections from backend on mount
+  // Load sources from backend on mount
   React.useEffect(() => {
-    window.electronAPI.getConnections().then((loaded) => {
-      setConnections(loaded || [])
+    if (!activeWorkspaceId) return
+    window.electronAPI.getSources(activeWorkspaceId).then((loaded) => {
+      setSources(loaded || [])
     }).catch(err => {
-      console.error('[Chat] Failed to load connections:', err)
+      console.error('[Chat] Failed to load sources:', err)
     })
-  }, [])
+  }, [activeWorkspaceId])
 
-  const handleAddConnection = React.useCallback(async (config: Omit<ConnectionConfig, 'id' | 'enabled'>) => {
-    const newConnection: ConnectionConfig = {
-      ...config,
-      id: crypto.randomUUID(),
-      enabled: true,
-    }
-    // Optimistic update
-    setConnections(prev => [...prev, newConnection])
-    // Persist to backend
-    await window.electronAPI.saveConnection(newConnection)
-  }, [])
-
-  const handleEditConnection = React.useCallback(async (id: string, config: Omit<ConnectionConfig, 'id' | 'enabled'>) => {
-    const existing = connections.find(c => c.id === id)
-    if (!existing) return
-    const updated = { ...existing, ...config }
-    // Optimistic update
-    setConnections(prev => prev.map(c => c.id === id ? updated : c))
-    // Persist to backend
-    await window.electronAPI.saveConnection(updated)
-  }, [connections])
-
-  const handleDeleteConnection = React.useCallback(async (id: string) => {
-    // Optimistic update
-    setConnections(prev => prev.filter(c => c.id !== id))
-    // Persist to backend
-    await window.electronAPI.deleteConnection(id)
-  }, [])
-
-  // Handle session connection selection changes (triggers session restart)
-  const handleSessionConnectionsChange = React.useCallback(async (sessionId: string, connectionIds: string[]) => {
+  // Handle session source selection changes
+  const handleSessionSourcesChange = React.useCallback(async (sessionId: string, sourceSlugs: string[]) => {
     try {
-      await window.electronAPI.setSessionConnections(sessionId, connectionIds)
-      // Session will emit a 'session_restarted' event that updates the session state
+      await window.electronAPI.setSessionSources(sessionId, sourceSlugs)
+      // Session will emit a 'sources_changed' event that updates the session state
     } catch (err) {
-      console.error('[Chat] Failed to set session connections:', err)
+      console.error('[Chat] Failed to set session sources:', err)
     }
   }, [])
-
-  const handleOpenEditConnection = React.useCallback((conn: ConnectionConfig) => {
-    setEditingConnection(conn)
-    setIsAddConnectionOpen(true)
-  }, [])
-
-  // Handle adding Gmail connection
-  const handleAddGmail = React.useCallback(async () => {
-    try {
-      const result = await window.electronAPI.startGmailOAuth()
-      if (!result.success) {
-        console.error('[Chat] Gmail OAuth failed:', result.error)
-        toast.error('Gmail connection failed', {
-          description: result.error || 'Could not connect to Gmail'
-        })
-        return
-      }
-
-      // Check if this Gmail account is already connected
-      const existingGmail = connections.find(
-        conn => conn.type === 'gmail' && conn.gmailEmail === result.email
-      )
-
-      if (existingGmail) {
-        // Update existing connection with fresh tokens (re-auth flow)
-        const updatedConfig: ConnectionConfig = {
-          ...existingGmail,
-          gmailAccessToken: result.accessToken,
-          gmailRefreshToken: result.refreshToken,
-          gmailExpiresAt: result.expiresAt,
-          isAuthenticated: true,
-        }
-        setConnections(prev => prev.map(c => c.id === existingGmail.id ? updatedConfig : c))
-        await window.electronAPI.saveConnection(updatedConfig)
-        toast.success(`Reconnected to ${result.email}`)
-        return
-      }
-
-      // Create new Gmail connection config
-      const config: ConnectionConfig = {
-        id: crypto.randomUUID(),
-        name: result.email ? `Gmail (${result.email})` : 'Gmail',
-        type: 'gmail',
-        enabled: true,
-        gmailEmail: result.email,
-        gmailAccessToken: result.accessToken,
-        gmailRefreshToken: result.refreshToken,
-        gmailExpiresAt: result.expiresAt,
-        isAuthenticated: true,
-      }
-
-      // Save connection (tokens stored in CredentialManager)
-      setConnections(prev => [...prev, config])
-      await window.electronAPI.saveConnection(config)
-      toast.success(`Connected to ${result.email}`)
-    } catch (error) {
-      console.error('[Chat] Failed to add Gmail connection:', error)
-      toast.error('Gmail connection failed', {
-        description: error instanceof Error ? error.message : 'Unknown error occurred'
-      })
-    }
-  }, [connections])
 
   const activeWorkspace = workspaces.find(w => w.id === activeWorkspaceId)
 
@@ -985,23 +890,19 @@ export function Chat({
     return onDeleteSession(sessionId, skipConfirmation)
   }, [session.selected, setSession, onDeleteSession])
 
-  // Compute enabled connections for context
-  const enabledConnections = React.useMemo(() =>
-    connections.filter(c => c.enabled),
-    [connections]
-  )
-
-  // Extend context value with local overrides (textareaRef, wrapped onDeleteSession, connections)
+  // Extend context value with local overrides (textareaRef, wrapped onDeleteSession, sources)
   const chatContextValue = React.useMemo<ChatContextType>(() => ({
     ...contextValue,
     onDeleteSession: handleDeleteSession,
     textareaRef: chatInputRef,
-    enabledConnections,
-    onSessionConnectionsChange: handleSessionConnectionsChange,
-  }), [contextValue, handleDeleteSession, enabledConnections, handleSessionConnectionsChange])
+    enabledSources: sources,
+    onSessionSourcesChange: handleSessionSourcesChange,
+  }), [contextValue, handleDeleteSession, sources, handleSessionSourcesChange])
 
-  // Group agents for tree view
-  const agentTree = React.useMemo(() => groupAgentsByFolder(agents), [agents])
+  // Filter out hidden agents (those starting with '.') and group for tree view
+  // For folder agents, documentId contains the slug
+  const visibleAgents = React.useMemo(() => agents.filter(a => !a.documentId?.startsWith('.')), [agents])
+  const agentTree = React.useMemo(() => groupAgentsByFolder(visibleAgents), [visibleAgents])
 
   // Persist expanded folders to localStorage
   React.useEffect(() => {
@@ -1026,6 +927,10 @@ export function Chat({
   React.useEffect(() => {
     storage.set(storage.KEYS.agentsCollapsed, agentsCollapsed)
   }, [agentsCollapsed])
+
+  React.useEffect(() => {
+    storage.set(storage.KEYS.sourcesCollapsed, sourcesCollapsed)
+  }, [sourcesCollapsed])
 
   // Helper to map AgentStatus to SidebarAgentStatus (centralized logic)
   const mapAgentStatusToSidebar = React.useCallback((status: import('../../../shared/types').AgentStatus): SidebarAgentStatus => {
@@ -1203,6 +1108,27 @@ export function Chat({
     const newSession = await onCreateSession(activeWorkspace.id, agentId)
     openChatTab(newSession.id, activeWorkspace.id, 'New Chat', agentId, { forceNew: true })
   }, [activeWorkspace, viewMode, selectedAgentId, onCreateSession, openChatTab])
+
+  // Add Source - opens a chat with the .source-setup builtin agent
+  const handleAddSource = useCallback(async () => {
+    if (!activeWorkspace) return
+
+    try {
+      // Ensure the builtin agent exists
+      const agentId = await window.electronAPI.ensureBuiltinAgent(activeWorkspace.id, '.source-setup')
+      if (!agentId) {
+        toast.error('Failed to create source setup agent')
+        return
+      }
+
+      // Create a new session with this agent
+      const newSession = await onCreateSession(activeWorkspace.id, agentId)
+      openChatTab(newSession.id, activeWorkspace.id, 'Add Source', agentId, { forceNew: true })
+    } catch (error) {
+      console.error('[Chat] Failed to add source:', error)
+      toast.error('Failed to start source setup')
+    }
+  }, [activeWorkspace, onCreateSession, openChatTab])
 
   // Respond to menu bar "New Chat" trigger
   const menuTriggerRef = useRef(menuNewChatTrigger)
@@ -1652,92 +1578,56 @@ export function Chat({
                     />
                   </AnimatedCollapsibleContent>
                 </Collapsible>
-                {/* Connections Section */}
-                <Collapsible open={!isConnectionsCollapsed} onOpenChange={() => setIsConnectionsCollapsed(v => !v)} className="mb-1">
+                {/* Sources Section - Collapsible */}
+                <Collapsible
+                  open={!sourcesCollapsed}
+                  onOpenChange={(open) => setSourcesCollapsed(!open)}
+                  className="flex-shrink-0 flex flex-col overflow-hidden mb-1"
+                >
                   <CollapsibleTrigger asChild>
-                    <button className="group flex items-center justify-between w-full pl-4 pr-3.5 pt-2 pb-1">
-                      <span className="text-xs font-medium text-muted-foreground select-none">Connections</span>
+                    <button className="group flex items-center justify-between w-full pl-4 pr-3.5 pt-2 pb-1 shrink-0">
+                      <span className="flex items-center gap-1.5">
+                        <span className="text-xs font-medium text-muted-foreground select-none">Sources</span>
+                      </span>
                       <span className="flex items-center gap-1">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <span
-                              className="p-0.5 rounded hover:bg-foreground/5 data-[state=open]:bg-foreground/5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 data-[state=open]:opacity-100 transition-opacity cursor-pointer"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <MoreHorizontal className="h-3 w-3" />
-                            </span>
-                          </DropdownMenuTrigger>
-                          <StyledDropdownMenuContent align="end" minWidth="min-w-0">
-                            <StyledDropdownMenuItem onSelect={handleAddGmail}>
-                              <ConnectionAvatar
-                                type="gmail"
-                                name="Gmail"
-                                serviceUrl={getConnectionLogoUrl({ type: 'gmail' } as ConnectionConfig)}
-                                size="xs"
-                              />
-                              Add Gmail
-                            </StyledDropdownMenuItem>
-                            <StyledDropdownMenuSeparator />
-                            <StyledDropdownMenuItem onClick={() => setIsAddConnectionOpen(true)}>
-                              <Plus />
-                              Add connection
-                            </StyledDropdownMenuItem>
-                          </StyledDropdownMenuContent>
-                        </DropdownMenu>
+                        <span
+                          className="p-0.5 rounded hover:bg-foreground/5 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleAddSource()
+                          }}
+                        >
+                          <Plus className="h-3 w-3" />
+                        </span>
                         <ChevronDown className={cn(
                           "h-3.5 w-3.5 text-muted-foreground/50 opacity-0 group-hover:opacity-100 transition-all duration-200",
-                          isConnectionsCollapsed && "-rotate-90"
+                          sourcesCollapsed && "-rotate-90"
                         )} />
                       </span>
                     </button>
                   </CollapsibleTrigger>
-                  {/* Connection List */}
-                  <AnimatedCollapsibleContent isOpen={!isConnectionsCollapsed}>
-                    <nav className="grid gap-0.5 px-2 py-1">
-                      {connections.length === 0 ? (
-                        <button
-                          onClick={() => setIsAddConnectionOpen(true)}
-                          className="flex w-full items-center gap-2 rounded-[6px] py-[7px] px-2 text-[13px] text-foreground/30 hover:text-foreground/60 hover:bg-foreground/5 transition-colors"
-                        >
-                          <Plus className="h-3.5 w-3.5" />
-                          Add your first connection
-                        </button>
-                      ) : connections.map(conn => (
-                        <div key={conn.id} className="flex items-center justify-between py-[7px] px-2 rounded-[6px] hover:bg-foreground/5 group/conn has-[[data-state=open]]:bg-foreground/5">
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <ConnectionAvatar
-                              type={conn.type as ConnectionType}
-                              name={conn.name}
-                              serviceUrl={getConnectionLogoUrl(conn)}
-                              size="sm"
-                            />
-                            <span className="text-[13px] truncate">{conn.name}</span>
-                          </div>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                className="p-0.5 rounded opacity-0 group-hover/conn:opacity-100 data-[state=open]:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
-                              >
-                                <MoreHorizontal className="h-3.5 w-3.5" />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <StyledDropdownMenuContent align="end">
-                              <StyledDropdownMenuItem onClick={() => handleOpenEditConnection(conn)}>
-                                <Pencil className="h-3.5 w-3.5 mr-2" />
-                                Edit
-                              </StyledDropdownMenuItem>
-                              <StyledDropdownMenuItem
-                                onClick={() => handleDeleteConnection(conn.id)}
-                                variant="destructive"
-                              >
-                                <Trash2 className="h-3.5 w-3.5 mr-2" />
-                                Delete
-                              </StyledDropdownMenuItem>
-                            </StyledDropdownMenuContent>
-                          </DropdownMenu>
+                  <AnimatedCollapsibleContent isOpen={!sourcesCollapsed}>
+                    <div className="px-2 py-1">
+                      {sources.length === 0 ? (
+                        <p className="text-xs text-muted-foreground px-2 py-2">
+                          No sources configured. Click + to add one.
+                        </p>
+                      ) : (
+                        <div className="space-y-0.5">
+                          {sources.map((source) => (
+                            <div
+                              key={source.config.slug}
+                              className="flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-foreground/5 cursor-pointer"
+                            >
+                              <SourceAvatar source={source} size="sm" />
+                              <span className="text-xs text-foreground truncate flex-1">
+                                {source.config.name}
+                              </span>
+                            </div>
+                          ))}
                         </div>
-                      ))}
-                    </nav>
+                      )}
+                    </div>
                   </AnimatedCollapsibleContent>
                 </Collapsible>
                 {/* Agent Tree: Hierarchical list of agents - Collapsible */}
@@ -2127,18 +2017,6 @@ export function Chat({
       </div>
 
       </TooltipProvider>
-
-      {/* Add Connection Dialog */}
-      <AddConnectionDialog
-        open={isAddConnectionOpen}
-        onOpenChange={(open) => {
-          setIsAddConnectionOpen(open)
-          if (!open) setEditingConnection(null)
-        }}
-        onAdd={handleAddConnection}
-        editConnection={editingConnection}
-        onEdit={handleEditConnection}
-      />
     </ChatProvider>
   )
 }

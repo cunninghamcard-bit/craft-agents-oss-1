@@ -31,9 +31,8 @@ import { StyledDropdownMenuContent, StyledDropdownMenuItem } from '@/components/
 import { cn } from '@/lib/utils'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { MODELS, getModelDisplayName } from '@config/models'
-import { ConnectionAvatar, type ConnectionType } from '@/components/ui/connection-avatar'
-import { getConnectionLogoUrl, getConnectionLabel } from '@/utils/connection-types'
-import type { FileAttachment, ConnectionConfig } from '../../../../shared/types'
+import { SourceAvatar } from '@/components/ui/source-avatar'
+import type { FileAttachment, LoadedSource } from '../../../../shared/types'
 
 export interface FreeFormInputProps {
   /** Placeholder text for the textarea */
@@ -70,13 +69,13 @@ export interface FreeFormInputProps {
   onHeightChange?: (height: number) => void
   /** Callback when focus state changes */
   onFocusChange?: (focused: boolean) => void
-  // Connection selection
-  /** Available connections (enabled only) */
-  connections?: ConnectionConfig[]
-  /** Currently selected connection IDs for this session */
-  selectedConnectionIds?: string[]
-  /** Callback when connection selection changes */
-  onConnectionsChange?: (ids: string[]) => void
+  // Source selection
+  /** Available sources (enabled only) */
+  sources?: LoadedSource[]
+  /** Currently enabled source slugs for this session */
+  enabledSourceSlugs?: string[]
+  /** Callback when source selection changes */
+  onSourcesChange?: (slugs: string[]) => void
   /** Current working directory path */
   workingDirectory?: string
   /** Callback when working directory changes */
@@ -115,9 +114,9 @@ export function FreeFormInput({
   unstyled = false,
   onHeightChange,
   onFocusChange,
-  connections = [],
-  selectedConnectionIds = [],
-  onConnectionsChange,
+  sources = [],
+  enabledSourceSlugs = [],
+  onSourcesChange,
   workingDirectory,
   onWorkingDirectoryChange,
   sessionId,
@@ -169,8 +168,8 @@ export function FreeFormInput({
   const [loadingCount, setLoadingCount] = React.useState(0)
   const [slashDropdownOpen, setSlashDropdownOpen] = React.useState(false)
   const [modelDropdownOpen, setModelDropdownOpen] = React.useState(false)
-  const [connectionDropdownOpen, setConnectionDropdownOpen] = React.useState(false)
-  const [connectionFilter, setConnectionFilter] = React.useState('')
+  const [sourceDropdownOpen, setSourceDropdownOpen] = React.useState(false)
+  const [sourceFilter, setSourceFilter] = React.useState('')
   const [isFocused, setIsFocused] = React.useState(false)
 
   const dragCounterRef = React.useRef(0)
@@ -179,9 +178,9 @@ export function FreeFormInput({
   const [modelDropdownPosition, setModelDropdownPosition] = React.useState<{ top: number; left: number } | null>(null)
   const slashButtonRef = React.useRef<HTMLButtonElement>(null)
   const [slashDropdownPosition, setSlashDropdownPosition] = React.useState<{ top: number; left: number } | null>(null)
-  const connectionButtonRef = React.useRef<HTMLButtonElement>(null)
-  const connectionFilterInputRef = React.useRef<HTMLInputElement>(null)
-  const [connectionDropdownPosition, setConnectionDropdownPosition] = React.useState<{ top: number; left: number } | null>(null)
+  const sourceButtonRef = React.useRef<HTMLButtonElement>(null)
+  const sourceFilterInputRef = React.useRef<HTMLInputElement>(null)
+  const [sourceDropdownPosition, setSourceDropdownPosition] = React.useState<{ top: number; left: number } | null>(null)
 
   // Merge refs
   const internalRef = React.useRef<HTMLTextAreaElement>(null)
@@ -696,68 +695,68 @@ export function FreeFormInput({
             )}
           </div>
 
-          {/* 3. Connection Selector Button - only show if onConnectionsChange is provided */}
-          {onConnectionsChange && (
+          {/* 3. Source Selector Button - only show if onSourcesChange is provided */}
+          {onSourcesChange && (
             <div className="relative">
               <Tooltip>
                 <TooltipTrigger asChild>
                   <button
-                    ref={connectionButtonRef}
+                    ref={sourceButtonRef}
                     type="button"
                     className={cn(
                       "inline-flex items-center justify-center h-7 w-7 shrink-0 rounded-[4px] hover:bg-foreground/5 transition-colors disabled:opacity-50 disabled:pointer-events-none",
-                      selectedConnectionIds.length > 0 && "text-primary",
-                      connectionDropdownOpen && "bg-foreground/5"
+                      enabledSourceSlugs.length > 0 && "text-primary",
+                      sourceDropdownOpen && "bg-foreground/5"
                     )}
                     disabled={disabled}
                     onClick={() => {
-                      if (!connectionDropdownOpen && connectionButtonRef.current) {
-                        const rect = connectionButtonRef.current.getBoundingClientRect()
-                        setConnectionDropdownPosition({
+                      if (!sourceDropdownOpen && sourceButtonRef.current) {
+                        const rect = sourceButtonRef.current.getBoundingClientRect()
+                        setSourceDropdownPosition({
                           top: rect.top,
                           left: rect.left,
                         })
                         // Focus filter input after popover opens
-                        setTimeout(() => connectionFilterInputRef.current?.focus(), 0)
+                        setTimeout(() => sourceFilterInputRef.current?.focus(), 0)
                       } else {
                         // Clear filter when closing
-                        setConnectionFilter('')
+                        setSourceFilter('')
                       }
-                      setConnectionDropdownOpen(!connectionDropdownOpen)
+                      setSourceDropdownOpen(!sourceDropdownOpen)
                     }}
                   >
                     <CloudCog className="h-4 w-4" />
-                    {selectedConnectionIds.length > 0 && (
+                    {enabledSourceSlugs.length > 0 && (
                       <span className="absolute -top-1 -right-1 h-4 w-4 text-[10px] font-medium bg-primary text-primary-foreground rounded-full flex items-center justify-center">
-                        {selectedConnectionIds.length}
+                        {enabledSourceSlugs.length}
                       </span>
                     )}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="top">Connections</TooltipContent>
+                <TooltipContent side="top">Sources</TooltipContent>
               </Tooltip>
-              {connectionDropdownOpen && connectionDropdownPosition && ReactDOM.createPortal(
+              {sourceDropdownOpen && sourceDropdownPosition && ReactDOM.createPortal(
                 <>
                   <div
                     className="fixed inset-0 z-[9998]"
                     onClick={() => {
-                      setConnectionDropdownOpen(false)
-                      setConnectionFilter('')
+                      setSourceDropdownOpen(false)
+                      setSourceFilter('')
                     }}
                   />
                   <div
                     className="fixed z-[9999] min-w-[200px] overflow-hidden rounded-[8px] bg-background text-popover-foreground shadow-modal-small"
                     style={{
-                      top: connectionDropdownPosition.top - 8,
-                      left: connectionDropdownPosition.left,
+                      top: sourceDropdownPosition.top - 8,
+                      left: sourceDropdownPosition.left,
                       transform: 'translateY(-100%)',
                     }}
                   >
-                    {connections.length === 0 ? (
+                    {sources.length === 0 ? (
                       <div className="text-xs text-muted-foreground p-3">
-                        No connections configured.
+                        No sources configured.
                         <br />
-                        Add connections in Settings.
+                        Add sources in Settings.
                       </div>
                     ) : (
                       <CommandPrimitive
@@ -766,48 +765,44 @@ export function FreeFormInput({
                       >
                         <div className="border-b border-border/50 px-3 py-2">
                           <CommandPrimitive.Input
-                            ref={connectionFilterInputRef}
-                            value={connectionFilter}
-                            onValueChange={setConnectionFilter}
-                            placeholder="Search connections..."
+                            ref={sourceFilterInputRef}
+                            value={sourceFilter}
+                            onValueChange={setSourceFilter}
+                            placeholder="Search sources..."
                             className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
                           />
                         </div>
                         <CommandPrimitive.List className="max-h-[240px] overflow-y-auto p-1">
-                          {connections
-                            .filter(conn => conn.name.toLowerCase().includes(connectionFilter.toLowerCase()))
-                            .map(conn => {
-                              const isSelected = selectedConnectionIds.includes(conn.id)
+                          {sources
+                            .filter(source => source.config.name.toLowerCase().includes(sourceFilter.toLowerCase()))
+                            .map(source => {
+                              const isEnabled = enabledSourceSlugs.includes(source.config.slug)
                               return (
                                 <CommandPrimitive.Item
-                                  key={conn.id}
-                                  value={conn.id}
+                                  key={source.config.slug}
+                                  value={source.config.slug}
                                   onSelect={() => {
-                                    console.log('[FreeFormInput] onSelect fired for connection:', conn.id)
-                                    const newIds = isSelected
-                                      ? selectedConnectionIds.filter(id => id !== conn.id)
-                                      : [...selectedConnectionIds, conn.id]
-                                    console.log('[FreeFormInput] calling onConnectionsChange with:', newIds)
-                                    onConnectionsChange(newIds)
+                                    const newSlugs = isEnabled
+                                      ? enabledSourceSlugs.filter(slug => slug !== source.config.slug)
+                                      : [...enabledSourceSlugs, source.config.slug]
+                                    onSourcesChange(newSlugs)
                                   }}
                                   className={cn(
                                     "flex cursor-pointer select-none items-center gap-3 rounded-[6px] px-3 py-2 text-[13px]",
                                     "outline-none data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground",
-                                    isSelected && "bg-accent/40"
+                                    isEnabled && "bg-accent/40"
                                   )}
                                 >
                                   <div className="shrink-0 text-muted-foreground">
-                                    <ConnectionAvatar
-                                      type={conn.type as ConnectionType}
-                                      name={conn.name}
-                                      serviceUrl={getConnectionLogoUrl(conn)}
+                                    <SourceAvatar
+                                      source={source}
                                       size="sm"
                                     />
                                   </div>
-                                  <div className="flex-1 min-w-0 truncate">{conn.name}</div>
+                                  <div className="flex-1 min-w-0 truncate">{source.config.name}</div>
                                   <div className={cn(
                                     "shrink-0 h-4 w-4 rounded-full bg-current flex items-center justify-center",
-                                    !isSelected && "opacity-0"
+                                    !isEnabled && "opacity-0"
                                   )}>
                                     <Check className="h-2.5 w-2.5 text-white dark:text-black" strokeWidth={3} />
                                   </div>

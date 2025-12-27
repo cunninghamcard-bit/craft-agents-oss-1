@@ -15,9 +15,9 @@ import type {
   SubAgentMetadata,
   FileAttachment,
   PermissionRequest,
-  ConnectionConfig,
   Mode,
   TodoState,
+  LoadedSource,
 } from '../../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
@@ -34,8 +34,8 @@ export interface ChatContextType {
   pendingPermissions: Map<string, PermissionRequest[]>
   /** Get draft input text for a session - reads from ref without triggering re-renders */
   getDraft: (sessionId: string) => string
-  /** All enabled connections (filtered from global connections) - provided by Chat component */
-  enabledConnections?: ConnectionConfig[]
+  /** All enabled sources for this workspace - provided by Chat component */
+  enabledSources?: LoadedSource[]
 
   // Unified session options (replaces ultrathinkSessions, skipPermissionsSessions, sessionModes)
   /** All session-scoped options in one map. Use useSessionOptionsFor() hook for easy access. */
@@ -84,8 +84,8 @@ export interface ChatContextType {
   // Input draft callback
   onInputChange: (sessionId: string, value: string) => void
 
-  // Connection selection callback (per-session) - provided by Chat component
-  onSessionConnectionsChange?: (sessionId: string, connectionIds: string[]) => void
+  // Source selection callback (per-session) - provided by Chat component
+  onSessionSourcesChange?: (sessionId: string, sourceSlugs: string[]) => void
 
   // Chat input ref (for focusing)
   textareaRef?: React.RefObject<HTMLTextAreaElement>

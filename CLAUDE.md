@@ -134,16 +134,19 @@ packages/shared/src/
 │   ├── errors.ts             # Error types and handling
 │   └── options.ts            # Agent configuration options
 ├── agents/
-│   ├── types.ts              # SubAgentDefinition, ApiConfig, AgentStatus interfaces
-│   ├── plan-types.ts         # Plan, PlanStep, PlanState interfaces
+│   ├── folder-types.ts       # AgentDefinition, LoadedAgent, LoadedSource interfaces
+│   ├── folder-storage.ts     # Load agents/sources from disk
+│   ├── folder-manager.ts     # FolderAgentManager - list, activate, deactivate
 │   ├── agent-state.ts        # AgentStateManager - activation state machine
-│   ├── manager.ts            # SubAgentManager - list, activate, deactivate
-│   ├── extractor.ts          # Agentic extraction from Craft documents
+│   ├── types.ts              # SubAgentDefinition, ApiConfig (compatibility)
+│   ├── plan-types.ts         # Plan, PlanStep, PlanState interfaces
 │   ├── api-tools.ts          # Dynamic MCP server factory for REST APIs
 │   ├── gmail-tools.ts        # Gmail integration tools
 │   ├── parser.ts             # Agent definition parsing
-│   ├── instruction-updater.ts # Agent instruction updates
-│   └── cache.ts              # Agent definition cache
+│   └── instruction-updater.ts # Agent instruction updates
+├── sources/
+│   ├── types.ts              # Source types and interfaces
+│   └── storage.ts            # Load sources from disk
 ├── auth/
 │   ├── oauth.ts              # OAuth 2.0 with PKCE
 │   ├── gmail-oauth.ts        # Gmail OAuth flow
@@ -333,8 +336,21 @@ Examples:
 - craft_oauth::global                   # Craft API OAuth token
 - workspace_oauth::{workspaceId}        # Workspace MCP server OAuth
 - workspace_bearer::{workspaceId}       # Workspace bearer token
-- mcp_oauth::{wsId}::{agentId}::{name}  # Subagent MCP server OAuth
-- api_key::{wsId}::{agentId}::{name}    # Subagent REST API key
+
+# Source credentials (global sources at ~/.craft-agent/sources/{slug}/)
+- source_oauth::{sourceSlug}            # OAuth tokens for MCP/API sources
+- source_bearer::{sourceSlug}           # Bearer tokens
+- source_apikey::{sourceSlug}           # API keys
+- source_basic::{sourceSlug}            # Basic auth (base64 user:pass)
+
+# Agent-scoped source credentials (at ~/.craft-agent/agents/{agentSlug}/sources/{slug}/)
+- agent_source_oauth::{agentSlug}::{sourceSlug}
+- agent_source_bearer::{agentSlug}::{sourceSlug}
+- agent_source_apikey::{agentSlug}::{sourceSlug}
+- agent_source_basic::{agentSlug}::{sourceSlug}
+
+# Agent-managed secrets (via session tools)
+- agent_secret::{name}                  # User-stored secrets
 
 Note: Using "::" as delimiter to avoid conflicts with "/" in URLs or paths.
 ```
@@ -440,39 +456,73 @@ This ensures automation workflows have full capabilities.
 
 Questions (from `AskUserQuestion` tool) return empty answers in headless mode.
 
-### Subagent System (`packages/shared/src/agents/`)
-Subagents are specialized agents defined in Craft documents. When activated, they extend the base agent with custom instructions, MCP servers, and REST APIs.
+### Agent System (`packages/shared/src/agents/`)
+Agents are specialized configurations that extend the base agent with custom instructions, MCP servers, and REST APIs. Agents are stored as folders on disk for easy editing and version control.
+
+**Architecture:**
+- **Folder-based agents** stored at `~/.craft-agent/agents/{slug}/`
+- **Sources** are unified MCP/API abstractions at `~/.craft-agent/sources/{slug}/`
+- **Hot-reloading** via `ConfigWatcher` for live updates
 
 **Key files:**
-- `types.ts` - `SubAgentDefinition`, `ApiConfig` interfaces
-- `manager.ts` - `SubAgentManager` for listing, activating, deactivating agents
-- `extractor.ts` - Agentic extraction of agent definitions from Craft documents
+- `folder-types.ts` - `AgentDefinition`, `LoadedAgent`, `LoadedSource` interfaces
+- `folder-storage.ts` - Load agents/sources from disk
+- `folder-manager.ts` - `FolderAgentManager` for listing, activating, deactivating agents
+- `agent-state.ts` - `AgentStateManager` - activation state machine
 - `api-tools.ts` - Single flexible tool factory for REST APIs
-- `cache.ts` - Agent definition cache
+- `types.ts` - `SubAgentDefinition`, `ApiConfig` (compatibility layer)
 
-**Folder structure (up to 3 levels):**
-Agents can be organized in subfolders within the "Agents" folder:
+**Agent folder structure:**
 ```
-Agents/
-├── Writer                    → @writer
-├── Work/
-│   ├── Coder                 → @work/coder
-│   └── Reviewer              → @work/reviewer
-└── Personal/
-    └── Creative/
-        └── Storyteller       → @personal/creative/storyteller
+~/.craft-agent/agents/{slug}/
+├── config.json       # Agent metadata (name, enabled, useSources)
+├── instructions.md   # Agent instructions (editable markdown)
+└── sources/          # Optional: agent-scoped sources
+    └── {source}/
+        ├── config.json
+        └── guide.md
 ```
-- Agent names include their folder path: `@folder/subfolder/name`
-- Tab completion works with paths: `@wo` → `@work/...`
-- Maximum 3 levels deep (root + 2 subfolder levels)
 
-**Extraction flow (`extractor.ts`):**
-1. Uses Claude Agent SDK to agentically read Craft document via MCP tools
-2. Claude parses document structure, finding Instructions section
-3. Extracts MCP server configs (HTTP/HTTPS URLs only, not npx/stdio)
-4. Detects REST APIs from curl examples, fetch/axios calls, or API documentation links
-5. Extracts comprehensive markdown `documentation` for each API (endpoints, params, examples)
-6. Returns structured `ExtractionResult` with instructions, servers, and APIs
+**Source folder structure:**
+```
+~/.craft-agent/sources/{slug}/
+├── config.json       # Source metadata (type, url, auth)
+└── guide.md          # Usage documentation + YAML frontmatter cache
+```
+
+**Source types:**
+- `mcp` - MCP server (HTTP/SSE)
+- `api` - REST API with flexible tool
+- `local` - Local resources (files, commands)
+
+**Source config example (`config.json`):**
+```json
+{
+  "id": "uuid",
+  "slug": "exa",
+  "name": "Exa Search",
+  "type": "api",
+  "url": "https://api.exa.ai",
+  "auth": {
+    "type": "header",
+    "headerName": "x-api-key",
+    "credentialLabel": "API Key"
+  }
+}
+```
+
+**Agent config example (`config.json`):**
+```json
+{
+  "id": "uuid",
+  "name": "Research Assistant",
+  "slug": "researcher",
+  "enabled": true,
+  "useSources": ["exa", "craft-docs"],
+  "createdAt": 1703001234567,
+  "updatedAt": 1703001234567
+}
+```
 
 **Dynamic API Integration (`api-tools.ts`):**
 Each API becomes a single flexible tool via `createApiServer()`:

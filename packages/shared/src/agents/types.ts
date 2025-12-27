@@ -45,6 +45,8 @@ export interface SubAgentDefinition {
   mcpServers?: McpServerConfig[];
   /** REST API configs extracted from curl examples or documentation */
   apis?: ApiConfig[];
+  /** Local source configs (filesystem, apps, etc.) */
+  localSources?: import('../sources/types.ts').LocalSourceConfig[];
   /** Info messages from extraction (notices, etc.) */
   info?: string[];
   /** Warnings identified during extraction (non-blocking, informational) */
@@ -75,6 +77,17 @@ export interface McpServerConfig {
   tools?: string[];
   /** Local logo filename (e.g., "craft.png") stored in agent's logos directory */
   logo?: string;
+  /**
+   * If set, this source is agent-scoped (stored at agents/{agentSlug}/sources/{slug}/)
+   * and credentials should be looked up with agent_source_* prefix.
+   * If undefined, this is a global source and uses source_* prefix.
+   */
+  agentSlug?: string;
+  /**
+   * Workspace this source belongs to.
+   * Used for credential lookups with workspace scoping.
+   */
+  workspaceSlug?: string;
 }
 
 /**
@@ -122,6 +135,17 @@ export interface ApiConfig {
   docsUrl?: string;
   /** Local logo filename (e.g., "exa.png") stored in agent's logos directory */
   logo?: string;
+  /**
+   * If set, this source is agent-scoped (stored at agents/{agentSlug}/sources/{slug}/)
+   * and credentials should be looked up with agent_source_* prefix.
+   * If undefined, this is a global source and uses source_* prefix.
+   */
+  agentSlug?: string;
+  /**
+   * Workspace this source belongs to.
+   * Used for credential lookups with workspace scoping.
+   */
+  workspaceSlug?: string;
 }
 
 /**

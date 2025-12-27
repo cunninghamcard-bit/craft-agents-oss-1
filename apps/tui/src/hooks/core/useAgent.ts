@@ -22,32 +22,26 @@ import type { TodoItem } from '../../components/TodoList.tsx';
 import type { FileAttachment } from '@craft-agent/shared/utils';
 import { setTerminalProgressIndeterminate, clearTerminalProgress } from '../../utils/terminalProgress.ts';
 import {
-  getWorkspaceAccessTokenAsync,
-  isWorkspaceTokenExpiredAsync,
-  updateWorkspaceOAuthTokensAsync,
-  checkWorkspaceAuthStatus,
   loadStoredConfig,
   saveConfig,
-  loadSession,
-  saveSession,
-  updateSessionSdkId,
-  type Workspace,
-  type Session,
-  type StoredMessage,
-  type StoredSession,
+  getWorkspaceSlug,
   saveWorkspacePlan,
   loadWorkspacePlan,
   clearWorkspacePlan,
+  type Workspace,
 } from '@craft-agent/shared/config';
+import {
+  loadSession,
+  saveSession,
+  updateSessionSdkId,
+  type SessionConfig,
+  type StoredMessage,
+  type StoredSession,
+} from '@craft-agent/shared/sessions';
 import { DEFAULT_MODEL } from '@craft-agent/shared/config';
-import { getCredentialManager } from '@craft-agent/shared/credentials';
-import { CraftMcpClient } from '@craft-agent/shared/mcp';
-import { SubAgentManager } from '@craft-agent/shared/agents';
+import { FolderAgentManager } from '@craft-agent/shared/agents';
 import type { SubAgentDefinition, McpServerConfig, ApiConfig } from '@craft-agent/shared/agents';
-import type { ExtractionProgressEvent } from '@craft-agent/shared/agents';
 import type { Plan } from '@craft-agent/shared/agents';
-import { invalidateDefinition, loadRegistry, clearAgentCredentialsAsync } from '@craft-agent/shared/agents';
-import { CraftOAuth, getMcpBaseUrl } from '@craft-agent/shared/auth';
 import { debug } from '@craft-agent/shared/utils';
 import { containsUltrathink, stripUltrathink } from '../../utils/gradient.ts';
 import { useAgentState } from './useAgentState.ts';
@@ -227,12 +221,12 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
   // Sub-agent state - discovery only (activation state delegated to useAgentState)
   const [availableAgents, setAvailableAgents] = useState<string[]>([]);
   const [agentsLoading, setAgentsLoading] = useState(false);
-  // SubAgentManager as state (not ref) so useAgentState can react to it
-  const [subAgentManager, setSubAgentManager] = useState<SubAgentManager | null>(null);
+  // FolderAgentManager as state (not ref) so useAgentState can react to it
+  const [folderAgentManager, setFolderAgentManager] = useState<FolderAgentManager | null>(null);
 
   // Delegate agent activation state to useAgentState hook
   // This manages pendingMcpAuth, pendingApiAuth internally
-  const agentState = useAgentState(workspace.id, subAgentManager);
+  const agentState = useAgentState(workspace.id, folderAgentManager);
 
   // Ultrathink mode (extended thinking)
   const [isUltrathink, setIsUltrathink] = useState(false);
@@ -247,8 +241,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
 
   const agentRef = useRef<CraftAgent | null>(null);
   // Keep ref for backward compatibility with existing code that uses agentManagerRef.current
-  const agentManagerRef = useRef<SubAgentManager | null>(null);
-  const mcpClientRef = useRef<CraftMcpClient | null>(null);
+  const agentManagerRef = useRef<FolderAgentManager | null>(null);
   const toolStartTimeRef = useRef<Map<string, number>>(new Map());
   const streamingBufferRef = useRef<string>('');
   const lastStreamingUpdateRef = useRef<number>(0);
@@ -276,7 +269,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     // Load conversation from session storage (primary scope)
     if (!session) return;
 
-    const savedSession = loadSession(session.id);
+    const savedSession = loadSession(session.workspaceSlug, session.id);
     if (savedSession && savedSession.messages && savedSession.messages.length > 0) {
       // Only restore if conversation was edited within the last 5 minutes
       const fiveMinutesMs = 5 * 60 * 1000;
@@ -320,7 +313,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       const updatedSession: StoredSession = {
         id: session.id,
         sdkSessionId: agentRef.current?.getSessionId() ?? session.sdkSessionId,
-        workspaceId: session.workspaceId,
+        workspaceSlug: session.workspaceSlug,
         name: session.name,
         createdAt: session.createdAt,
         lastUsedAt: Date.now(),
@@ -349,7 +342,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
         debug('[useAgent] SDK session check:', sdkSessionId, 'current:', session.sdkSessionId, 'hasCallback:', !!config.onSdkSessionIdUpdate);
         if (sdkSessionId && sdkSessionId !== session.sdkSessionId) {
           debug('[useAgent] Updating SDK session ID:', sdkSessionId);
-          updateSessionSdkId(session.id, sdkSessionId);
+          updateSessionSdkId(session.workspaceSlug, session.id, sdkSessionId);
           // Propagate to React state so UI stays in sync
           config.onSdkSessionIdUpdate?.(sdkSessionId);
         }
@@ -373,152 +366,33 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     };
   }, []);
 
-  // Helper to get MCP token for current workspace
-  const getMcpToken = useCallback(async (): Promise<string | null> => {
-    // Get token from credential store (handles bearer token, OAuth, and legacy config fallback)
-    const { authType, token } = await getWorkspaceAccessTokenAsync(workspace.id);
-    if (!token) {
-      if (authType !== 'public') {
-        throw new Error('No authentication credentials found for workspace. Please re-add the workspace.');
-      }
-      return null;
-    }
-
-    // Check if token is expired and refresh if needed (only for OAuth tokens)
-    const isExpired = authType === 'workspace_oauth' ? await isWorkspaceTokenExpiredAsync(workspace.id) : false;
-    if (isExpired) {
-      // Get full OAuth credentials from credential store for refresh
-      const manager = getCredentialManager();
-      const oauthCreds = await manager.getWorkspaceOAuth(workspace.id);
-
-      if (oauthCreds?.refreshToken && oauthCreds?.clientId) {
-        try {
-          const oauth = new CraftOAuth(
-            { mcpBaseUrl: getMcpBaseUrl(workspace.mcpUrl) },
-            { onStatus: () => {}, onError: () => {} }
-          );
-
-          const newTokens = await oauth.refreshAccessToken(
-            oauthCreds.refreshToken,
-            oauthCreds.clientId
-          );
-
-          // Save refreshed tokens to credential store
-          await updateWorkspaceOAuthTokensAsync(
-            workspace.id,
-            newTokens.accessToken,
-            newTokens.refreshToken,
-            newTokens.expiresAt,
-            oauthCreds.clientId,
-            newTokens.tokenType
-          );
-
-          return newTokens.accessToken;
-        } catch {
-          // Refresh failed, return existing token (may still work)
-          return token;
-        }
-      }
-    }
-
-    return token;
-  }, [workspace.id, workspace.isPublic, workspace.mcpUrl]);
-
-  // Initialize MCP client and agent manager for current workspace
+  // Initialize agent manager for current workspace
   // Only re-run when workspace ID changes (not on every workspace state update)
   useEffect(() => {
     let cancelled = false;
 
-    // Load cached agents immediately (before async discovery)
-    const cachedRegistry = loadRegistry(workspace.id);
-    if (cachedRegistry && cachedRegistry.agents.length > 0) {
-      const cachedNames = cachedRegistry.agents.map(a => a.name);
-      debug('[useAgent] Loaded cached agents:', cachedNames);
-      setAvailableAgents(cachedNames);
+    // Get workspace slug for folder-based agent manager
+    const workspaceSlug = getWorkspaceSlug(workspace);
+
+    // Create folder-based agent manager (reads from disk)
+    const manager = new FolderAgentManager(workspaceSlug);
+    agentManagerRef.current = manager;
+    if (!cancelled) {
+      setFolderAgentManager(manager);
     }
 
-    const initializeAgentManager = async () => {
-      setAgentsLoading(true);
-      try {
-        // Check MCP auth status before attempting connection
-        const authStatus = await checkWorkspaceAuthStatus(workspace.id);
-        if (authStatus.needsAuth) {
-          // MCP authentication is required but missing - log and skip initialization
-          // This will cause connection to fail with a clear error when user tries to use agent
-          debug('[useAgent] MCP auth needed:', authStatus.message);
-          setError(`MCP authentication required. ${authStatus.message || 'Please re-authenticate.'}`);
-          setConnected(false);
-          setAgentsLoading(false);
-          return;
-        }
-
-        // Build MCP URL
-        let mcpUrl = workspace.mcpUrl;
-        mcpUrl = mcpUrl.replace(/\/+$/, '');
-        if (!mcpUrl.endsWith('/mcp')) {
-          mcpUrl = mcpUrl.replace(/\/sse$/, '/mcp');
-          if (!mcpUrl.endsWith('/mcp')) {
-            mcpUrl = mcpUrl + '/mcp';
-          }
-        }
-
-        // Get token from credential store
-        const token = await getMcpToken();
-
-        // Create MCP client
-        const client = new CraftMcpClient({
-          url: mcpUrl,
-          headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-        });
-
-        // Connect
-        await client.connect();
-
-        if (cancelled) {
-          await client.close();
-          return;
-        }
-
-        mcpClientRef.current = client;
-
-        // Create agent manager with MCP config for agentic extraction
-        const manager = new SubAgentManager(workspace.id, client, {
-          model: config.model || DEFAULT_MODEL,
-          mcpUrl,
-          mcpToken: token || undefined,
-        });
-        agentManagerRef.current = manager;
-        // Also set state so useAgentState can react to it
-        if (!cancelled) {
-          setSubAgentManager(manager);
-        }
-
-        // Discover agents
-        const agents = await manager.discoverAgents();
-        if (!cancelled) {
-          setAvailableAgents(agents.map(a => a.name));
-        }
-      } catch (err) {
-        // Log to debug file - viewable with `craft --debug`
-        debug('Failed to initialize agent manager:', err);
-      } finally {
-        if (!cancelled) {
-          setAgentsLoading(false);
-        }
-      }
-    };
-
-    initializeAgentManager();
+    // Load available agents from disk immediately
+    const agents = manager.getAvailableAgents();
+    if (!cancelled) {
+      setAvailableAgents(agents.map(a => a.config.name));
+      setAgentsLoading(false);
+      debug('[useAgent] Loaded agents from disk:', agents.map(a => a.config.name));
+    }
 
     return () => {
       cancelled = true;
-      // Clean up MCP client on unmount or workspace change
-      if (mcpClientRef.current) {
-        mcpClientRef.current.close().catch(() => {});
-        mcpClientRef.current = null;
-      }
       agentManagerRef.current = null;
-      setSubAgentManager(null);
+      setFolderAgentManager(null);
       // Clear agent instructions callbacks
       setUpdateAgentInstructionsContextProvider(null);
       setUpdateAgentInstructionsResultCallback(null);
@@ -530,7 +404,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       // Don't clear availableAgents here - it causes race condition with token refresh
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspace.id, workspace.mcpUrl, workspace.isPublic, getMcpToken]);
+  }, [workspace.id]);
 
   // Subscribe to agentState extraction progress for UI messages
   // Track extraction message ID and start time for progress updates
@@ -1177,7 +1051,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
         const updatedSession: StoredSession = {
           id: currentSession.id,
           sdkSessionId: sdkSessionId ?? currentSession.sdkSessionId,
-          workspaceId: currentSession.workspaceId,
+          workspaceSlug: currentSession.workspaceSlug,
           name: currentSession.name,
           createdAt: currentSession.createdAt,
           lastUsedAt: Date.now(),
@@ -1208,8 +1082,8 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
   // isFirstTimeSetup: true when extraction happened (show info), false when switching to cached agent
   const activationComplete = useCallback((
     definition: SubAgentDefinition,
-    mcpServers: Awaited<ReturnType<SubAgentManager['buildMcpServerConfig']>>,
-    apiServers: Awaited<ReturnType<SubAgentManager['buildApiServers']>>,
+    mcpServers: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }>,
+    apiServers: Record<string, ReturnType<typeof import('@craft-agent/shared/agents').createApiServer>>,
     agentName: string,
     isFirstTimeSetup: boolean,
     agentId: string,
@@ -1217,20 +1091,9 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     const agent = getAgent();
     agent.setActiveAgentDefinition(definition, mcpServers, apiServers);
 
-    // Get the document ID from the registry
-    const registry = loadRegistry(workspace.id);
-    const agentMeta = registry?.agents.find(a => a.id === agentId);
-    const documentId = agentMeta?.documentId || '';
-
-    // Build MCP URL for the context
-    let mcpUrl = workspace.mcpUrl;
-    mcpUrl = mcpUrl.replace(/\/+$/, '');
-    if (!mcpUrl.endsWith('/mcp')) {
-      mcpUrl = mcpUrl.replace(/\/sse$/, '/mcp');
-      if (!mcpUrl.endsWith('/mcp')) {
-        mcpUrl = mcpUrl + '/mcp';
-      }
-    }
+    // For folder-based agents, the agent slug is the agentId
+    // No document ID needed (agents are stored on disk, not in Craft documents)
+    const documentId = '';
 
     // Store context for update instructions callbacks
     activeAgentContextRef.current = {
@@ -1238,7 +1101,6 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       instructionsBlockId: definition.instructionsBlockId,
       currentInstructions: definition.instructions,
       agentName: definition.name,
-      mcpUrl,
       workspaceId: workspace.id,
       model: config.model || DEFAULT_MODEL,
     };
@@ -1248,12 +1110,12 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       return activeAgentContextRef.current;
     });
 
-    // Set result callback - invalidates cache on success
+    // Set result callback - FolderAgentManager reads from disk so no cache invalidation needed
     setUpdateAgentInstructionsResultCallback(async (success: boolean) => {
       if (success && agentManagerRef.current) {
-        // Invalidate cache so next reload gets fresh content
-        invalidateDefinition(workspace.id, agentId);
-        debug('[activationComplete] Cache invalidated after instructions update');
+        // Agent manager reads from disk - reload will get fresh content automatically
+        agentManagerRef.current.reload();
+        debug('[activationComplete] Agent manager reloaded after instructions update');
       }
     });
 
@@ -1292,14 +1154,14 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       return false;
     }
 
-    // Get the agent ID from the name
-    const agents = await agentManagerRef.current.getAvailableAgents();
-    const agentMeta = agents.find(a => a.name.toLowerCase() === name.toLowerCase());
+    // Get the agent by name (FolderAgentManager returns LoadedAgent[])
+    const agents = agentManagerRef.current.getAvailableAgents();
+    const agentMeta = agents.find(a => a.config.name.toLowerCase() === name.toLowerCase());
     if (!agentMeta) {
       debug('[useAgent.activateAgent] Agent not found:', name);
       return false;
     }
-    const agentId = agentMeta.id;
+    const agentId = agentMeta.config.slug;
 
     // Delegate to agentState - handles extraction, review, and auth checks
     const resultStatus = await agentState.activate(agentId);
@@ -1459,62 +1321,83 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
   // Trigger auth flow manually (for /auth command)
   // Note: This manually triggers MCP auth check on the active agent
   const triggerMcpAuth = useCallback(async () => {
-    if (!agentManagerRef.current || !agentState.activeDefinition) {
+    if (!agentState.activeDefinition) {
       setMessages(prev => [...prev, {
         id: `auth-error-${Date.now()}`,
         type: 'system',
-        content: 'No active agent or no MCP servers configured.',
+        content: 'No active agent. Use @agent to activate one first.',
         timestamp: Date.now(),
       }]);
       return;
     }
 
-    const serversNeedingAuth = await agentManagerRef.current.getMcpServersNeedingAuth(agentState.activeDefinition);
-    if (serversNeedingAuth.length === 0) {
+    // Check if agent has any MCP servers configured
+    const mcpServers = agentState.activeDefinition.mcpServers || [];
+    if (mcpServers.length === 0) {
       setMessages(prev => [...prev, {
         id: `auth-ok-${Date.now()}`,
         type: 'system',
-        content: 'All MCP servers are already authenticated.',
+        content: 'This agent has no MCP servers configured.',
         timestamp: Date.now(),
       }]);
       return;
     }
 
     // Re-trigger activation to go through auth flow
-    // This will transition to needs_mcp_auth state
+    // This will check auth status and transition to needs_mcp_auth if needed
     const agentId = agentState.agentId;
     if (agentId) {
-      await agentState.activate(agentId);
+      const result = await agentState.activate(agentId);
+      if (result.status === 'ready') {
+        setMessages(prev => [...prev, {
+          id: `auth-ok-${Date.now()}`,
+          type: 'system',
+          content: 'All MCP servers are already authenticated.',
+          timestamp: Date.now(),
+        }]);
+      }
+      // If result is needs_mcp_auth, UI will show auth modal automatically
     }
   }, [agentState]);
 
   // Trigger API auth flow manually (for reauth command)
   const triggerApiAuth = useCallback(async () => {
-    if (!agentManagerRef.current || !agentState.activeDefinition) {
+    if (!agentState.activeDefinition) {
       setMessages(prev => [...prev, {
         id: `api-auth-error-${Date.now()}`,
         type: 'system',
-        content: 'No active agent or no APIs configured.',
+        content: 'No active agent. Use @agent to activate one first.',
         timestamp: Date.now(),
       }]);
       return;
     }
 
-    const apisNeedingAuth = await agentManagerRef.current.getApisNeedingAuth(agentState.activeDefinition);
-    if (apisNeedingAuth.length === 0) {
+    // Check if agent has any APIs configured
+    const apis = agentState.activeDefinition.apis || [];
+    if (apis.length === 0) {
       setMessages(prev => [...prev, {
         id: `api-auth-ok-${Date.now()}`,
         type: 'system',
-        content: 'All APIs are already authenticated.',
+        content: 'This agent has no APIs configured.',
         timestamp: Date.now(),
       }]);
       return;
     }
 
     // Re-trigger activation to go through auth flow
+    // This will check auth status and transition to needs_api_auth if needed
     const agentId = agentState.agentId;
     if (agentId) {
-      await agentState.activate(agentId);
+      const result = await agentState.activate(agentId);
+      if (result.status === 'ready') {
+        setMessages(prev => [...prev, {
+          id: `api-auth-ok-${Date.now()}`,
+          type: 'system',
+          content: 'All APIs are already authenticated.',
+          timestamp: Date.now(),
+        }]);
+      }
+      // If result is needs_api_auth, UI will show auth modal automatically
     }
   }, [agentState]);
 
@@ -1567,45 +1450,24 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
 
   const refreshAgents = useCallback(async (): Promise<string[] | { error: string }> => {
     try {
-      // Build MCP URL
-      let mcpUrl = workspace.mcpUrl;
-      mcpUrl = mcpUrl.replace(/\/+$/, '');
-      if (!mcpUrl.endsWith('/mcp')) {
-        mcpUrl = mcpUrl.replace(/\/sse$/, '/mcp');
-        if (!mcpUrl.endsWith('/mcp')) {
-          mcpUrl = mcpUrl + '/mcp';
-        }
+      // FolderAgentManager reads from disk - just reload and get agents
+      if (agentManagerRef.current) {
+        agentManagerRef.current.reload();
+        const agents = agentManagerRef.current.getAvailableAgents();
+        const names = agents.map(a => a.config.name);
+        setAvailableAgents(names);
+        debug('[refreshAgents] Reloaded agents:', names);
+        return names;
       }
 
-      // ALWAYS get fresh token (with automatic refresh if expired)
-      const token = await getMcpToken();
-
-      // Close existing client if any
-      if (mcpClientRef.current) {
-        await mcpClientRef.current.close().catch(() => {});
-      }
-
-      // Create NEW MCP client with fresh token
-      const client = new CraftMcpClient({
-        url: mcpUrl,
-        headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-      });
-
-      await client.connect();
-      mcpClientRef.current = client;
-
-      // Create NEW agent manager with MCP config for agentic extraction
-      const manager = new SubAgentManager(workspace.id, client, {
-        model: config.model || DEFAULT_MODEL,
-        mcpUrl,
-        mcpToken: token || undefined,
-      });
+      // Create new manager if none exists
+      const workspaceSlug = getWorkspaceSlug(workspace);
+      const manager = new FolderAgentManager(workspaceSlug);
       agentManagerRef.current = manager;
-      setSubAgentManager(manager);
+      setFolderAgentManager(manager);
 
-      // Discover agents
-      const agents = await manager.refreshAgents();
-      const names = agents.map(a => a.name);
+      const agents = manager.getAvailableAgents();
+      const names = agents.map(a => a.config.name);
       setAvailableAgents(names);
       debug('[refreshAgents] Found agents:', names);
       return names;
@@ -1614,7 +1476,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       debug('[refreshAgents] ERROR:', message);
       return { error: `Failed to refresh agents: ${message}` };
     }
-  }, [workspace, getMcpToken]);
+  }, [workspace]);
 
   // Fetch all available tools (SDK + Craft MCP + active agent's MCP servers + APIs)
   const fetchTools = useCallback(async (): Promise<{ name: string; tools: { name: string; description?: string }[] }[]> => {
@@ -1633,32 +1495,19 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       }
     }
 
-    // 2. Craft MCP tools
-    if (mcpClientRef.current) {
-      try {
-        const craftTools = await mcpClientRef.current.listTools();
+    // 2. Active agent's MCP servers (tools available after agent activation)
+    // Note: FolderAgentManager doesn't have active MCP connections - CraftAgent manages those
+    // We show configured servers; actual tools are available via SDK after first conversation
+    if (activeAgentDefinition) {
+      const mcpServers = activeAgentDefinition.mcpServers || [];
+      for (const server of mcpServers) {
         result.push({
-          name: 'Craft',
-          tools: craftTools.map(t => ({ name: t.name, description: t.description })),
+          name: server.name,
+          tools: [{ name: '(tools available after connection)', description: `MCP server: ${server.url}` }],
         });
-      } catch (err) {
-        debug('[fetchTools] Failed to fetch Craft tools:', err);
-      }
-    }
-
-    // 3. Active agent's MCP server tools
-    if (activeAgentDefinition && agentManagerRef.current) {
-      const agentServers = await agentManagerRef.current.fetchMcpServerTools(activeAgentDefinition);
-      for (const server of agentServers) {
-        if (server.tools && server.tools.length > 0) {
-          result.push({
-            name: server.name,
-            tools: server.tools.map(name => ({ name })),
-          });
-        }
       }
 
-      // 4. Active agent's API tools (prefixed with api_ to avoid collisions)
+      // 3. Active agent's API tools (prefixed with api_ to avoid collisions)
       if (activeAgentDefinition.apis) {
         for (const api of activeAgentDefinition.apis) {
           // Each API has one flexible tool prefixed with api_

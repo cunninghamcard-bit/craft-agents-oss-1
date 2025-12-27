@@ -2,16 +2,18 @@
  * Credential Storage Types
  *
  * Defines the types for secure credential storage using AES-256-GCM encryption.
- * Supports global, workspace-scoped, and agent-scoped credentials.
+ * Supports global, workspace-scoped, source-scoped, and agent-scoped credentials.
  *
- * Credential key naming:
+ * Credential key naming (workspace-scoped):
  *   Format: "{type}::{scope...}"
  *
  * Examples:
  *   - anthropic_api_key::global
- *   - workspace_oauth::{workspaceId}
- *   - mcp_oauth::{workspaceId}::{agentId}::{serverName}
- *   - api_key::{workspaceId}::{agentId}::{apiName}
+ *   - claude_oauth::global
+ *   - craft_oauth::global (for Craft API, not MCP)
+ *   - source_oauth::{workspaceSlug}::{sourceSlug}
+ *   - source_bearer::{workspaceSlug}::{sourceSlug}
+ *   - agent_source_oauth::{workspaceSlug}::{agentSlug}::{sourceSlug}
  *
  * Note: Using "::" as delimiter to avoid conflicts with "/" in URLs or paths.
  */
@@ -25,8 +27,18 @@ export type CredentialType =
   | 'workspace_bearer'
   | 'mcp_oauth'
   | 'api_key'
-  | 'connection_oauth'  // User-defined connection OAuth tokens
-  | 'gmail_oauth';      // Gmail OAuth tokens
+  // Global sources (stored at ~/.craft-agent/sources/{slug}/)
+  | 'source_oauth'       // OAuth tokens for MCP/API sources
+  | 'source_bearer'      // Bearer tokens
+  | 'source_apikey'      // API keys
+  | 'source_basic'       // Basic auth (base64 encoded user:pass)
+  // Agent-scoped sources (stored at ~/.craft-agent/agents/{agentSlug}/sources/{slug}/)
+  | 'agent_source_oauth'
+  | 'agent_source_bearer'
+  | 'agent_source_apikey'
+  | 'agent_source_basic'
+  // Agent-managed secrets (via session tools)
+  | 'agent_secret';
 
 /** Valid credential types for validation */
 const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
@@ -37,8 +49,18 @@ const VALID_CREDENTIAL_TYPES: readonly CredentialType[] = [
   'workspace_bearer',
   'mcp_oauth',
   'api_key',
-  'connection_oauth',
-  'gmail_oauth',
+  // Source credentials
+  'source_oauth',
+  'source_bearer',
+  'source_apikey',
+  'source_basic',
+  // Agent-scoped source credentials
+  'agent_source_oauth',
+  'agent_source_bearer',
+  'agent_source_apikey',
+  'agent_source_basic',
+  // Agent-managed secrets
+  'agent_secret',
 ] as const;
 
 /** Check if a string is a valid CredentialType */
@@ -49,14 +71,22 @@ function isValidCredentialType(type: string): type is CredentialType {
 /** Credential identifier - determines credential store entry key */
 export interface CredentialId {
   type: CredentialType;
-  /** For workspace-scoped credentials */
-  workspaceId?: string;
-  /** For agent-scoped credentials (subagent MCP/API) */
-  agentId?: string;
+
+  // Workspace-scoped format
+  /** Workspace slug for workspace-scoped credentials */
+  workspaceSlug?: string;
+  /** Source slug for source credentials */
+  sourceSlug?: string;
+  /** Agent slug for agent-scoped source credentials */
+  agentSlug?: string;
   /** Server name or API name */
   name?: string;
-  /** For connection-scoped credentials (user-defined connections) */
-  connectionId?: string;
+
+  // Legacy fields (kept for backwards compatibility with old MCP/API credentials)
+  /** @deprecated Use workspaceSlug instead */
+  workspaceId?: string;
+  /** @deprecated For agent-scoped credentials (subagent MCP/API) */
+  agentId?: string;
 }
 
 /**
@@ -86,16 +116,72 @@ export interface StoredCredential {
 // could contain "/" (e.g., URLs like "https://api.example.com")
 const CREDENTIAL_DELIMITER = '::';
 
+/** Source credential types */
+const SOURCE_CREDENTIAL_TYPES = [
+  'source_oauth',
+  'source_bearer',
+  'source_apikey',
+  'source_basic',
+] as const;
+
+/** Agent-scoped source credential types */
+const AGENT_SOURCE_CREDENTIAL_TYPES = [
+  'agent_source_oauth',
+  'agent_source_bearer',
+  'agent_source_apikey',
+  'agent_source_basic',
+] as const;
+
+/** Check if type is a source credential */
+function isSourceCredential(type: CredentialType): boolean {
+  return (SOURCE_CREDENTIAL_TYPES as readonly string[]).includes(type);
+}
+
+/** Check if type is an agent-scoped source credential */
+function isAgentSourceCredential(type: CredentialType): boolean {
+  return (AGENT_SOURCE_CREDENTIAL_TYPES as readonly string[]).includes(type);
+}
+
 /** Convert CredentialId to credential store account string */
 export function credentialIdToAccount(id: CredentialId): string {
   const parts: string[] = [id.type];
 
-  // Connection-scoped credentials: connection_oauth::{connectionId}
-  if (id.connectionId) {
-    parts.push(id.connectionId);
+  // New workspace-scoped format:
+  // Source credentials: source_oauth::{workspaceSlug}::{sourceSlug}
+  if (isSourceCredential(id.type) && id.workspaceSlug && id.sourceSlug) {
+    parts.push(id.workspaceSlug);
+    parts.push(id.sourceSlug);
     return parts.join(CREDENTIAL_DELIMITER);
   }
 
+  // Agent-scoped source credentials: agent_source_oauth::{workspaceSlug}::{agentSlug}::{sourceSlug}
+  if (isAgentSourceCredential(id.type) && id.workspaceSlug && id.agentSlug && id.sourceSlug) {
+    parts.push(id.workspaceSlug);
+    parts.push(id.agentSlug);
+    parts.push(id.sourceSlug);
+    return parts.join(CREDENTIAL_DELIMITER);
+  }
+
+  // Legacy: Source credentials without workspace: source_oauth::{sourceSlug}
+  if (isSourceCredential(id.type) && id.sourceSlug && !id.workspaceSlug) {
+    parts.push(id.sourceSlug);
+    return parts.join(CREDENTIAL_DELIMITER);
+  }
+
+  // Legacy: Agent-scoped source credentials without workspace: agent_source_oauth::{agentSlug}::{sourceSlug}
+  if (isAgentSourceCredential(id.type) && id.agentSlug && id.sourceSlug && !id.workspaceSlug) {
+    parts.push(id.agentSlug);
+    parts.push(id.sourceSlug);
+    return parts.join(CREDENTIAL_DELIMITER);
+  }
+
+  // Agent secrets: agent_secret::{name}
+  if (id.type === 'agent_secret' && id.name) {
+    parts.push(id.name);
+    return parts.join(CREDENTIAL_DELIMITER);
+  }
+
+  // Legacy workspace ID-based credentials
   if (id.workspaceId) {
     parts.push(id.workspaceId);
     if (id.agentId) {
@@ -123,21 +209,42 @@ export function accountToCredentialId(account: string): CredentialId | null {
 
   const type = typeStr;
 
-  // Connection-scoped: connection_oauth::{connectionId}
-  if (type === 'connection_oauth' && parts.length === 2) {
-    return { type, connectionId: parts[1] };
+  // New workspace-scoped format:
+  // Source credentials: source_oauth::{workspaceSlug}::{sourceSlug}
+  if (isSourceCredential(type) && parts.length === 3) {
+    return { type, workspaceSlug: parts[1], sourceSlug: parts[2] };
+  }
+
+  // Agent-scoped source credentials: agent_source_oauth::{workspaceSlug}::{agentSlug}::{sourceSlug}
+  if (isAgentSourceCredential(type) && parts.length === 4) {
+    return { type, workspaceSlug: parts[1], agentSlug: parts[2], sourceSlug: parts[3] };
+  }
+
+  // Legacy: Source credentials without workspace: source_oauth::{sourceSlug}
+  if (isSourceCredential(type) && parts.length === 2) {
+    return { type, sourceSlug: parts[1] };
+  }
+
+  // Legacy: Agent-scoped source credentials without workspace: agent_source_oauth::{agentSlug}::{sourceSlug}
+  if (isAgentSourceCredential(type) && parts.length === 3) {
+    return { type, agentSlug: parts[1], sourceSlug: parts[2] };
+  }
+
+  // Agent secrets: agent_secret::{name}
+  if (type === 'agent_secret' && parts.length === 2) {
+    return { type, name: parts[1] };
   }
 
   if (parts.length === 2 && parts[1] === 'global') {
     return { type };
   }
 
-  // Workspace-scoped: type/workspaceId
+  // Legacy workspace ID-based: type/workspaceId
   if (parts.length === 2) {
     return { type, workspaceId: parts[1] };
   }
 
-  // Agent-scoped: type/workspaceId/agentId or type/workspaceId/agentId/name
+  // Legacy agent-scoped: type/workspaceId/agentId or type/workspaceId/agentId/name
   const id: CredentialId = { type, workspaceId: parts[1], agentId: parts[2] };
 
   if (parts[3]) {

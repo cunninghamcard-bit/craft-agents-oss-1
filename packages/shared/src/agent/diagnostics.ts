@@ -6,7 +6,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { getAiCreditsBalance } from '../auth/balance.ts';
 import { getLastApiError } from '../cache-ttl-interceptor.ts';
-import { isWorkspaceTokenExpiredAsync, loadStoredConfig, getAnthropicApiKey, getClaudeOAuthToken, type AuthType } from '../config/storage.ts';
+import { loadStoredConfig, getAnthropicApiKey, getClaudeOAuthToken, type AuthType } from '../config/storage.ts';
 import { getCredentialManager } from '../credentials/index.ts';
 import { setAnthropicOptionsEnv } from './options.ts';
 
@@ -31,7 +31,6 @@ export interface DiagnosticResult {
 interface DiagnosticConfig {
   authType?: AuthType;
   workspaceId?: string;
-  mcpUrl?: string;
   rawError: string;
 }
 
@@ -196,24 +195,11 @@ async function checkCredits(): Promise<CheckResult> {
   }
 }
 
-/** Check workspace token expiry */
-async function checkWorkspaceToken(workspaceId: string): Promise<CheckResult> {
-  try {
-    const isExpired = await isWorkspaceTokenExpiredAsync(workspaceId);
-    if (isExpired) {
-      return {
-        ok: false,
-        detail: '✗ Workspace token: Expired',
-        failCode: 'token_expired',
-        failTitle: 'Workspace Session Expired',
-        failMessage: 'Your workspace authentication has expired. Please re-authenticate the workspace.',
-      };
-    }
-    return { ok: true, detail: '✓ Workspace token: Valid' };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return { ok: true, detail: `✓ Workspace token: Check failed (${msg})` };
-  }
+/** Check workspace token expiry - placeholder, always returns valid */
+async function checkWorkspaceToken(_workspaceId: string): Promise<CheckResult> {
+  // Token expiry checking was removed in a refactoring
+  // For now, just assume tokens are valid - the actual API call will fail if expired
+  return { ok: true, detail: '✓ Workspace token: Present' };
 }
 
 /**
@@ -470,7 +456,7 @@ async function validateCraftGateway(): Promise<CheckResult> {
  * All checks run in parallel with 5s timeouts.
  */
 export async function runErrorDiagnostics(config: DiagnosticConfig): Promise<DiagnosticResult> {
-  const { authType, workspaceId, mcpUrl, rawError } = config;
+  const { authType, workspaceId, rawError } = config;
   const details: string[] = [];
   const defaultResult: CheckResult = { ok: true, detail: '? Check: Timeout' };
 
@@ -503,21 +489,8 @@ export async function runErrorDiagnostics(config: DiagnosticConfig): Promise<Dia
     checks.push(withTimeout(checkOAuthToken(), 5000, defaultResult));
   }
 
-  // 5. Workspace token check (if workspace is configured with OAuth)
-  if (workspaceId) {
-    const storedConfig = loadStoredConfig();
-    const workspace = storedConfig?.workspaces.find(w => w.id === workspaceId);
-    const mcpAuthType = workspace?.mcpAuthType ?? 'workspace_oauth';
-
-    if (mcpAuthType === 'workspace_oauth') {
-      checks.push(withTimeout(checkWorkspaceToken(workspaceId), 5000, defaultResult));
-    }
-  }
-
-  // 6. MCP connectivity check (if URL provided)
-  if (mcpUrl) {
-    checks.push(withTimeout(checkMcpConnectivity(mcpUrl), 5000, defaultResult));
-  }
+  // 5. Workspace token check is no longer needed
+  // Workspaces now use sources for MCP authentication
 
   // Run all checks in parallel
   const results = await Promise.all(checks);

@@ -225,7 +225,6 @@ export function useAddWorkspace({
         const result = await window.electronAPI.saveOnboardingConfig({
           workspace: {
             name: state.selectedSpaceName!,
-            mcpUrl,
             iconUrl: state.selectedSpaceIconUrl ?? undefined,
           },
           mcpCredentials,

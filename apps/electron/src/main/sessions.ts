@@ -7,14 +7,13 @@ import {
   loadStoredConfig,
   getWorkspaces,
   getWorkspaceByNameOrId,
-  getWorkspaceAccessTokenAsync,
-  updateSessionMetadata,
-  getSessionAttachmentsPath,
+  getWorkspaceSlug,
   getDefaultModes,
   getDefaultSkipPermissions,
-  getConnectionsByIds,
   getDefaultWorkingDirectory,
   type Workspace,
+} from '@craft-agent/shared/config'
+import {
   // Session persistence functions
   listSessions as listStoredSessions,
   loadSession as loadStoredSession,
@@ -24,19 +23,21 @@ import {
   flagSession as flagStoredSession,
   unflagSession as unflagStoredSession,
   setSessionTodoState as setStoredSessionTodoState,
+  updateSessionMetadata,
+  getSessionAttachmentsPath,
   type StoredSession,
   type StoredMessage,
   type SessionMetadata,
   type TodoState,
-} from '@craft-agent/shared/config'
-import { getConnectionService } from './connection-service'
+} from '@craft-agent/shared/sessions'
+import { loadWorkspaceSources, getSourcesBySlugs, type LoadedSource, createSourceService, type McpServerConfig } from '@craft-agent/shared/sources'
 import { getAuthState } from '@craft-agent/shared/auth'
 import { setAnthropicOptionsEnv, setPathToClaudeCodeExecutable, setInterceptorPath } from '@craft-agent/shared/agent'
 import { getCraftToken } from '@craft-agent/shared/auth'
 import { CraftMcpClient } from '@craft-agent/shared/mcp'
-import { SubAgentManager, type SubAgentManagerConfig } from '@craft-agent/shared/agents'
+import { FolderAgentManager } from '@craft-agent/shared/agents'
 import type { SubAgentDefinition, AgentStatus, AgentActivateOptions } from '@craft-agent/shared/agents'
-import { AgentStateManager, loadRegistry, invalidateDefinition } from '@craft-agent/shared/agents'
+import { AgentStateManager } from '@craft-agent/shared/agents'
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, IPC_CHANNELS, generateMessageId } from '../shared/types'
 import { generateSessionTitle, formatPathsToRelative, formatToolInputPaths } from '@craft-agent/shared/utils'
 import { DEFAULT_MODEL } from '@craft-agent/shared/config'
@@ -99,11 +100,10 @@ interface ManagedSession {
   todoState?: 'todo' | 'in-progress' | 'needs-review' | 'done' | 'cancelled'
   // Read/unread tracking - ID of last message user has read
   lastReadMessageId?: string
-  // Per-session connection selection
-  selectedConnectionIds?: string[]
-  // Built connection server configs (applied to CraftAgent)
-  connectionMcpServers?: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }>
-  connectionApiServers?: Record<string, ReturnType<typeof import('@craft-agent/shared/agents/api-tools').createApiServer>>
+  // Per-session source selection (slugs of enabled sources)
+  enabledSourceSlugs?: string[]
+  // Built source server configs (applied to CraftAgent)
+  sourceMcpServers?: Record<string, McpServerConfig>
   // Working directory for this session (used by agent for bash commands)
   workingDirectory?: string
 }
@@ -184,10 +184,8 @@ interface PendingDelta {
 export class SessionManager {
   private sessions: Map<string, ManagedSession> = new Map()
   private windowManager: WindowManager | null = null
-  // Cache SubAgentManager per workspace (reused across sessions)
-  private agentManagers: Map<string, SubAgentManager> = new Map()
-  // Track in-flight SubAgentManager initialization to prevent duplicate connections
-  private pendingAgentManagers: Map<string, Promise<SubAgentManager | null>> = new Map()
+  // Workspace-scoped FolderAgentManager cache (reads agents from disk)
+  private folderAgentManagers: Map<string, FolderAgentManager> = new Map()
   // Cache AgentStateManager per agent (agent-scoped: workspaceId:agentId)
   // This is the single source of truth for agent activation state
   private agentStateManagers: Map<string, AgentStateManager> = new Map()
@@ -200,73 +198,16 @@ export class SessionManager {
   }
 
   /**
-   * Get or create a SubAgentManager for a workspace
-   * The manager is cached and reused across sessions for the same workspace
+   * Get the folder-based agent manager for a workspace
+   * Agents are loaded from disk on demand
    */
-  private async getAgentManager(workspace: Workspace): Promise<SubAgentManager | null> {
-    // Check cache first
-    if (this.agentManagers.has(workspace.id)) {
-      return this.agentManagers.get(workspace.id)!
+  private getFolderAgentManager(workspaceSlug: string): FolderAgentManager {
+    let manager = this.folderAgentManagers.get(workspaceSlug)
+    if (!manager) {
+      manager = new FolderAgentManager(workspaceSlug)
+      this.folderAgentManagers.set(workspaceSlug, manager)
     }
-
-    // Check if initialization is already in progress
-    if (this.pendingAgentManagers.has(workspace.id)) {
-      return this.pendingAgentManagers.get(workspace.id)!
-    }
-
-    // Create and track the initialization promise
-    const initPromise = this.initializeAgentManager(workspace)
-    this.pendingAgentManagers.set(workspace.id, initPromise)
-
-    try {
-      return await initPromise
-    } finally {
-      this.pendingAgentManagers.delete(workspace.id)
-    }
-  }
-
-  /**
-   * Internal method to initialize a SubAgentManager
-   * Separated from getAgentManager to support pending promise tracking
-   */
-  private async initializeAgentManager(workspace: Workspace): Promise<SubAgentManager | null> {
-    try {
-      // Get MCP token for the workspace (returns { authType, token })
-      const { authType, token: mcpToken } = await getWorkspaceAccessTokenAsync(workspace.id)
-
-      // Public workspaces don't need a token, but OAuth/bearer workspaces do
-      if (authType !== 'public' && !mcpToken) {
-        console.warn(`[SessionManager] No MCP token for workspace ${workspace.id} (authType: ${authType}), cannot create agent manager`)
-        return null
-      }
-
-      // Create MCP client for this workspace
-      const mcpClient = new CraftMcpClient({
-        url: workspace.mcpUrl,
-        headers: mcpToken ? { Authorization: `Bearer ${mcpToken}` } : undefined,
-      })
-
-      // Connect to MCP server
-      await mcpClient.connect()
-
-      // Get config
-      const config = loadStoredConfig()
-      const managerConfig: SubAgentManagerConfig = {
-        model: config?.model || DEFAULT_MODEL,
-        mcpUrl: workspace.mcpUrl,
-        mcpToken: mcpToken ?? undefined,
-      }
-
-      // Create and cache the manager
-      const manager = new SubAgentManager(workspace.id, mcpClient, managerConfig)
-      this.agentManagers.set(workspace.id, manager)
-
-      console.log(`[SessionManager] Created agent manager for workspace ${workspace.id} (authType: ${authType})`)
-      return manager
-    } catch (error) {
-      console.error(`[SessionManager] Failed to create agent manager for workspace ${workspace.id}:`, error)
-      return null
-    }
+    return manager
   }
 
   /**
@@ -274,14 +215,10 @@ export class SessionManager {
    * Used when activating an agent for a session
    */
   private async loadAgentDefinition(agentId: string, workspace: Workspace): Promise<SubAgentDefinition | null> {
-    const manager = await this.getAgentManager(workspace)
-    if (!manager) {
-      console.warn(`[SessionManager] No agent manager for workspace ${workspace.id}`)
-      return null
-    }
-
     try {
-      const definition = await manager.getDefinition(agentId)
+      const workspaceSlug = getWorkspaceSlug(workspace)
+      const manager = this.getFolderAgentManager(workspaceSlug)
+      const definition = manager.getAgentDefinition(agentId)
       if (definition) {
         console.log(`[SessionManager] Loaded agent definition: ${definition.name}`)
       }
@@ -315,22 +252,17 @@ export class SessionManager {
 
     console.log(`[SessionManager] Creating AgentStateManager for workspace="${workspaceId}", agent="${agentId}"`)
 
+    // Get workspace to get the slug for folder-based agent manager
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
-      // Log available workspaces for debugging
-      const allWorkspaces = getWorkspaces()
-      console.error(`[SessionManager] Workspace "${workspaceId}" not found. Available workspaces: [${allWorkspaces.map(w => `"${w.id}"`).join(', ')}]`)
+      console.error(`[SessionManager] Workspace not found: ${workspaceId}`)
       return null
     }
+    const workspaceSlug = getWorkspaceSlug(workspace)
+    const folderAgentManager = this.getFolderAgentManager(workspaceSlug)
 
-    const subAgentManager = await this.getAgentManager(workspace)
-    if (!subAgentManager) {
-      console.warn(`[SessionManager] Could not create SubAgentManager for workspace ${workspaceId}`)
-      return null
-    }
-
-    // Create AgentStateManager
-    const stateManager = new AgentStateManager(workspaceId, subAgentManager)
+    // Create AgentStateManager with folder-based agent manager
+    const stateManager = new AgentStateManager(workspaceId, folderAgentManager)
 
     // Subscribe to status changes and broadcast complete state to all windows
     // Uses broadcastAgentState() to include needsSetup/needsAuth/reason
@@ -377,7 +309,7 @@ export class SessionManager {
 
   /**
    * Get current agent status (agent-scoped)
-   * Auto-activates agents that are already configured (have credentials)
+   * For folder-based agents, they're ready immediately (no activation needed)
    */
   async getAgentStatus(workspaceId: string, agentId: string): Promise<AgentStatus> {
     const stateManager = this.getAgentStateManager(workspaceId, agentId)
@@ -385,25 +317,14 @@ export class SessionManager {
       return stateManager.getStatus()
     }
 
-    // No state manager yet - check if agent is already configured
-    // If credentials exist, auto-activate instead of returning 'idle'
+    // Check if sources need authentication
     const { agentService } = await import('./agent-service')
     const setupStatus = await agentService.getAgentSetupStatus(workspaceId, agentId)
 
-    if (!setupStatus.needsSetup && !setupStatus.needsAuth) {
-      // Agent is already configured - auto-activate it
-      console.log(`[SessionManager] Auto-activating already-configured agent ${agentId}`)
-      // Don't await - let it run in background and return 'extracting' state
-      this.activateAgent(workspaceId, agentId).catch(err => {
-        console.error(`[SessionManager] Auto-activation failed for ${agentId}:`, err)
-      })
-      return { status: 'extracting', agentId, agentName: agentId, message: 'Activating...' }
-    }
-
-    // Agent needs setup or auth - return idle with setup info attached
+    // Return status with auth info (needsSetup is always false for folder agents)
     return {
       status: 'idle',
-      needsSetup: setupStatus.needsSetup,
+      needsSetup: false,
       needsAuth: setupStatus.needsAuth,
       reason: setupStatus.reason
     }
@@ -557,58 +478,57 @@ export class SessionManager {
   private loadSessionsFromDisk(): void {
     try {
       const workspaces = getWorkspaces()
-      const allSessionMetadata = listStoredSessions()  // Get all sessions across workspaces
+      let totalSessions = 0
 
-      console.log(`[SessionManager] Found ${allSessionMetadata.length} sessions on disk`)
+      // Iterate over each workspace and load its sessions
+      for (const workspace of workspaces) {
+        const workspaceSlug = getWorkspaceSlug(workspace)
+        const sessionMetadata = listStoredSessions(workspaceSlug)
 
-      for (const meta of allSessionMetadata) {
-        // Find the workspace for this session
-        const workspace = workspaces.find(w => w.id === meta.workspaceId)
-        if (!workspace) {
-          console.warn(`[SessionManager] Skipping session ${meta.id}: workspace ${meta.workspaceId} not found`)
-          continue
+        for (const meta of sessionMetadata) {
+          // Load full session data
+          const storedSession = loadStoredSession(workspaceSlug, meta.id)
+          if (!storedSession) {
+            console.warn(`[SessionManager] Skipping session ${meta.id}: could not load from disk`)
+            continue
+          }
+
+          // Convert stored messages to runtime messages
+          const messages = (storedSession.messages || []).map(storedToMessage)
+
+          // Create managed session (agent is lazy-loaded on first message)
+          const managed: ManagedSession = {
+            id: storedSession.id,
+            workspace,
+            agent: null,  // Lazy-load agent when needed
+            messages,
+            isProcessing: false,
+            lastMessageAt: storedSession.lastUsedAt,
+            streamingText: '',
+            pendingTools: new Map(),
+            parentToolStack: [],
+            toolToParentMap: new Map(),
+            pendingTextParent: undefined,
+            name: storedSession.name,
+            agentId: storedSession.agentSlug,
+            agentName: storedSession.agentName,
+            isFlagged: storedSession.isFlagged ?? false,
+            skipPermissions: storedSession.skipPermissions ?? false,
+            activeModes: storedSession.activeModes ?? [],
+            sdkSessionId: storedSession.sdkSessionId,
+            tokenUsage: storedSession.tokenUsage,
+            todoState: storedSession.todoState,
+            lastReadMessageId: storedSession.lastReadMessageId,
+            enabledSourceSlugs: storedSession.enabledSourceSlugs,
+            workingDirectory: storedSession.workingDirectory ?? getDefaultWorkingDirectory(),
+          }
+
+          this.sessions.set(storedSession.id, managed)
+          totalSessions++
         }
-
-        // Load full session data
-        const storedSession = loadStoredSession(meta.id)
-        if (!storedSession) {
-          console.warn(`[SessionManager] Skipping session ${meta.id}: could not load from disk`)
-          continue
-        }
-
-        // Convert stored messages to runtime messages
-        const messages = (storedSession.messages || []).map(storedToMessage)
-
-        // Create managed session (agent is lazy-loaded on first message)
-        const managed: ManagedSession = {
-          id: storedSession.id,
-          workspace,
-          agent: null,  // Lazy-load agent when needed
-          messages,
-          isProcessing: false,
-          lastMessageAt: storedSession.lastUsedAt,
-          streamingText: '',
-          pendingTools: new Map(),
-          parentToolStack: [],
-          toolToParentMap: new Map(),
-          pendingTextParent: undefined,
-          name: storedSession.name,
-          agentId: storedSession.agentId,
-          agentName: storedSession.agentName,
-          isFlagged: storedSession.isFlagged ?? false,
-          skipPermissions: storedSession.skipPermissions ?? false,
-          activeModes: storedSession.activeModes ?? [],
-          sdkSessionId: storedSession.sdkSessionId,
-          tokenUsage: storedSession.tokenUsage,
-          todoState: storedSession.todoState,
-          lastReadMessageId: storedSession.lastReadMessageId,
-          selectedConnectionIds: storedSession.selectedConnectionIds,
-          workingDirectory: storedSession.workingDirectory ?? getDefaultWorkingDirectory(),
-        }
-
-        this.sessions.set(storedSession.id, managed)
-        console.log(`[SessionManager] Loaded session ${storedSession.id} with ${messages.length} messages`)
       }
+
+      console.log(`[SessionManager] Loaded ${totalSessions} sessions from disk`)
     } catch (error) {
       console.error('[SessionManager] Failed to load sessions from disk:', error)
     }
@@ -622,20 +542,21 @@ export class SessionManager {
         m.role !== 'error' && m.role !== 'status' && m.role !== 'system'
       )
 
+      const workspaceSlug = getWorkspaceSlug(managed.workspace)
       const storedSession: StoredSession = {
         id: managed.id,
-        workspaceId: managed.workspace.id,
+        workspaceSlug,
         name: managed.name,
         createdAt: managed.lastMessageAt,  // Approximate, will be overwritten if already exists
         lastUsedAt: Date.now(),
         sdkSessionId: managed.sdkSessionId,
-        agentId: managed.agentId,
+        agentSlug: managed.agentId,  // agentId in ManagedSession is actually the slug
         agentName: managed.agentName,
         isFlagged: managed.isFlagged,
         skipPermissions: managed.skipPermissions,
         activeModes: managed.activeModes,
         todoState: managed.todoState,
-        selectedConnectionIds: managed.selectedConnectionIds,
+        enabledSourceSlugs: managed.enabledSourceSlugs,
         workingDirectory: managed.workingDirectory,
         messages: persistableMessages.map(messageToStored),
         tokenUsage: managed.tokenUsage ?? {
@@ -690,9 +611,16 @@ export class SessionManager {
     const defaultSkipPerms = getDefaultSkipPermissions()
     const defaultModes = getDefaultModes()
     const defaultWorkingDir = getDefaultWorkingDirectory()
+    const workspaceSlug = getWorkspaceSlug(workspace)
 
     // Use storage layer to create and persist the session
-    const storedSession = createStoredSession(workspaceId)
+    const storedSession = createStoredSession(workspaceSlug, {
+      agentSlug: agentId,
+      agentName,
+      skipPermissions: defaultSkipPerms,
+      activeModes: defaultModes,
+      workingDirectory: defaultWorkingDir,
+    })
 
     const managed: ManagedSession = {
       id: storedSession.id,
@@ -753,7 +681,7 @@ export class SessionManager {
         // sdkSessionId is optional and used for conversation resumption
         session: {
           id: managed.id,
-          workspaceId: managed.workspace.id,
+          workspaceSlug: getWorkspaceSlug(managed.workspace),
           sdkSessionId: managed.sdkSessionId,
           createdAt: managed.lastMessageAt,
           lastUsedAt: managed.lastMessageAt,
@@ -873,7 +801,8 @@ export class SessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.isFlagged = true
-      flagStoredSession(sessionId)
+      const workspaceSlug = getWorkspaceSlug(managed.workspace)
+      flagStoredSession(workspaceSlug, sessionId)
     }
   }
 
@@ -881,7 +810,8 @@ export class SessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.isFlagged = false
-      unflagStoredSession(sessionId)
+      const workspaceSlug = getWorkspaceSlug(managed.workspace)
+      unflagStoredSession(workspaceSlug, sessionId)
     }
   }
 
@@ -889,64 +819,69 @@ export class SessionManager {
     const managed = this.sessions.get(sessionId)
     if (managed) {
       managed.todoState = todoState
-      setStoredSessionTodoState(sessionId, todoState)
+      const workspaceSlug = getWorkspaceSlug(managed.workspace)
+      setStoredSessionTodoState(workspaceSlug, sessionId, todoState)
     }
   }
 
   // ============================================
-  // Session Connections
+  // Session Sources
   // ============================================
 
   /**
-   * Update session's selected connections
-   * Triggers session restart to apply new tool set
+   * Update session's enabled sources
+   * Builds MCP server configs from sources and applies to agent
    */
-  async setSessionConnections(sessionId: string, connectionIds: string[]): Promise<void> {
+  async setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       throw new Error(`Session not found: ${sessionId}`)
     }
 
-    console.log(`[SessionManager] Setting connections for session ${sessionId}:`, connectionIds)
+    const workspaceSlug = getWorkspaceSlug(managed.workspace)
+    console.log(`[SessionManager] Setting sources for session ${sessionId}:`, sourceSlugs)
 
     // Store the selection
-    managed.selectedConnectionIds = connectionIds
+    managed.enabledSourceSlugs = sourceSlugs
 
-    // Build server configs from selected connections
-    const connections = getConnectionsByIds(connectionIds)
-    const connectionService = getConnectionService()
-    const { mcpServers, apiServers } = await connectionService.buildServerConfigs(connections)
+    // Build server configs from selected sources
+    const sources = getSourcesBySlugs(workspaceSlug, sourceSlugs)
+    const sourceService = createSourceService(workspaceSlug)
+    const { mcpServers, errors } = await sourceService.buildAllServers(sources)
 
-    // Store the built configs
-    managed.connectionMcpServers = mcpServers
-    managed.connectionApiServers = apiServers
-
-    // IMMEDIATELY update the agent's connection servers if agent exists
-    // This ensures tool blocking works even mid-conversation
-    if (managed.agent) {
-      managed.agent.setConnectionServers(mcpServers, apiServers)
-      console.log(`[SessionManager] Applied ${Object.keys(mcpServers).length} MCP + ${Object.keys(apiServers).length} API connections to active agent`)
+    if (errors.length > 0) {
+      console.warn(`[SessionManager] Source build errors:`, errors)
     }
 
-    // Persist the session with updated connections
+    // Store the built configs
+    managed.sourceMcpServers = mcpServers
+
+    // IMMEDIATELY update the agent's source servers if agent exists
+    // This ensures tool availability is updated mid-conversation
+    if (managed.agent) {
+      managed.agent.setConnectionServers(mcpServers, {})
+      console.log(`[SessionManager] Applied ${Object.keys(mcpServers).length} MCP sources to active agent`)
+    }
+
+    // Persist the session with updated sources
     this.persistSession(managed)
 
-    // Notify renderer of the connection change
+    // Notify renderer of the source change
     this.sendEvent({
-      type: 'connections_changed',
+      type: 'sources_changed',
       sessionId,
-      selectedConnectionIds: connectionIds,
+      enabledSourceSlugs: sourceSlugs,
     }, managed.workspace.id)
 
-    console.log(`[SessionManager] Session ${sessionId} connections updated: ${connectionIds.length} connections`)
+    console.log(`[SessionManager] Session ${sessionId} sources updated: ${sourceSlugs.length} sources`)
   }
 
   /**
-   * Get the selected connection IDs for a session
+   * Get the enabled source slugs for a session
    */
-  getSessionConnections(sessionId: string): string[] {
+  getSessionSources(sessionId: string): string[] {
     const managed = this.sessions.get(sessionId)
-    return managed?.selectedConnectionIds ?? []
+    return managed?.enabledSourceSlugs ?? []
   }
 
   /**
@@ -981,7 +916,8 @@ export class SessionManager {
       if (managed.lastReadMessageId !== lastFinalId) {
         managed.lastReadMessageId = lastFinalId
         // Persist to disk
-        updateSessionMetadata(sessionId, { lastReadMessageId: lastFinalId })
+        const workspaceSlug = getWorkspaceSlug(managed.workspace)
+        updateSessionMetadata(workspaceSlug, sessionId, { lastReadMessageId: lastFinalId })
       }
     }
   }
@@ -995,7 +931,8 @@ export class SessionManager {
     if (managed) {
       managed.lastReadMessageId = undefined
       // Persist to disk (undefined will clear the field)
-      updateSessionMetadata(sessionId, { lastReadMessageId: undefined })
+      const workspaceSlug = getWorkspaceSlug(managed.workspace)
+      updateSessionMetadata(workspaceSlug, sessionId, { lastReadMessageId: undefined })
     }
   }
 
@@ -1060,31 +997,30 @@ export class SessionManager {
 
   async deleteSession(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
-    if (managed) {
-      // If processing is in progress, abort and wait for cleanup
-      if (managed.isProcessing && managed.abortController) {
-        managed.abortController.abort()
-        // Brief wait for abort to propagate and in-flight operations to settle
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
-      this.sessions.delete(sessionId)
+    if (!managed) {
+      console.warn(`[SessionManager] Cannot delete session: ${sessionId} not found`)
+      return
     }
+
+    // Get workspace slug before deleting
+    const workspaceSlug = getWorkspaceSlug(managed.workspace)
+
+    // If processing is in progress, abort and wait for cleanup
+    if (managed.isProcessing && managed.abortController) {
+      managed.abortController.abort()
+      // Brief wait for abort to propagate and in-flight operations to settle
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+    this.sessions.delete(sessionId)
 
     // Note: We don't clean up AgentStateManager here because it's agent-scoped,
     // not session-scoped. It will be reused by other sessions with the same agent.
 
     // Delete from disk too
-    deleteStoredSession(sessionId)
+    deleteStoredSession(workspaceSlug, sessionId)
 
-    // Clean up attachments directory
-    try {
-      const attachmentsDir = getSessionAttachmentsPath(sessionId)
-      await rm(attachmentsDir, { recursive: true, force: true })
-      console.log(`[SessionManager] Cleaned up attachments for session ${sessionId}`)
-    } catch (error) {
-      // Ignore errors - directory might not exist
-      console.log(`[SessionManager] No attachments to clean up for session ${sessionId}`)
-    }
+    // Clean up attachments directory (handled by deleteStoredSession for workspace-scoped storage)
+    console.log(`[SessionManager] Deleted session ${sessionId}`)
   }
 
   async sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachment[], options?: SendMessageOptions): Promise<void> {
@@ -1169,19 +1105,15 @@ export class SessionManager {
         if (status.status === 'active' || status.status === 'ready') {
           const definition = status.definition
           if (definition) {
-            const manager = await this.getAgentManager(managed.workspace)
-            if (manager) {
-              try {
-                manager.setActiveAgentId(managed.agentId)
-                const mcpServers = await manager.buildMcpServerConfig(definition)
-                const apiServers = await manager.buildApiServers(definition)
-                agent.setActiveAgentDefinition(definition, mcpServers, apiServers)
-                managed.agentActivated = true
-                console.log(`[SessionManager] Applied agent definition "${definition.name}" to session ${sessionId}`)
-              } catch (error) {
-                console.error(`[SessionManager] Failed to build agent configs for ${managed.agentId}:`, error)
-                this.sendEvent({ type: 'error', sessionId, error: `Failed to configure agent: ${error instanceof Error ? error.message : String(error)}` }, managed.workspace.id)
-              }
+            try {
+              const mcpServers = await stateManager.buildMcpServerConfig()
+              const apiServers = await stateManager.buildApiServers()
+              agent.setActiveAgentDefinition(definition, mcpServers, apiServers)
+              managed.agentActivated = true
+              console.log(`[SessionManager] Applied agent definition "${definition.name}" to session ${sessionId}`)
+            } catch (error) {
+              console.error(`[SessionManager] Failed to build agent configs for ${managed.agentId}:`, error)
+              this.sendEvent({ type: 'error', sessionId, error: `Failed to configure agent: ${error instanceof Error ? error.message : String(error)}` }, managed.workspace.id)
             }
           }
         }
@@ -1190,24 +1122,25 @@ export class SessionManager {
       }
     }
 
-    // Apply connection servers if any are selected
-    if (managed.selectedConnectionIds?.length) {
+    // Apply source servers if any are enabled
+    if (managed.enabledSourceSlugs?.length) {
+      const workspaceSlug = getWorkspaceSlug(managed.workspace)
+
       // Build server configs if not already built
-      if (!managed.connectionMcpServers && !managed.connectionApiServers) {
-        const connections = getConnectionsByIds(managed.selectedConnectionIds)
-        const connectionService = getConnectionService()
-        const { mcpServers, apiServers } = await connectionService.buildServerConfigs(connections)
-        managed.connectionMcpServers = mcpServers
-        managed.connectionApiServers = apiServers
+      if (!managed.sourceMcpServers) {
+        const sources = getSourcesBySlugs(workspaceSlug, managed.enabledSourceSlugs)
+        const sourceService = createSourceService(workspaceSlug)
+        const { mcpServers, errors } = await sourceService.buildAllServers(sources)
+        if (errors.length > 0) {
+          console.warn(`[SessionManager] Source build errors:`, errors)
+        }
+        managed.sourceMcpServers = mcpServers
       }
 
-      // Apply connection servers to the agent
-      if (managed.connectionMcpServers || managed.connectionApiServers) {
-        agent.setConnectionServers(
-          managed.connectionMcpServers ?? {},
-          managed.connectionApiServers ?? {}
-        )
-        console.log(`[SessionManager] Applied ${Object.keys(managed.connectionMcpServers ?? {}).length} MCP connections and ${Object.keys(managed.connectionApiServers ?? {}).length} API connections to session ${sessionId}`)
+      // Apply source servers to the agent
+      if (managed.sourceMcpServers && Object.keys(managed.sourceMcpServers).length > 0) {
+        agent.setConnectionServers(managed.sourceMcpServers, {})
+        console.log(`[SessionManager] Applied ${Object.keys(managed.sourceMcpServers).length} MCP sources to session ${sessionId}`)
       }
     }
 

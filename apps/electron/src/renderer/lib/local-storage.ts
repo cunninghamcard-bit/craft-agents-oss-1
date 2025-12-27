@@ -18,6 +18,7 @@ export const KEYS = {
   expandedFolders: 'expanded-folders',
   statusCollapsed: 'status-collapsed',
   agentsCollapsed: 'agents-collapsed',
+  sourcesCollapsed: 'sources-collapsed',
 
   // Theme
   theme: 'theme',

@@ -13,6 +13,8 @@ export interface FileAttachment {
   size: number;
   /** Path where file is stored in session attachments folder (set by Electron app) */
   storedPath?: string;
+  /** Path to converted markdown version (for office files) */
+  markdownPath?: string;
 }
 
 // Supported image types for Claude API

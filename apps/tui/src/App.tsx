@@ -1,7 +1,8 @@
 import React, { useCallback, useMemo } from 'react';
 import { GlobalProvider } from './context/GlobalContext.tsx';
 import { SessionContainer } from './components/SessionContainer.tsx';
-import { loadStoredConfig, saveConfig, getOrCreateLatestSession, createSession, getOrCreateSessionById, type Session } from '@craft-agent/shared/config';
+import { loadStoredConfig, saveConfig, getWorkspaceSlug } from '@craft-agent/shared/config';
+import { getOrCreateLatestSession, createSession, getOrCreateSessionById, type SessionConfig } from '@craft-agent/shared/sessions';
 import { DEFAULT_MODEL } from '@craft-agent/shared/config';
 import type { CraftAgentConfig } from '@craft-agent/shared/agent';
 import { debug } from '@craft-agent/shared/utils';
@@ -70,23 +71,24 @@ export const App: React.FC<AppProps> = ({
   // --new → create new session
   // --session <id> → load specific session (fallback to new if not found)
   // (default) → resume latest session for workspace
-  const initialSession = useMemo((): Session => {
-    let session: Session;
+  const initialSession = useMemo((): SessionConfig => {
+    const workspaceSlug = getWorkspaceSlug(config.workspace);
+    let session: SessionConfig;
     if (newSession) {
       // --new: Create a fresh session
-      session = createSession(config.workspace.id);
+      session = createSession(workspaceSlug);
       debug('[App] Created new session (--new):', session.id);
     } else if (sessionId) {
       // --session <id>: Get or create session with this ID
-      session = getOrCreateSessionById(sessionId, config.workspace.id);
+      session = getOrCreateSessionById(workspaceSlug, sessionId);
       debug('[App] Using session (--session):', session.id, 'SDK session:', session.sdkSessionId || 'none');
     } else {
       // Default: Resume latest session for workspace
-      session = getOrCreateLatestSession(config.workspace.id);
+      session = getOrCreateLatestSession(workspaceSlug);
       debug('[App] Resuming latest session:', session.id, 'SDK session:', session.sdkSessionId || 'none');
     }
     return session;
-  }, [config.workspace.id, newSession, sessionId]);
+  }, [config.workspace, newSession, sessionId]);
 
   return (
     <GlobalProvider

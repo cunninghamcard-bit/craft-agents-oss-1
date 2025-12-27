@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { CraftOAuth, getMcpBaseUrl } from '@craft-agent/shared/auth';
-import { saveServerCredentialsAsync } from '@craft-agent/shared/agents';
 import type { McpServerConfig } from '@craft-agent/shared/agents';
 import { AnimatedSpinner } from './Spinner.tsx';
 import { debug } from '@craft-agent/shared/utils';
@@ -200,7 +199,8 @@ export const McpAuth: React.FC<McpAuthProps> = ({
 
       // Validation passed - save credentials including clientId for future token refresh (to credential store)
       debug('[McpAuth] Saving credentials for', server.name, 'clientId:', clientId);
-      await saveServerCredentialsAsync(workspaceId, agentId, server.name, {
+      const credMgr = getCredentialManager();
+      await credMgr.setMcpOAuth(workspaceId, agentId, server.name, {
         accessToken: tokens.accessToken,
         refreshToken: tokens.refreshToken,
         expiresAt: tokens.expiresAt,
@@ -376,7 +376,8 @@ export const McpAuth: React.FC<McpAuthProps> = ({
     debug('[McpAuth] Saving bearer token for', server.name);
 
     // Validation passed - save token as non-expiring access token (to credential store)
-    await saveServerCredentialsAsync(workspaceId, agentId, server.name, {
+    const credMgr = getCredentialManager();
+    await credMgr.setMcpOAuth(workspaceId, agentId, server.name, {
       accessToken: token.trim(),
       // No refreshToken, no expiresAt - static bearer token
     });

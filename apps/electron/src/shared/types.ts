@@ -47,8 +47,12 @@ export type {
 
 // Import and re-export auth types for onboarding
 import type { AuthState, SetupNeeds } from '@craft-agent/shared/auth';
-import type { AuthType, ConnectionConfig, ConnectionType } from '@craft-agent/shared/config';
-export type { AuthState, SetupNeeds, AuthType, ConnectionConfig, ConnectionType };
+import type { AuthType } from '@craft-agent/shared/config';
+export type { AuthState, SetupNeeds, AuthType };
+
+// Import source types for session source selection
+import type { LoadedSource, FolderSourceConfig } from '@craft-agent/shared/sources';
+export type { LoadedSource, FolderSourceConfig };
 export { generateMessageId } from '@craft-agent/core/types';
 
 /**
@@ -257,10 +261,15 @@ export interface Session {
   todoState?: TodoState
   // Read/unread tracking - ID of last message user has read
   lastReadMessageId?: string
-  // Per-session connection selection
-  selectedConnectionIds?: string[]
+  // Per-session source selection (source slugs)
+  enabledSourceSlugs?: string[]
   // Working directory for this session (used by agent for bash commands)
   workingDirectory?: string
+  // Current status for ProcessingIndicator (e.g., compacting)
+  currentStatus?: {
+    message: string
+    statusType?: string
+  }
 }
 
 // AskUserQuestion types (matches shared/agent/craft-agent.ts)
@@ -302,8 +311,8 @@ export type SessionEvent =
   | { type: 'mode_changed'; sessionId: string; mode: Mode; enabled: boolean }
   | { type: 'plan_submitted'; sessionId: string; message: CoreMessage }
   | { type: 'ask_question_request'; sessionId: string; request: AskQuestionRequest }
-  // Connection events
-  | { type: 'connections_changed'; sessionId: string; selectedConnectionIds: string[] }
+  // Source events
+  | { type: 'sources_changed'; sessionId: string; enabledSourceSlugs: string[] }
 
 // Options for sendMessage
 export interface SendMessageOptions {
@@ -351,6 +360,7 @@ export const IPC_CHANNELS = {
   GET_AGENT_DEFINITION: 'agents:getDefinition',
   RELOAD_AGENT: 'agents:reloadAgent',
   RESET_AGENT: 'agents:resetAgent',
+  ENSURE_BUILTIN_AGENT: 'agents:ensureBuiltinAgent',
 
   // Agent authentication
   GET_AGENT_AUTH_REQUIREMENTS: 'agents:getAuthRequirements',
@@ -362,7 +372,6 @@ export const IPC_CHANNELS = {
   // Agent state management (unified state machine, agent-scoped by workspaceId:agentId)
   AGENT_GET_STATUS: 'agent:getStatus',           // (workspaceId, agentId) → AgentStatus
   AGENT_ACTIVATE: 'agent:activate',               // (workspaceId, agentId, options?) → AgentStatus
-  AGENT_CONTINUE_REVIEW: 'agent:continueReview',  // (workspaceId, agentId, answers) → AgentStatus
   AGENT_CONTINUE_MCP_AUTH: 'agent:continueMcpAuth', // (workspaceId, agentId) → AgentStatus
   AGENT_CONTINUE_API_AUTH: 'agent:continueApiAuth', // (workspaceId, agentId) → AgentStatus
   AGENT_DEACTIVATE: 'agent:deactivate',           // (workspaceId, agentId) → void
@@ -452,16 +461,16 @@ export const IPC_CHANNELS = {
   DRAFTS_DELETE: 'drafts:delete',
   DRAFTS_GET_ALL: 'drafts:getAll',
 
-  // Connections
-  CONNECTIONS_START_MCP_OAUTH: 'connections:startMcpOAuth',
-  CONNECTIONS_START_GMAIL_OAUTH: 'connections:startGmailOAuth',
-  CONNECTIONS_GET: 'connections:get',
-  CONNECTIONS_SAVE: 'connections:save',
-  CONNECTIONS_DELETE: 'connections:delete',
+  // Sources
+  SOURCES_GET: 'sources:get',
+  SOURCES_CREATE: 'sources:create',
+  SOURCES_DELETE: 'sources:delete',
+  SOURCES_START_OAUTH: 'sources:startOAuth',
+  SOURCES_SAVE_CREDENTIALS: 'sources:saveCredentials',
 
-  // Session connections
-  SESSION_SET_CONNECTIONS: 'sessions:setConnections',
-  SESSION_GET_CONNECTIONS: 'sessions:getConnections',
+  // Session sources
+  SESSION_SET_SOURCES: 'sessions:setSources',
+  SESSION_GET_SOURCES: 'sessions:getSources',
 
   // Markdown preview window
   MARKDOWN_PREVIEW_OPEN: 'markdownPreview:open',
@@ -595,6 +604,7 @@ export interface ElectronAPI {
   getAgentDefinition(workspaceId: string, agentId: string): Promise<SubAgentDefinition | null>
   reloadAgent(workspaceId: string, agentId: string): Promise<boolean>
   resetAgent(workspaceId: string, agentId: string): Promise<boolean>
+  ensureBuiltinAgent(workspaceId: string, slug: string): Promise<string | null>
 
   // Agent authentication
   getAgentAuthRequirements(workspaceId: string, agentId: string): Promise<AgentAuthRequirements>
@@ -662,7 +672,7 @@ export interface ElectronAPI {
   startWorkspaceMcpOAuth(mcpUrl: string): Promise<OAuthResult & { accessToken?: string; clientId?: string }>
   saveOnboardingConfig(config: {
     authType?: AuthType  // Optional - if not provided, preserves existing auth type (for add workspace)
-    workspace?: { name: string; mcpUrl: string; iconUrl?: string }  // Optional - if not provided, only updates billing
+    workspace?: { name: string; iconUrl?: string }  // Optional - if not provided, only updates billing
     credential?: string  // API key or OAuth token based on authType
     mcpCredentials?: { accessToken: string; clientId?: string }  // MCP OAuth credentials
   }): Promise<OnboardingSaveResult>
@@ -718,21 +728,16 @@ export interface ElectronAPI {
   deleteDraft(sessionId: string): Promise<void>
   getAllDrafts(): Promise<Record<string, string>>
 
-  // Connections
-  startConnectionMcpOAuth(config: {
-    name: string
-    url: string
-    clientId?: string
-    clientSecret?: string
-  }): Promise<{ success: boolean; error?: string; accessToken?: string; refreshToken?: string; expiresAt?: number; clientId?: string }>
-  startGmailOAuth(): Promise<{ success: boolean; error?: string; accessToken?: string; refreshToken?: string; expiresAt?: number; email?: string }>
-  getConnections(): Promise<ConnectionConfig[]>
-  saveConnection(connection: ConnectionConfig): Promise<void>
-  deleteConnection(connectionId: string): Promise<void>
+  // Sources
+  getSources(workspaceSlug: string): Promise<LoadedSource[]>
+  createSource(workspaceSlug: string, config: Partial<FolderSourceConfig>): Promise<FolderSourceConfig>
+  deleteSource(workspaceSlug: string, sourceSlug: string): Promise<void>
+  startSourceOAuth(workspaceSlug: string, sourceSlug: string): Promise<{ success: boolean; error?: string; accessToken?: string }>
+  saveSourceCredentials(workspaceSlug: string, sourceSlug: string, credential: string): Promise<void>
 
-  // Session connections
-  setSessionConnections(sessionId: string, connectionIds: string[]): Promise<void>
-  getSessionConnections(sessionId: string): Promise<string[]>
+  // Session sources
+  setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void>
+  getSessionSources(sessionId: string): Promise<string[]>
 }
 
 /**
@@ -761,12 +766,6 @@ export interface DeepLinkNavigation {
   action?: string
   actionParams?: Record<string, string>
 }
-
-// ============================================
-// Connection Types
-// ============================================
-
-// Note: ConnectionType and ConnectionConfig are re-exported from @craft-agent/shared/config above
 
 declare global {
   interface Window {

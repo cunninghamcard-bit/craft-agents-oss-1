@@ -632,14 +632,27 @@ export function getSessionState(sessionId: string): Record<Mode, boolean> {
 /**
  * Format session state as a lightweight XML block for injection into user messages.
  * Always includes all modes with their current state (true/false).
+ * When in safe mode, includes the plans folder path so agent knows where to write plans.
  * This replaces the verbose getModeContext() for per-message injection.
  */
-export function formatSessionState(sessionId: string): string {
+export function formatSessionState(
+  sessionId: string,
+  options?: { plansFolderPath?: string }
+): string {
   const state = getSessionState(sessionId);
   const lines = Object.entries(state)
     .map(([mode, active]) => `${mode}: ${active}`)
     .join('\n');
-  return `<session_state>\nsessionId: ${sessionId}\n${lines}\n</session_state>`;
+
+  let result = `<session_state>\nsessionId: ${sessionId}\n${lines}`;
+
+  // Include plans folder path when in safe mode so agent knows where to write plans
+  if (state.safe && options?.plansFolderPath) {
+    result += `\nplansFolderPath: ${options.plansFolderPath}`;
+  }
+
+  result += '\n</session_state>';
+  return result;
 }
 
 /**
@@ -729,12 +742,12 @@ Many read-only bash commands work in Safe Mode:
 
 ### Plans Folder Exception
 
-You CAN use Write, Edit, and MultiEdit to create/modify files in the session's plans folder (\`~/.craft-agent/sessions/{sessionId}/plans/\`). This allows SubmitPlan to work in Safe Mode for creating structured plans.
+You CAN use Write, Edit, and MultiEdit to create/modify files in the session's plans folder. The exact path is provided in the \`plansFolderPath\` field of the \`<session_state>\` block when Safe Mode is active. This allows SubmitPlan to work in Safe Mode for creating structured plans.
 
 ### Transitioning to Implementation
 
 When you've finished exploring and are ready to make changes:
-1. Write a structured plan to the plans folder
+1. Write a structured plan to the plans folder (use the path from \`plansFolderPath\` in session state)
 2. Call \`SubmitPlan\` to present the plan
 3. The user can click "Accept Plan" to exit Safe Mode and authorize implementation
 

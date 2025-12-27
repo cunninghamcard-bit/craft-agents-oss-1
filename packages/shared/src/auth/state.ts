@@ -8,7 +8,7 @@
  */
 
 import { getCredentialManager } from '../credentials/index.ts';
-import { loadStoredConfig, getActiveWorkspace, checkWorkspaceAuthStatus, type AuthType, type Workspace, type WorkspaceAuthStatus } from '../config/storage.ts';
+import { loadStoredConfig, getActiveWorkspace, type AuthType, type Workspace } from '../config/storage.ts';
 
 // ============================================
 // Types
@@ -37,8 +37,6 @@ export interface AuthState {
   workspace: {
     hasWorkspace: boolean;
     active: Workspace | null;
-    /** MCP authentication status for the active workspace */
-    mcpAuth?: WorkspaceAuthStatus;
   };
 }
 
@@ -82,12 +80,6 @@ export async function getAuthState(): Promise<AuthState> {
     hasCredentials = !!claudeOAuth;
   }
 
-  // Get MCP auth status for active workspace
-  let mcpAuth: WorkspaceAuthStatus | undefined;
-  if (activeWorkspace) {
-    mcpAuth = await checkWorkspaceAuthStatus(activeWorkspace.id);
-  }
-
   return {
     craft: {
       hasToken: !!craftToken,
@@ -102,7 +94,6 @@ export async function getAuthState(): Promise<AuthState> {
     workspace: {
       hasWorkspace: !!activeWorkspace,
       active: activeWorkspace,
-      mcpAuth,
     },
   };
 }

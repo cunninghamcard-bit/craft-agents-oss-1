@@ -174,16 +174,19 @@ export function useAgentState(workspaceId: string | null, agentId: string | null
   const idleReason = status.status === 'idle' ? status.reason ?? null : null
 
   // Centralized banner state derivation (single source of truth for all components)
+  // For folder-based agents, needsSetup is always false - they're ready immediately
   const bannerState = useMemo((): BannerState => {
     switch (status.status) {
       case 'idle':
-        // Check centralized setup info
-        if (status.needsAuth && !status.needsSetup) {
+        // Only show auth banner if sources need authentication
+        if (status.needsAuth) {
           return 'mcp_auth'
         }
-        return 'setup'
+        // Folder-based agents are ready immediately - no activation needed
+        return 'hidden'
       case 'extracting':
-        return 'activating'
+        // Legacy state - shouldn't happen with folder-based agents
+        return 'hidden'
       case 'needs_mcp_auth':
         return 'mcp_auth'
       case 'needs_api_auth':

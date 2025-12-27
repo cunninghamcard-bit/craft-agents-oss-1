@@ -15,7 +15,9 @@ import { registerOnboardingHandlers } from './onboarding'
 import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AgentActivateOptions, type AuthType, type BillingMethodInfo, type SendMessageOptions, type DiffPreviewData, type CodePreviewData, type TerminalPreviewData } from '../shared/types'
 import { readFileAttachment } from '@craft-agent/shared/utils'
 import { getAiCreditTopUpUrl } from '@craft-agent/shared/auth'
-import { getSessionAttachmentsPath, getAuthType, setAuthType, getPreferencesPath, getModel, setModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getDefaultModes, setDefaultModes, getDefaultSkipPermissions, setDefaultSkipPermissions, getDefaultWorkingDirectory, setDefaultWorkingDirectory, getConnections, saveConnection, deleteConnection, getConnectionsByIds, type ConnectionConfig } from '@craft-agent/shared/config'
+import { getAuthType, setAuthType, getPreferencesPath, getModel, setModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getDefaultModes, setDefaultModes, getDefaultSkipPermissions, setDefaultSkipPermissions, getDefaultWorkingDirectory, setDefaultWorkingDirectory, getWorkspaceSlug, getWorkspaceByNameOrId, type Workspace } from '@craft-agent/shared/config'
+import { getSessionAttachmentsPath } from '@craft-agent/shared/sessions'
+import { loadWorkspaceSources, getSourcesBySlugs, type LoadedSource } from '@craft-agent/shared/sources'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { MarkItDown } from 'markitdown-js'
 
@@ -328,7 +330,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   // Store an attachment to disk and generate thumbnail/markdown conversion
   // This is the core of the persistent file attachment system
-  ipcMain.handle(IPC_CHANNELS.STORE_ATTACHMENT, async (_event, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
+  ipcMain.handle(IPC_CHANNELS.STORE_ATTACHMENT, async (event, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
     // Track files we've written for cleanup on error
     const filesToCleanup: string[] = []
 
@@ -338,8 +340,19 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         throw new Error('Cannot attach empty file')
       }
 
+      // Get workspace slug from the calling window
+      const workspaceId = windowManager.getWorkspaceForWindow(event.sender.id)
+      if (!workspaceId) {
+        throw new Error('Cannot determine workspace for attachment storage')
+      }
+      const workspace = getWorkspaceByNameOrId(workspaceId)
+      if (!workspace) {
+        throw new Error(`Workspace not found: ${workspaceId}`)
+      }
+      const workspaceSlug = getWorkspaceSlug(workspace)
+
       // Create attachments directory if it doesn't exist
-      const attachmentsDir = getSessionAttachmentsPath(sessionId)
+      const attachmentsDir = getSessionAttachmentsPath(workspaceSlug, sessionId)
       await mkdir(attachmentsDir, { recursive: true })
 
       // Generate unique ID for this attachment
@@ -447,6 +460,11 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   ipcMain.handle(IPC_CHANNELS.REFRESH_AGENTS, async (_event, workspaceId: string) => {
     return agentService.refreshAgents(workspaceId)
+  })
+
+  // Ensure a builtin agent exists in the workspace
+  ipcMain.handle(IPC_CHANNELS.ENSURE_BUILTIN_AGENT, async (_event, workspaceId: string, slug: string) => {
+    return agentService.ensureBuiltinAgent(workspaceId, slug)
   })
 
   // Check if an agent needs authentication
@@ -915,21 +933,48 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   })
 
   // ============================================================
-  // Connections
+  // Sources
   // ============================================================
 
-  // Start MCP OAuth flow for a connection
-  ipcMain.handle(IPC_CHANNELS.CONNECTIONS_START_MCP_OAUTH, async (_event, config: {
-    name: string
-    url: string
-    clientId?: string
-    clientSecret?: string
-  }) => {
+  // Get all sources for a workspace
+  ipcMain.handle(IPC_CHANNELS.SOURCES_GET, async (_event, workspaceSlug: string) => {
+    return loadWorkspaceSources(workspaceSlug)
+  })
+
+  // Create a new source
+  ipcMain.handle(IPC_CHANNELS.SOURCES_CREATE, async (_event, workspaceSlug: string, config: Partial<import('@craft-agent/shared/sources').CreateSourceInput>) => {
+    const { createSource } = await import('@craft-agent/shared/sources')
+    return createSource(workspaceSlug, {
+      name: config.name || 'New Source',
+      provider: config.provider || 'custom',
+      type: config.type || 'mcp',
+      enabled: config.enabled ?? true,
+      mcp: config.mcp,
+      api: config.api,
+      local: config.local,
+    })
+  })
+
+  // Delete a source
+  ipcMain.handle(IPC_CHANNELS.SOURCES_DELETE, async (_event, workspaceSlug: string, sourceSlug: string) => {
+    const { deleteSource } = await import('@craft-agent/shared/sources')
+    deleteSource(workspaceSlug, sourceSlug)
+  })
+
+  // Start OAuth flow for a source
+  ipcMain.handle(IPC_CHANNELS.SOURCES_START_OAUTH, async (_event, workspaceSlug: string, sourceSlug: string) => {
     try {
+      const { loadSourceConfig } = await import('@craft-agent/shared/sources')
       const { CraftOAuth, getMcpBaseUrl } = await import('@craft-agent/shared/auth/oauth')
+      const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+
+      const config = loadSourceConfig(workspaceSlug, sourceSlug)
+      if (!config || config.type !== 'mcp' || !config.mcp?.url) {
+        return { success: false, error: 'Source not found or not an MCP source' }
+      }
 
       const oauth = new CraftOAuth(
-        { mcpBaseUrl: getMcpBaseUrl(config.url) },
+        { mcpBaseUrl: getMcpBaseUrl(config.mcp.url) },
         {
           onStatus: (message) => console.log(`[OAuth] ${config.name}: ${message}`),
           onError: (error) => console.error(`[OAuth] ${config.name} error: ${error}`),
@@ -938,16 +983,25 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
       const { tokens, clientId } = await oauth.authenticate()
 
-      console.log(`[IPC] MCP OAuth complete for connection: ${config.name}`)
+      // Store credentials
+      const manager = getCredentialManager()
+      await manager.set(
+        { type: 'source_oauth', workspaceSlug, sourceSlug },
+        {
+          value: tokens.accessToken,
+          refreshToken: tokens.refreshToken,
+          expiresAt: tokens.expiresAt,
+          clientId,
+        }
+      )
+
+      console.log(`[IPC] Source OAuth complete: ${sourceSlug}`)
       return {
         success: true,
         accessToken: tokens.accessToken,
-        refreshToken: tokens.refreshToken,
-        expiresAt: tokens.expiresAt,
-        clientId,
       }
     } catch (error) {
-      console.error(`[IPC] MCP OAuth failed for connection ${config.name}:`, error)
+      console.error(`[IPC] Source OAuth failed:`, error)
       return {
         success: false,
         error: error instanceof Error ? error.message : 'OAuth authentication failed',
@@ -955,101 +1009,46 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     }
   })
 
-  // Start Gmail OAuth flow
-  ipcMain.handle(IPC_CHANNELS.CONNECTIONS_START_GMAIL_OAUTH, async () => {
-    try {
-      const { startGmailOAuth } = await import('@craft-agent/shared/auth')
-      const result = await startGmailOAuth('electron')
-
-      if (result.success) {
-        console.log(`[IPC] Gmail OAuth complete for: ${result.email}`)
-      } else {
-        console.error(`[IPC] Gmail OAuth failed: ${result.error}`)
-      }
-
-      return result
-    } catch (error) {
-      console.error('[IPC] Gmail OAuth failed:', error)
-      return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Gmail OAuth authentication failed',
-      }
-    }
-  })
-
-  // Get all connections
-  ipcMain.handle(IPC_CHANNELS.CONNECTIONS_GET, async () => {
-    return getConnections()
-  })
-
-  // Save a connection (create or update)
-  ipcMain.handle(IPC_CHANNELS.CONNECTIONS_SAVE, async (_event, connection: ConnectionConfig) => {
+  // Save credentials for a source (bearer token or API key)
+  ipcMain.handle(IPC_CHANNELS.SOURCES_SAVE_CREDENTIALS, async (_event, workspaceSlug: string, sourceSlug: string, credential: string) => {
+    const { loadSourceConfig } = await import('@craft-agent/shared/sources')
     const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+
+    const config = loadSourceConfig(workspaceSlug, sourceSlug)
+    if (!config) {
+      throw new Error(`Source not found: ${sourceSlug}`)
+    }
+
     const manager = getCredentialManager()
 
-    // Store MCP OAuth tokens if present (including refresh token and expiry for auto-refresh)
-    if (connection.mcpAccessToken) {
+    // Determine credential type based on source config
+    if (config.type === 'mcp' && config.mcp?.authType === 'bearer') {
       await manager.set(
-        { type: 'connection_oauth', connectionId: connection.id },
-        {
-          value: connection.mcpAccessToken,
-          refreshToken: connection.mcpRefreshToken,
-          expiresAt: connection.mcpExpiresAt,
-          clientId: connection.mcpClientId,
-        }
+        { type: 'source_bearer', workspaceSlug, sourceSlug },
+        { value: credential }
       )
-      console.log(`[IPC] Stored MCP OAuth tokens for connection: ${connection.id}`)
-    }
-
-    // Store Gmail OAuth tokens if present
-    if (connection.gmailAccessToken) {
+    } else if (config.type === 'api') {
       await manager.set(
-        { type: 'gmail_oauth', connectionId: connection.id },
-        {
-          value: connection.gmailAccessToken,
-          refreshToken: connection.gmailRefreshToken,
-          expiresAt: connection.gmailExpiresAt,
-        }
+        { type: 'source_apikey', workspaceSlug, sourceSlug },
+        { value: credential }
       )
-      console.log(`[IPC] Stored Gmail OAuth tokens for connection: ${connection.id}`)
     }
 
-    // Strip tokens before persisting to disk (they're now in CredentialManager)
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { mcpAccessToken, mcpRefreshToken, mcpExpiresAt, gmailAccessToken, gmailRefreshToken, gmailExpiresAt, ...connectionToSave } = connection
-    saveConnection(connectionToSave as ConnectionConfig)
-  })
-
-  // Delete a connection
-  ipcMain.handle(IPC_CHANNELS.CONNECTIONS_DELETE, async (_event, connectionId: string) => {
-    // Delete stored tokens from CredentialManager
-    try {
-      const { getCredentialManager } = await import('@craft-agent/shared/credentials')
-      const manager = getCredentialManager()
-      // Try to delete both MCP and Gmail OAuth tokens
-      await manager.delete({ type: 'connection_oauth', connectionId }).catch(() => {})
-      await manager.delete({ type: 'gmail_oauth', connectionId }).catch(() => {})
-      console.log(`[IPC] Deleted tokens for connection: ${connectionId}`)
-    } catch (error) {
-      // Ignore errors - tokens may not exist
-      console.log(`[IPC] No tokens to delete for connection: ${connectionId}`)
-    }
-    // Delete the connection config
-    deleteConnection(connectionId)
+    console.log(`[IPC] Saved credentials for source: ${sourceSlug}`)
   })
 
   // ============================================================
-  // Session Connections
+  // Session Sources
   // ============================================================
 
-  // Set connections for a session (triggers session restart)
-  ipcMain.handle(IPC_CHANNELS.SESSION_SET_CONNECTIONS, async (_event, sessionId: string, connectionIds: string[]) => {
-    await sessionManager.setSessionConnections(sessionId, connectionIds)
+  // Set sources for a session (applies MCP servers to agent)
+  ipcMain.handle(IPC_CHANNELS.SESSION_SET_SOURCES, async (_event, sessionId: string, sourceSlugs: string[]) => {
+    await sessionManager.setSessionSources(sessionId, sourceSlugs)
   })
 
-  // Get connections for a session
-  ipcMain.handle(IPC_CHANNELS.SESSION_GET_CONNECTIONS, async (_event, sessionId: string) => {
-    return sessionManager.getSessionConnections(sessionId)
+  // Get sources for a session
+  ipcMain.handle(IPC_CHANNELS.SESSION_GET_SOURCES, async (_event, sessionId: string) => {
+    return sessionManager.getSessionSources(sessionId)
   })
 
   // Register onboarding handlers

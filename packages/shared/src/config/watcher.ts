@@ -1,0 +1,800 @@
+/**
+ * Config File Watcher
+ *
+ * Watches configuration files for changes and triggers callbacks.
+ * Used for hot-reloading config changes made by agents or external tools.
+ *
+ * Watched paths (workspace-scoped):
+ * - ~/.craft-agent/config.json - Main app configuration
+ * - ~/.craft-agent/preferences.json - User preferences
+ * - ~/.craft-agent/workspaces/{slug}/sources/ - Source folders for current workspace
+ * - ~/.craft-agent/workspaces/{slug}/agents/ - Agent folders for current workspace
+ */
+
+import { watch, existsSync, readdirSync, statSync, readFileSync, mkdirSync } from 'fs';
+import { join, dirname, basename } from 'path';
+import { homedir } from 'os';
+import type { FSWatcher } from 'fs';
+import { debug } from '../utils/debug.ts';
+import { loadStoredConfig, type StoredConfig } from './storage.ts';
+import {
+  validateConfig,
+  validatePreferences,
+  validateSource,
+  validateAgent,
+  type ValidationResult,
+} from './validators.ts';
+import type { LoadedSource, SourceGuide } from '../sources/types.ts';
+import type { LoadedAgent } from '../agents/folder-types.ts';
+import { loadSource, loadWorkspaceSources, loadSourceGuide } from '../sources/storage.ts';
+import { loadAgent, loadWorkspaceAgents, loadAgentInstructions } from '../agents/folder-storage.ts';
+import { getWorkspaceSourcesPath, getWorkspaceAgentsPath } from '../workspaces/storage.ts';
+
+// ============================================================
+// Constants
+// ============================================================
+
+const CONFIG_DIR = join(homedir(), '.craft-agent');
+const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
+const PREFERENCES_FILE = join(CONFIG_DIR, 'preferences.json');
+
+// Debounce delay in milliseconds
+const DEBOUNCE_MS = 100;
+
+// ============================================================
+// Types
+// ============================================================
+
+/**
+ * User preferences structure (mirrors UserPreferencesSchema)
+ */
+export interface UserPreferences {
+  name?: string;
+  timezone?: string;
+  location?: {
+    city?: string;
+    region?: string;
+    country?: string;
+  };
+  language?: string;
+  notes?: string;
+  updatedAt?: number;
+}
+
+/**
+ * Callbacks for config changes
+ */
+export interface ConfigWatcherCallbacks {
+  /** Called when config.json changes */
+  onConfigChange?: (config: StoredConfig) => void;
+  /** Called when preferences.json changes */
+  onPreferencesChange?: (prefs: UserPreferences) => void;
+
+  // Source callbacks
+  /** Called when a specific source config changes (null if deleted) */
+  onSourceChange?: (slug: string, source: LoadedSource | null) => void;
+  /** Called when a source's guide.md changes */
+  onSourceGuideChange?: (slug: string, guide: SourceGuide) => void;
+  /** Called when the sources list changes (add/remove folders) */
+  onSourcesListChange?: (sources: LoadedSource[]) => void;
+
+  // Agent callbacks
+  /** Called when a specific agent config changes (null if deleted) */
+  onAgentChange?: (slug: string, agent: LoadedAgent | null) => void;
+  /** Called when an agent's instructions.md changes */
+  onAgentInstructionsChange?: (slug: string, instructions: string) => void;
+  /** Called when the agents list changes (add/remove folders) */
+  onAgentsListChange?: (agents: LoadedAgent[]) => void;
+
+  // Error callbacks
+  /** Called when a validation error occurs */
+  onValidationError?: (file: string, result: ValidationResult) => void;
+  /** Called when an error occurs reading/parsing a file */
+  onError?: (file: string, error: Error) => void;
+}
+
+// ============================================================
+// Preferences Loading
+// ============================================================
+
+/**
+ * Load preferences from file
+ */
+export function loadPreferences(): UserPreferences | null {
+  if (!existsSync(PREFERENCES_FILE)) {
+    return null;
+  }
+
+  try {
+    const content = readFileSync(PREFERENCES_FILE, 'utf-8');
+    return JSON.parse(content) as UserPreferences;
+  } catch (error) {
+    debug('[ConfigWatcher] Error loading preferences', error);
+    return null;
+  }
+}
+
+// ============================================================
+// ConfigWatcher Class
+// ============================================================
+
+/**
+ * Watches config files and triggers callbacks on changes.
+ * Workspace-scoped: watches sources and agents within a specific workspace.
+ */
+export class ConfigWatcher {
+  private workspaceSlug: string;
+  private callbacks: ConfigWatcherCallbacks;
+  private watchers: FSWatcher[] = [];
+  private sourceWatchers: Map<string, FSWatcher[]> = new Map();
+  private agentWatchers: Map<string, FSWatcher[]> = new Map();
+  private debounceTimers: Map<string, NodeJS.Timeout> = new Map();
+  private isRunning = false;
+
+  // Track known items for detecting adds/removes
+  private knownSources: Set<string> = new Set();
+  private knownAgents: Set<string> = new Set();
+
+  // Computed paths
+  private sourcesDir: string;
+  private agentsDir: string;
+
+  constructor(workspaceSlug: string, callbacks: ConfigWatcherCallbacks) {
+    this.workspaceSlug = workspaceSlug;
+    this.callbacks = callbacks;
+    this.sourcesDir = getWorkspaceSourcesPath(workspaceSlug);
+    this.agentsDir = getWorkspaceAgentsPath(workspaceSlug);
+  }
+
+  /**
+   * Get the workspace slug this watcher is scoped to
+   */
+  getWorkspaceSlug(): string {
+    return this.workspaceSlug;
+  }
+
+  /**
+   * Start watching config files
+   */
+  start(): void {
+    if (this.isRunning) {
+      return;
+    }
+
+    this.isRunning = true;
+    debug('[ConfigWatcher] Starting for workspace:', this.workspaceSlug);
+
+    // Watch config.json
+    this.watchFile(CONFIG_FILE, 'config.json', () => this.handleConfigChange());
+
+    // Watch preferences.json
+    this.watchFile(PREFERENCES_FILE, 'preferences.json', () => this.handlePreferencesChange());
+
+    // Watch sources directory
+    this.watchSourcesDir();
+
+    // Watch agents directory
+    this.watchAgentsDir();
+
+    // Initial scan
+    this.scanSources();
+    this.scanAgents();
+
+    debug('[ConfigWatcher] Started watching files');
+  }
+
+  /**
+   * Stop watching all files
+   */
+  stop(): void {
+    if (!this.isRunning) {
+      return;
+    }
+
+    this.isRunning = false;
+
+    // Clear all debounce timers
+    for (const timer of this.debounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.debounceTimers.clear();
+
+    // Close all watchers
+    for (const watcher of this.watchers) {
+      watcher.close();
+    }
+    this.watchers = [];
+
+    // Close source watchers
+    for (const watchers of this.sourceWatchers.values()) {
+      for (const watcher of watchers) {
+        watcher.close();
+      }
+    }
+    this.sourceWatchers.clear();
+
+    // Close agent watchers
+    for (const watchers of this.agentWatchers.values()) {
+      for (const watcher of watchers) {
+        watcher.close();
+      }
+    }
+    this.agentWatchers.clear();
+
+    this.knownSources.clear();
+    this.knownAgents.clear();
+
+    debug('[ConfigWatcher] Stopped');
+  }
+
+  /**
+   * Watch a single file with debouncing.
+   * If file doesn't exist, watches the parent directory for file creation.
+   */
+  private watchFile(filePath: string, name: string, handler: () => void): void {
+    if (existsSync(filePath)) {
+      // File exists, watch it directly
+      this.watchExistingFile(filePath, name, handler);
+    } else {
+      // File doesn't exist, watch parent directory for creation
+      this.watchForFileCreation(filePath, name, handler);
+    }
+  }
+
+  /**
+   * Watch an existing file for changes
+   */
+  private watchExistingFile(filePath: string, name: string, handler: () => void): void {
+    try {
+      const watcher = watch(filePath, (eventType) => {
+        if (eventType === 'change') {
+          this.debounce(name, handler);
+        }
+      });
+
+      this.watchers.push(watcher);
+      debug('[ConfigWatcher] Watching:', name);
+    } catch (error) {
+      debug('[ConfigWatcher] Error watching file:', name, error);
+    }
+  }
+
+  /**
+   * Watch parent directory for file creation, then switch to watching the file
+   */
+  private watchForFileCreation(filePath: string, name: string, handler: () => void): void {
+    const parentDir = dirname(filePath);
+    const fileName = basename(filePath);
+
+    // Ensure parent directory exists
+    if (!existsSync(parentDir)) {
+      debug('[ConfigWatcher] Parent directory does not exist, creating:', parentDir);
+      mkdirSync(parentDir, { recursive: true });
+    }
+
+    try {
+      const watcher = watch(parentDir, (eventType, changedFile) => {
+        // Check if our target file was created
+        if (changedFile === fileName && existsSync(filePath)) {
+          debug('[ConfigWatcher] File created, switching to file watch:', name);
+
+          // Close the directory watcher
+          watcher.close();
+
+          // Remove from watchers array
+          const index = this.watchers.indexOf(watcher);
+          if (index !== -1) {
+            this.watchers.splice(index, 1);
+          }
+
+          // Start watching the file directly
+          this.watchExistingFile(filePath, name, handler);
+
+          // Trigger handler for newly created file
+          this.debounce(name, handler);
+        }
+      });
+
+      this.watchers.push(watcher);
+      debug('[ConfigWatcher] Watching for creation of:', name);
+    } catch (error) {
+      debug('[ConfigWatcher] Error watching for file creation:', name, error);
+    }
+  }
+
+  /**
+   * Debounce a handler by key
+   */
+  private debounce(key: string, handler: () => void): void {
+    const existing = this.debounceTimers.get(key);
+    if (existing) {
+      clearTimeout(existing);
+    }
+
+    const timer = setTimeout(() => {
+      this.debounceTimers.delete(key);
+      handler();
+    }, DEBOUNCE_MS);
+
+    this.debounceTimers.set(key, timer);
+  }
+
+  // ============================================================
+  // Sources Watching
+  // ============================================================
+
+  /**
+   * Watch sources directory for folder changes
+   */
+  private watchSourcesDir(): void {
+    // Ensure directory exists
+    if (!existsSync(this.sourcesDir)) {
+      mkdirSync(this.sourcesDir, { recursive: true });
+    }
+
+    try {
+      const watcher = watch(this.sourcesDir, () => {
+        this.debounce('sources-dir', () => this.handleSourcesDirChange());
+      });
+
+      this.watchers.push(watcher);
+      debug('[ConfigWatcher] Watching sources directory:', this.sourcesDir);
+    } catch (error) {
+      debug('[ConfigWatcher] Error watching sources directory:', error);
+    }
+  }
+
+  /**
+   * Scan sources and set up individual file watchers
+   */
+  private scanSources(): void {
+    if (!existsSync(this.sourcesDir)) {
+      return;
+    }
+
+    try {
+      const entries = readdirSync(this.sourcesDir);
+
+      for (const entry of entries) {
+        const entryPath = join(this.sourcesDir, entry);
+        if (statSync(entryPath).isDirectory()) {
+          this.knownSources.add(entry);
+          this.watchSourceFolder(entry);
+        }
+      }
+    } catch (error) {
+      debug('[ConfigWatcher] Error scanning sources:', error);
+    }
+  }
+
+  /**
+   * Watch a specific source folder (config.json and guide.md)
+   */
+  private watchSourceFolder(slug: string): void {
+    if (this.sourceWatchers.has(slug)) {
+      return;
+    }
+
+    const watchers: FSWatcher[] = [];
+    const sourceDir = join(this.sourcesDir, slug);
+
+    // Watch config.json
+    const configPath = join(sourceDir, 'config.json');
+    if (existsSync(configPath)) {
+      try {
+        const watcher = watch(configPath, (eventType) => {
+          if (eventType === 'change') {
+            this.debounce(`source-config:${slug}`, () => this.handleSourceConfigChange(slug));
+          }
+        });
+        watchers.push(watcher);
+      } catch (error) {
+        debug('[ConfigWatcher] Error watching source config:', slug, error);
+      }
+    }
+
+    // Watch guide.md
+    const guidePath = join(sourceDir, 'guide.md');
+    if (existsSync(guidePath)) {
+      try {
+        const watcher = watch(guidePath, (eventType) => {
+          if (eventType === 'change') {
+            this.debounce(`source-guide:${slug}`, () => this.handleSourceGuideChange(slug));
+          }
+        });
+        watchers.push(watcher);
+      } catch (error) {
+        debug('[ConfigWatcher] Error watching source guide:', slug, error);
+      }
+    }
+
+    if (watchers.length > 0) {
+      this.sourceWatchers.set(slug, watchers);
+      debug('[ConfigWatcher] Watching source:', slug);
+    }
+  }
+
+  /**
+   * Stop watching a specific source
+   */
+  private unwatchSource(slug: string): void {
+    const watchers = this.sourceWatchers.get(slug);
+    if (watchers) {
+      for (const watcher of watchers) {
+        watcher.close();
+      }
+      this.sourceWatchers.delete(slug);
+      debug('[ConfigWatcher] Stopped watching source:', slug);
+    }
+  }
+
+  /**
+   * Handle sources directory change
+   */
+  private handleSourcesDirChange(): void {
+    debug('[ConfigWatcher] Sources directory changed');
+
+    if (!existsSync(this.sourcesDir)) {
+      // Directory was deleted
+      const removed = Array.from(this.knownSources);
+      this.knownSources.clear();
+
+      for (const slug of removed) {
+        this.unwatchSource(slug);
+        this.callbacks.onSourceChange?.(slug, null);
+      }
+
+      this.callbacks.onSourcesListChange?.([]);
+      return;
+    }
+
+    try {
+      const entries = readdirSync(this.sourcesDir);
+      const currentFolders = new Set<string>();
+
+      for (const entry of entries) {
+        const entryPath = join(this.sourcesDir, entry);
+        if (statSync(entryPath).isDirectory()) {
+          currentFolders.add(entry);
+        }
+      }
+
+      // Find added folders
+      for (const folder of currentFolders) {
+        if (!this.knownSources.has(folder)) {
+          debug('[ConfigWatcher] New source folder:', folder);
+          this.knownSources.add(folder);
+          this.watchSourceFolder(folder);
+
+          const source = loadSource(this.workspaceSlug, folder);
+          if (source) {
+            this.callbacks.onSourceChange?.(folder, source);
+          }
+        }
+      }
+
+      // Find removed folders
+      for (const folder of this.knownSources) {
+        if (!currentFolders.has(folder)) {
+          debug('[ConfigWatcher] Removed source folder:', folder);
+          this.knownSources.delete(folder);
+          this.unwatchSource(folder);
+          this.callbacks.onSourceChange?.(folder, null);
+        }
+      }
+
+      // Notify list change
+      const allSources = loadWorkspaceSources(this.workspaceSlug);
+      this.callbacks.onSourcesListChange?.(allSources);
+    } catch (error) {
+      debug('[ConfigWatcher] Error handling sources dir change:', error);
+      this.callbacks.onError?.('sources/', error as Error);
+    }
+  }
+
+  /**
+   * Handle source config.json change
+   */
+  private handleSourceConfigChange(slug: string): void {
+    debug('[ConfigWatcher] Source config changed:', slug);
+
+    const validation = validateSource(this.workspaceSlug, slug);
+    if (!validation.valid) {
+      debug('[ConfigWatcher] Source validation failed:', slug, validation.errors);
+      this.callbacks.onValidationError?.(`sources/${slug}/config.json`, validation);
+      return;
+    }
+
+    const source = loadSource(this.workspaceSlug, slug);
+    this.callbacks.onSourceChange?.(slug, source);
+  }
+
+  /**
+   * Handle source guide.md change
+   */
+  private handleSourceGuideChange(slug: string): void {
+    debug('[ConfigWatcher] Source guide changed:', slug);
+
+    const guide = loadSourceGuide(this.workspaceSlug, slug);
+    if (guide) {
+      this.callbacks.onSourceGuideChange?.(slug, guide);
+    }
+
+    // Also emit full source change
+    const source = loadSource(this.workspaceSlug, slug);
+    if (source) {
+      this.callbacks.onSourceChange?.(slug, source);
+    }
+  }
+
+  // ============================================================
+  // Agents Watching
+  // ============================================================
+
+  /**
+   * Watch agents directory for folder changes
+   */
+  private watchAgentsDir(): void {
+    // Ensure directory exists
+    if (!existsSync(this.agentsDir)) {
+      mkdirSync(this.agentsDir, { recursive: true });
+    }
+
+    try {
+      const watcher = watch(this.agentsDir, () => {
+        this.debounce('agents-dir', () => this.handleAgentsDirChange());
+      });
+
+      this.watchers.push(watcher);
+      debug('[ConfigWatcher] Watching agents directory:', this.agentsDir);
+    } catch (error) {
+      debug('[ConfigWatcher] Error watching agents directory:', error);
+    }
+  }
+
+  /**
+   * Scan agents and set up individual file watchers
+   */
+  private scanAgents(): void {
+    if (!existsSync(this.agentsDir)) {
+      return;
+    }
+
+    try {
+      const entries = readdirSync(this.agentsDir);
+
+      for (const entry of entries) {
+        const entryPath = join(this.agentsDir, entry);
+        if (statSync(entryPath).isDirectory()) {
+          this.knownAgents.add(entry);
+          this.watchAgentFolder(entry);
+        }
+      }
+    } catch (error) {
+      debug('[ConfigWatcher] Error scanning agents:', error);
+    }
+  }
+
+  /**
+   * Watch a specific agent folder (config.json and instructions.md)
+   */
+  private watchAgentFolder(slug: string): void {
+    if (this.agentWatchers.has(slug)) {
+      return;
+    }
+
+    const watchers: FSWatcher[] = [];
+    const agentDir = join(this.agentsDir, slug);
+
+    // Watch config.json
+    const configPath = join(agentDir, 'config.json');
+    if (existsSync(configPath)) {
+      try {
+        const watcher = watch(configPath, (eventType) => {
+          if (eventType === 'change') {
+            this.debounce(`agent-config:${slug}`, () => this.handleAgentConfigChange(slug));
+          }
+        });
+        watchers.push(watcher);
+      } catch (error) {
+        debug('[ConfigWatcher] Error watching agent config:', slug, error);
+      }
+    }
+
+    // Watch instructions.md
+    const instructionsPath = join(agentDir, 'instructions.md');
+    if (existsSync(instructionsPath)) {
+      try {
+        const watcher = watch(instructionsPath, (eventType) => {
+          if (eventType === 'change') {
+            this.debounce(`agent-instructions:${slug}`, () =>
+              this.handleAgentInstructionsChange(slug)
+            );
+          }
+        });
+        watchers.push(watcher);
+      } catch (error) {
+        debug('[ConfigWatcher] Error watching agent instructions:', slug, error);
+      }
+    }
+
+    if (watchers.length > 0) {
+      this.agentWatchers.set(slug, watchers);
+      debug('[ConfigWatcher] Watching agent:', slug);
+    }
+  }
+
+  /**
+   * Stop watching a specific agent
+   */
+  private unwatchAgent(slug: string): void {
+    const watchers = this.agentWatchers.get(slug);
+    if (watchers) {
+      for (const watcher of watchers) {
+        watcher.close();
+      }
+      this.agentWatchers.delete(slug);
+      debug('[ConfigWatcher] Stopped watching agent:', slug);
+    }
+  }
+
+  /**
+   * Handle agents directory change
+   */
+  private handleAgentsDirChange(): void {
+    debug('[ConfigWatcher] Agents directory changed');
+
+    if (!existsSync(this.agentsDir)) {
+      // Directory was deleted
+      const removed = Array.from(this.knownAgents);
+      this.knownAgents.clear();
+
+      for (const slug of removed) {
+        this.unwatchAgent(slug);
+        this.callbacks.onAgentChange?.(slug, null);
+      }
+
+      this.callbacks.onAgentsListChange?.([]);
+      return;
+    }
+
+    try {
+      const entries = readdirSync(this.agentsDir);
+      const currentFolders = new Set<string>();
+
+      for (const entry of entries) {
+        const entryPath = join(this.agentsDir, entry);
+        if (statSync(entryPath).isDirectory()) {
+          currentFolders.add(entry);
+        }
+      }
+
+      // Find added folders
+      for (const folder of currentFolders) {
+        if (!this.knownAgents.has(folder)) {
+          debug('[ConfigWatcher] New agent folder:', folder);
+          this.knownAgents.add(folder);
+          this.watchAgentFolder(folder);
+
+          const agent = loadAgent(this.workspaceSlug, folder);
+          if (agent) {
+            this.callbacks.onAgentChange?.(folder, agent);
+          }
+        }
+      }
+
+      // Find removed folders
+      for (const folder of this.knownAgents) {
+        if (!currentFolders.has(folder)) {
+          debug('[ConfigWatcher] Removed agent folder:', folder);
+          this.knownAgents.delete(folder);
+          this.unwatchAgent(folder);
+          this.callbacks.onAgentChange?.(folder, null);
+        }
+      }
+
+      // Notify list change
+      const allAgents = loadWorkspaceAgents(this.workspaceSlug);
+      this.callbacks.onAgentsListChange?.(allAgents);
+    } catch (error) {
+      debug('[ConfigWatcher] Error handling agents dir change:', error);
+      this.callbacks.onError?.('agents/', error as Error);
+    }
+  }
+
+  /**
+   * Handle agent config.json change
+   */
+  private handleAgentConfigChange(slug: string): void {
+    debug('[ConfigWatcher] Agent config changed:', slug);
+
+    const validation = validateAgent(this.workspaceSlug, slug);
+    if (!validation.valid) {
+      debug('[ConfigWatcher] Agent validation failed:', slug, validation.errors);
+      this.callbacks.onValidationError?.(`agents/${slug}/config.json`, validation);
+      return;
+    }
+
+    const agent = loadAgent(this.workspaceSlug, slug);
+    this.callbacks.onAgentChange?.(slug, agent);
+  }
+
+  /**
+   * Handle agent instructions.md change
+   */
+  private handleAgentInstructionsChange(slug: string): void {
+    debug('[ConfigWatcher] Agent instructions changed:', slug);
+
+    const instructions = loadAgentInstructions(this.workspaceSlug, slug);
+    if (instructions !== null) {
+      this.callbacks.onAgentInstructionsChange?.(slug, instructions);
+    }
+
+    // Also emit full agent change
+    const agent = loadAgent(this.workspaceSlug, slug);
+    if (agent) {
+      this.callbacks.onAgentChange?.(slug, agent);
+    }
+  }
+
+  // ============================================================
+  // Config & Preferences Handlers
+  // ============================================================
+
+  /**
+   * Handle config.json change
+   */
+  private handleConfigChange(): void {
+    debug('[ConfigWatcher] config.json changed');
+
+    const validation = validateConfig();
+    if (!validation.valid) {
+      debug('[ConfigWatcher] Config validation failed:', validation.errors);
+      this.callbacks.onValidationError?.('config.json', validation);
+      return;
+    }
+
+    const config = loadStoredConfig();
+    if (config) {
+      this.callbacks.onConfigChange?.(config);
+    } else {
+      this.callbacks.onError?.('config.json', new Error('Failed to load config'));
+    }
+  }
+
+  /**
+   * Handle preferences.json change
+   */
+  private handlePreferencesChange(): void {
+    debug('[ConfigWatcher] preferences.json changed');
+
+    const validation = validatePreferences();
+    if (!validation.valid) {
+      debug('[ConfigWatcher] Preferences validation failed:', validation.errors);
+      this.callbacks.onValidationError?.('preferences.json', validation);
+      return;
+    }
+
+    const prefs = loadPreferences();
+    if (prefs) {
+      this.callbacks.onPreferencesChange?.(prefs);
+    }
+  }
+}
+
+// ============================================================
+// Factory Function
+// ============================================================
+
+/**
+ * Create and start a config watcher for a specific workspace.
+ * Returns the watcher instance for later cleanup.
+ */
+export function createConfigWatcher(
+  workspaceSlug: string,
+  callbacks: ConfigWatcherCallbacks
+): ConfigWatcher {
+  const watcher = new ConfigWatcher(workspaceSlug, callbacks);
+  watcher.start();
+  return watcher;
+}
