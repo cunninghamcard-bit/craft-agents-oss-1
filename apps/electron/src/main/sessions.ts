@@ -914,7 +914,7 @@ export class SessionManager {
     // IMMEDIATELY update the agent's source servers if agent exists
     // This ensures tool availability is updated mid-conversation
     if (managed.agent) {
-      managed.agent.setConnectionServers(mcpServers, {})
+      managed.agent.setSourceServers(mcpServers, {})
       console.log(`[SessionManager] Applied ${Object.keys(mcpServers).length} MCP sources to active agent`)
     }
 
@@ -1194,7 +1194,7 @@ export class SessionManager {
 
       // Apply source servers to the agent
       if (managed.sourceMcpServers && Object.keys(managed.sourceMcpServers).length > 0) {
-        agent.setConnectionServers(managed.sourceMcpServers, {})
+        agent.setSourceServers(managed.sourceMcpServers, {})
         console.log(`[SessionManager] Applied ${Object.keys(managed.sourceMcpServers).length} MCP sources to session ${sessionId}`)
       }
     }

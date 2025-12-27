@@ -9,7 +9,7 @@
 import * as React from 'react'
 import { useEffect, useState, useMemo, useCallback } from 'react'
 import { AlertCircle, AlertTriangle, CheckCircle2, ChevronRight, Lock, Globe } from 'lucide-react'
-import { ConnectionAvatar } from '@/components/ui/connection-avatar'
+import { SourceAvatar } from '@/components/ui/source-avatar'
 import { McpIcon } from '@/components/icons/McpIcon'
 import { Spinner } from '@/components/ui/loading-indicator'
 import { Badge } from '@/components/ui/badge'
@@ -197,7 +197,7 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
                     return (
                       <li key={i} className="bg-muted/50 rounded-md px-4 py-3 select-none">
                         <div className="flex items-start gap-3">
-                          <ConnectionAvatar
+                          <SourceAvatar
                             type="mcp"
                             name={server.name}
                             logoUrl={server.logo}
@@ -290,7 +290,7 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
                   {authStatus.apis.map((api, i) => (
                     <li key={i} className="bg-muted/50 rounded-md px-4 py-3">
                       <div className="flex items-start gap-3">
-                        <ConnectionAvatar
+                        <SourceAvatar
                           type="api"
                           name={api.name}
                           logoUrl={api.logo}
@@ -336,7 +336,7 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
                   {definition.apis.map((api, i) => (
                     <li key={i} className="bg-muted/50 rounded-md px-4 py-3">
                       <div className="flex items-start gap-3">
-                        <ConnectionAvatar
+                        <SourceAvatar
                           type="api"
                           name={api.name}
                           logoUrl={api.logo}
@@ -360,7 +360,7 @@ export default function AgentInfoTabPanel({ tab }: AgentInfoTabPanelProps) {
                 </ul>
               ) : (
                 <p className="text-sm text-muted-foreground">
-                  No API connections configured
+                  No API sources configured
                 </p>
               )}
             </div>

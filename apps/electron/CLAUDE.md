@@ -15,7 +15,7 @@ This is the Electron desktop app for Craft Agent - a GUI alternative to the TUI.
 **Always use shadcn/ui components** for building the UI. Never create custom button, input, or other primitive components - use the existing shadcn components from `@/components/ui/`.
 
 Available components in `src/renderer/components/ui/`:
-- `avatar`, `avatar-group`, `badge`, `button`, `collapsible`, `connection-avatar`, `dialog`, `dropdown-menu`
+- `avatar`, `avatar-group`, `badge`, `button`, `collapsible`, `source-avatar`, `dialog`, `dropdown-menu`
 - `input`, `kbd`, `label`, `loading-indicator`, `popover`, `resizable`, `scroll-area`
 - `select`, `separator`, `service-logo`, `sonner`, `switch`, `tabs`, `textarea`, `tooltip`
 
@@ -64,15 +64,15 @@ The spinner is based on [SpinKit Grid](https://github.com/tobiasahlin/SpinKit):
 - Pure CSS animation (no JS state needed)
 - CSS defined in `index.css` (`.spinner` class)
 
-### Connection Avatars
+### Source Avatars
 
-**Always use `ConnectionAvatar`** for displaying connection icons (MCP servers, APIs, Gmail). Never use `ServiceLogo` directly or create custom avatar implementations.
+**Always use `SourceAvatar`** for displaying source icons (MCP servers, APIs, Gmail). Never use `ServiceLogo` directly or create custom avatar implementations.
 
 ```tsx
-import { ConnectionAvatar } from "@/components/ui/connection-avatar"
+import { SourceAvatar } from "@/components/ui/source-avatar"
 
 // Basic usage - type determines fallback icon automatically
-<ConnectionAvatar
+<SourceAvatar
   type="mcp"           // 'mcp' | 'api' | 'gmail'
   name="My Server"     // Alt text
   logoUrl={server.logo} // Google Favicon URL (optional)
@@ -80,19 +80,19 @@ import { ConnectionAvatar } from "@/components/ui/connection-avatar"
 />
 
 // Derive logo from service URL (no logoUrl needed)
-<ConnectionAvatar
+<SourceAvatar
   type="api"
   name="GitHub API"
   serviceUrl="https://api.github.com"  // Will generate favicon URL
   size="lg"
 />
 
-// In connection lists
-{connections.map(conn => (
-  <ConnectionAvatar
-    type={conn.type as ConnectionType}
-    name={conn.name}
-    serviceUrl={getConnectionLogoUrl(conn)}
+// In source lists
+{sources.map(source => (
+  <SourceAvatar
+    type={source.type as SourceType}
+    name={source.name}
+    serviceUrl={getSourceLogoUrl(source)}
     size="sm"
   />
 ))}
@@ -101,7 +101,7 @@ import { ConnectionAvatar } from "@/components/ui/connection-avatar"
 **Size variants:**
 | Size | Dimensions | Use case |
 |------|------------|----------|
-| `xs` | 14x14 | Inline, sidebar connection list |
+| `xs` | 14x14 | Inline, sidebar source list |
 | `sm` | 16x16 | Dropdowns, avatar groups |
 | `md` | 20x20 | Auth steps, setup flows |
 | `lg` | 24x24 | Info panels, detail views |
@@ -339,7 +339,7 @@ apps/electron/
 │   │   ├── sessions.ts    # SessionManager - CraftAgent integration
 │   │   ├── deep-link.ts   # Deep link URL parsing and handling
 │   │   ├── agent-service.ts # Agent listing, caching, auth checking
-│   │   ├── connection-service.ts # Connection and authentication service
+│   │   ├── sources-service.ts # Source and authentication service
 │   │   ├── onboarding.ts  # Onboarding flow management
 │   │   ├── window-manager.ts # Window lifecycle management
 │   │   ├── window-state.ts # Window state persistence

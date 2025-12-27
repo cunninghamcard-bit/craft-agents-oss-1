@@ -235,7 +235,7 @@ export const McpLinkSelector: React.FC<McpLinkSelectorProps> = ({
   return (
     <Box flexDirection="column">
       <Text dimColor>
-        Existing connections for <Text color="cyan">{spaceName}</Text>:
+        Existing sources for <Text color="cyan">{spaceName}</Text>:
       </Text>
 
       <Box flexDirection="column" marginY={1}>
@@ -257,7 +257,7 @@ export const McpLinkSelector: React.FC<McpLinkSelectorProps> = ({
             {selectedIndex === mcpLinks.length ? '› ' : '  '}
           </Text>
           <Text color={selectedIndex === mcpLinks.length ? 'cyan' : 'gray'}>
-            + Create new connection
+            + Create new source
           </Text>
         </Box>
       </Box>

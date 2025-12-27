@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { ExternalLink, CheckCircle2, Clock, SkipForward } from "lucide-react"
-import { ConnectionAvatar } from "@/components/ui/connection-avatar"
+import { SourceAvatar } from "@/components/ui/source-avatar"
 import { StepFormLayout, BackButton, ContinueButton } from "@/components/onboarding/primitives"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -157,7 +157,7 @@ export function McpAuthStep({
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
-                    <ConnectionAvatar
+                    <SourceAvatar
                       type="mcp"
                       name={server.name}
                       logoUrl={server.logo}

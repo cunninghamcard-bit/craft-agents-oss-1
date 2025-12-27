@@ -31,7 +31,6 @@ import {
 } from "../icons/TodoStateIcons"
 import { Spinner } from "@/components/ui/loading-indicator"
 import { AvatarGroup } from "@/components/ui/avatar-group"
-import { ConnectionAvatar } from "@/components/ui/connection-avatar"
 import { SourceAvatar } from "@/components/ui/source-avatar"
 import { AppMenu } from "../AppMenu"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
@@ -295,7 +294,7 @@ function AgentTree({
                   className="shrink-0"
                 >
                   {allServices.map((service, i) => (
-                    <ConnectionAvatar
+                    <SourceAvatar
                       key={i}
                       type={service.type}
                       name={service.name}
@@ -544,7 +543,7 @@ export function Chat({
     return storage.get(storage.KEYS.sourcesCollapsed, false)
   })
 
-  // Sources state (replaces connections)
+  // Sources state
   const [sources, setSources] = React.useState<LoadedSource[]>([])
 
   // Load sources from backend on mount

@@ -23,7 +23,7 @@ export function StartStep({
   return (
     <StepFormLayout
       title={`Activate ${agentName}`}
-      description="This will read the agent's configuration from Craft and set up any required connections."
+      description="This will read the agent's configuration from Craft and set up any required sources."
       actions={
         <>
           {onCancel && (

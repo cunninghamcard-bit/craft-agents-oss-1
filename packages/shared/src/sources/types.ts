@@ -6,7 +6,7 @@
  *
  * File structure (workspace-scoped):
  * ~/.craft-agent/workspaces/{workspaceSlug}/sources/{sourceSlug}/
- *   ├── config.json   - Connection settings
+ *   ├── config.json   - Source settings
  *   ├── guide.md      - Usage guidelines + cached data (in YAML frontmatter)
  *   └── icon.png      - Optional custom icon
  *
@@ -15,7 +15,7 @@
  */
 
 /**
- * Source connection types - how we connect to the source
+ * Source types - how we connect to the source
  */
 export type SourceType = 'mcp' | 'api' | 'local';
 

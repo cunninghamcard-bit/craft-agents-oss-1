@@ -485,12 +485,12 @@ export class CraftAgent {
   private agentMcpServers: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }> = {};
   // In-process MCP servers for API integrations (created from ApiConfig)
   private agentApiServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
-  // Pre-built connection server configs (user-defined connections, separate from agent)
-  private connectionMcpServers: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }> = {};
-  // In-process MCP servers for connection API integrations
-  private connectionApiServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
-  // Set of active connection server names (for blocking disabled connections)
-  private activeConnectionServerNames: Set<string> = new Set();
+  // Pre-built source server configs (user-defined sources, separate from agent)
+  private sourceMcpServers: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }> = {};
+  // In-process MCP servers for source API integrations
+  private sourceApiServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
+  // Set of active source server names (for blocking disabled sources)
+  private activeSourceServerNames: Set<string> = new Set();
   // Temporary clarifications (not yet saved to Craft document)
   private temporaryClarifications: string | null = null;
   // Map tool_use_id → explicit intent from _intent field (for summarization and UI display)
@@ -503,7 +503,7 @@ export class CraftAgent {
   private sdkTools: string[] = [];
   // Ultrathink mode - when enabled, sets maxThinkingTokens for extended reasoning
   private ultrathinkMode: boolean = false;
-  // Config file watcher for hot-reloading connection changes
+  // Config file watcher for hot-reloading source changes
   private configWatcher: ConfigWatcher | null = null;
 
   /**
@@ -593,7 +593,7 @@ export class CraftAgent {
       },
     });
 
-    // Start config watcher for hot-reloading connection changes
+    // Start config watcher for hot-reloading source changes
     // Only start in non-headless mode to avoid overhead in batch/script scenarios
     if (!this.isHeadless) {
       this.startConfigWatcher();
@@ -649,15 +649,15 @@ export class CraftAgent {
   }
 
   /**
-   * Handle a connection config update from the file watcher.
+   * Handle a source config update from the file watcher.
    * Updates internal MCP/API server state when a source changes.
    */
   private handleSourceUpdate(slug: string, source: LoadedSource | null): void {
     if (!source) {
       // Source was deleted - remove from active servers
-      delete this.connectionMcpServers[slug];
-      delete this.connectionApiServers[slug];
-      this.activeConnectionServerNames.delete(slug);
+      delete this.sourceMcpServers[slug];
+      delete this.sourceApiServers[slug];
+      this.activeSourceServerNames.delete(slug);
       debug('[CraftAgent] Removed source:', slug);
       return;
     }
@@ -665,13 +665,13 @@ export class CraftAgent {
     // Source was updated - check if we need to update server state
     if (!source.config.enabled) {
       // Disabled - remove from active servers
-      delete this.connectionMcpServers[slug];
-      delete this.connectionApiServers[slug];
-      this.activeConnectionServerNames.delete(slug);
+      delete this.sourceMcpServers[slug];
+      delete this.sourceApiServers[slug];
+      this.activeSourceServerNames.delete(slug);
       debug('[CraftAgent] Disabled source:', slug);
     } else {
       // Enabled - add to active servers (will be rebuilt on next query)
-      this.activeConnectionServerNames.add(slug);
+      this.activeSourceServerNames.add(slug);
       debug('[CraftAgent] Enabled source:', slug);
       // Note: Actual MCP/API server configs are rebuilt in getOptions()
       // This just marks the source as active for the next run
@@ -884,13 +884,13 @@ export class CraftAgent {
       // Block SDK's plan mode tools (we don't use them - safe mode is user-controlled)
       const disallowedTools: string[] = ['EnterPlanMode', 'ExitPlanMode'];
 
-      // Build MCP servers config - always use HTTP (SDK handles connections efficiently)
+      // Build MCP servers config - always use HTTP (SDK handles sources efficiently)
       const agentMcpServers = this.getAgentMcpServers();
       const agentApiServers = this.getAgentApiServers();
       debug('[chat] agentMcpServers:', agentMcpServers);
       debug('[chat] agentApiServers:', agentApiServers);
-      debug('[chat] connectionMcpServers:', this.connectionMcpServers);
-      debug('[chat] connectionApiServers:', this.connectionApiServers);
+      debug('[chat] sourceMcpServers:', this.sourceMcpServers);
+      debug('[chat] sourceApiServers:', this.sourceApiServers);
 
       const hasActiveAgent = this.activeAgentDefinition !== null;
       const mcpServers: Options['mcpServers'] = {
@@ -907,10 +907,10 @@ export class CraftAgent {
         ...agentMcpServers,
         // Add in-process API servers (REST APIs converted to MCP tools)
         ...agentApiServers,
-        // Add user-defined connection servers (MCP and API)
+        // Add user-defined source servers (MCP and API)
         // Note: Craft MCP server is now added via sources system
-        ...this.connectionMcpServers,
-        ...this.connectionApiServers,
+        ...this.sourceMcpServers,
+        ...this.sourceApiServers,
       };
 
       // Debug: log active agent before building system prompt
@@ -995,9 +995,9 @@ export class CraftAgent {
               }
 
               // ============================================================
-              // CONNECTION BLOCKING: Block tools from disabled connections
-              // Connections can be disabled mid-conversation, so we check
-              // against the current active connection set on each tool call
+              // SOURCE BLOCKING: Block tools from disabled sources
+              // Sources can be disabled mid-conversation, so we check
+              // against the current active source set on each tool call
               // ============================================================
               if (input.tool_name.startsWith('mcp__')) {
                 // Extract server name from tool name (mcp__<server>__<tool>)
@@ -1007,21 +1007,21 @@ export class CraftAgent {
                   // Built-in MCP servers that are always available (session-scoped tools)
                   const builtInMcpServers = new Set(['preferences', 'session', 'docs']);
 
-                  // Check if this is a connection server (not built-in, not agent server)
+                  // Check if this is a source server (not built-in, not agent server)
                   if (!builtInMcpServers.has(serverName)) {
                     // Check if this is an agent server (from active agent definition)
                     const isAgentServer = Object.keys(this.agentMcpServers).includes(serverName) ||
                                           Object.keys(this.agentApiServers).includes(serverName);
 
-                    // If not an agent server, it must be a connection server
+                    // If not an agent server, it must be a source server
                     if (!isAgentServer) {
-                      const isActive = this.activeConnectionServerNames.has(serverName);
+                      const isActive = this.activeSourceServerNames.has(serverName);
                       if (!isActive) {
-                        this.onDebug?.(`BLOCKED connection tool: ${input.tool_name} (connection "${serverName}" is no longer available)`);
+                        this.onDebug?.(`BLOCKED source tool: ${input.tool_name} (source "${serverName}" is no longer available)`);
                         return {
                           continue: false,
                           decision: 'block' as const,
-                          reason: `Connection "${serverName}" is no longer available. The connection may have been disabled or its credentials expired. Please check the connection status and re-enable it if needed.`,
+                          reason: `Source "${serverName}" is no longer available. The source may have been disabled or its credentials expired. Please check the source status and re-enable it if needed.`,
                         };
                       }
                     }
@@ -1593,24 +1593,24 @@ export class CraftAgent {
   }
 
   /**
-   * Format connection state as a lightweight XML block for injection into user messages.
-   * Only included when there are selected connections (active or inactive).
-   * This informs the agent about which connections are available vs unavailable.
+   * Format source state as a lightweight XML block for injection into user messages.
+   * Only included when there are selected sources (active or inactive).
+   * This informs the agent about which sources are available vs unavailable.
    */
-  private formatConnectionState(): string {
-    const activeNames = [...this.activeConnectionServerNames].sort();
+  private formatSourceState(): string {
+    const activeNames = [...this.activeSourceServerNames].sort();
 
     if (activeNames.length === 0) {
-      return `<connections>
+      return `<sources>
 Available: none
-Only use tools from connections listed above. If a connection was available earlier but is not listed here, it has been disabled.
-</connections>`;
+Only use tools from sources listed above. If a source was available earlier but is not listed here, it has been disabled.
+</sources>`;
     }
 
-    return `<connections>
+    return `<sources>
 Available: ${activeNames.join(', ')}
-Only use tools from connections listed above. If a connection was available earlier but is not listed here, it has been disabled.
-</connections>`;
+Only use tools from sources listed above. If a source was available earlier but is not listed here, it has been disabled.
+</sources>`;
   }
 
   /**
@@ -1630,8 +1630,8 @@ Only use tools from connections listed above. If a connection was available earl
     const plansFolderPath = getSessionPlansPath(this.workspaceSlug, this.modeSessionId);
     parts.push(formatSessionState(this.modeSessionId, { plansFolderPath }));
 
-    // Add connection state (always included to inform agent about available connections)
-    parts.push(this.formatConnectionState());
+    // Add source state (always included to inform agent about available sources)
+    parts.push(this.formatSourceState());
 
     // Add working directory context if set
     const workingDirContext = getWorkingDirectoryContext(this.config.session?.workingDirectory);
@@ -1674,8 +1674,8 @@ Only use tools from connections listed above. If a connection was available earl
     const plansFolderPath = getSessionPlansPath(this.workspaceSlug, this.modeSessionId);
     contentBlocks.push({ type: 'text', text: formatSessionState(this.modeSessionId, { plansFolderPath }) });
 
-    // Add connection state (always included to inform agent about available connections)
-    contentBlocks.push({ type: 'text', text: this.formatConnectionState() });
+    // Add source state (always included to inform agent about available sources)
+    contentBlocks.push({ type: 'text', text: this.formatSourceState() });
 
     // Add working directory context if set
     const workingDirContext = getWorkingDirectoryContext(this.config.session?.workingDirectory);
@@ -2312,40 +2312,40 @@ Only use tools from connections listed above. If a connection was available earl
   }
 
   /**
-   * Set connection servers (user-defined connections, separate from agent)
-   * These are MCP servers and API tools added via the connection selector UI
+   * Set source servers (user-defined sources, separate from agent)
+   * These are MCP servers and API tools added via the source selector UI
    * @param mcpServers Pre-built MCP server configs with auth headers
    * @param apiServers In-process MCP servers for REST APIs
    */
-  setConnectionServers(
+  setSourceServers(
     mcpServers: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }>,
     apiServers: Record<string, ReturnType<typeof createSdkMcpServer>>
   ): void {
-    this.connectionMcpServers = mcpServers;
-    this.connectionApiServers = apiServers;
+    this.sourceMcpServers = mcpServers;
+    this.sourceApiServers = apiServers;
 
-    // Update the set of active connection server names for tool blocking
-    this.activeConnectionServerNames = new Set([
+    // Update the set of active source server names for tool blocking
+    this.activeSourceServerNames = new Set([
       ...Object.keys(mcpServers),
       ...Object.keys(apiServers),
     ]);
-    this.onDebug?.(`Active connection servers: ${[...this.activeConnectionServerNames].join(', ') || 'none'}`);
+    this.onDebug?.(`Active source servers: ${[...this.activeSourceServerNames].join(', ') || 'none'}`);
   }
 
   /**
-   * Check if a connection server is currently active (enabled and authenticated)
-   * Used by PreToolUse hook to block tools from disabled connections
+   * Check if a source server is currently active (enabled and authenticated)
+   * Used by PreToolUse hook to block tools from disabled sources
    */
-  isConnectionServerActive(serverName: string): boolean {
-    return this.activeConnectionServerNames.has(serverName);
+  isSourceServerActive(serverName: string): boolean {
+    return this.activeSourceServerNames.has(serverName);
   }
 
   /**
-   * Get the set of active connection server names
-   * Used to inform the agent about available connections
+   * Get the set of active source server names
+   * Used to inform the agent about available sources
    */
-  getActiveConnectionServerNames(): Set<string> {
-    return this.activeConnectionServerNames;
+  getActiveSourceServerNames(): Set<string> {
+    return this.activeSourceServerNames;
   }
 
   /**

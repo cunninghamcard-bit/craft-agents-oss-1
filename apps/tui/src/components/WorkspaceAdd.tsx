@@ -555,7 +555,7 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
         <Box flexDirection="column">
           <Box>
             <AnimatedSpinner />
-            <Text> Loading MCP connections for {selectedSpace?.name}...</Text>
+            <Text> Loading MCP sources for {selectedSpace?.name}...</Text>
           </Box>
         </Box>
       )}
@@ -575,7 +575,7 @@ export const WorkspaceAdd: React.FC<WorkspaceAddProps> = ({ onComplete, onCancel
         <Box flexDirection="column">
           <Box>
             <AnimatedSpinner />
-            <Text> Creating new MCP connection...</Text>
+            <Text> Creating new MCP source...</Text>
           </Box>
         </Box>
       )}

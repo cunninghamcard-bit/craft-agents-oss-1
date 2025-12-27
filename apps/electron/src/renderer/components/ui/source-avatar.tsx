@@ -1,12 +1,11 @@
 /**
- * SourceAvatar - Avatar component for sources
+ * SourceAvatar - Unified avatar component for sources
  *
- * Provides consistent styling for source icons.
+ * Provides consistent styling for all source icons (global sources and subagent sources).
  * Uses CrossfadeAvatar internally for smooth image loading with fallback support.
  *
  * Size variants:
- * - xs: 14x14 (inline)
- * - sm: 16x16 (dropdowns, sidebar)
+ * - sm: 16x16 (dropdowns, inline, sidebar)
  * - md: 20x20 (auth steps)
  * - lg: 24x24 (info panels)
  */
@@ -14,17 +13,22 @@
 import * as React from 'react'
 import { CrossfadeAvatar } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
-import { Globe, Folder, Plug } from 'lucide-react'
+import { Mail, Plug, Globe } from 'lucide-react'
 import { McpIcon } from '@/components/icons/McpIcon'
 import { getLogoUrl } from '@craft-agent/shared/utils/logo'
-import type { LoadedSource } from '../../../shared/types'
-import type { SourceType } from '@craft-agent/shared/sources'
 
+export type SourceType = 'mcp' | 'api' | 'gmail'
 export type SourceAvatarSize = 'xs' | 'sm' | 'md' | 'lg'
 
 interface SourceAvatarProps {
-  /** Source to display */
-  source: LoadedSource
+  /** Source type for automatic fallback icon */
+  type: SourceType
+  /** Service name for alt text */
+  name: string
+  /** Logo URL (Google Favicon URL) - if not provided, derives from serviceUrl */
+  logoUrl?: string | null
+  /** Service URL to derive logo from (used if logoUrl not provided) */
+  serviceUrl?: string
   /** Size variant */
   size?: SourceAvatarSize
   /** Additional className overrides */
@@ -43,36 +47,34 @@ const SIZE_CONFIG: Record<SourceAvatarSize, { container: string; icon: string }>
 const FALLBACK_ICONS: Record<SourceType, React.ComponentType<{ className?: string }>> = {
   mcp: McpIcon,
   api: Globe,
-  local: Folder,
+  gmail: Mail,
 }
 
 /**
- * Get the service URL for a source (for logo derivation)
+ * Get the fallback icon for a source type
  */
-function getSourceServiceUrl(source: LoadedSource): string | null {
-  const { config } = source
-  if (config.mcp?.url) return config.mcp.url
-  if (config.api?.baseUrl) return config.api.baseUrl
-  if (config.local?.websiteUrl) return config.local.websiteUrl
-  return null
+export function getSourceFallbackIcon(type: SourceType): React.ComponentType<{ className?: string }> {
+  return FALLBACK_ICONS[type] ?? Plug
 }
 
 export function SourceAvatar({
-  source,
+  type,
+  name,
+  logoUrl,
+  serviceUrl,
   size = 'md',
   className,
 }: SourceAvatarProps) {
-  // Resolve logo URL from source's service URL, or use custom icon if available
-  const serviceUrl = getSourceServiceUrl(source)
-  const logoUrl = source.iconPath ?? (serviceUrl ? getLogoUrl(serviceUrl) : null)
+  // Resolve logo URL: use provided logoUrl, or derive from serviceUrl
+  const resolvedLogoUrl = logoUrl ?? (serviceUrl ? getLogoUrl(serviceUrl) : null)
 
   const sizeConfig = SIZE_CONFIG[size]
-  const FallbackIcon = FALLBACK_ICONS[source.config.type] ?? Plug
+  const FallbackIcon = FALLBACK_ICONS[type] ?? Plug
 
   return (
     <CrossfadeAvatar
-      src={logoUrl}
-      alt={source.config.name}
+      src={resolvedLogoUrl}
+      alt={name}
       className={cn(
         sizeConfig.container,
         'rounded-[4px] ring-1 ring-border/30 shrink-0',

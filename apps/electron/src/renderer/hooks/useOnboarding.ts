@@ -211,7 +211,7 @@ export function useOnboarding({
             console.error('Failed to setup MCP link:', error)
             setState(s => ({
               ...s,
-              errorMessage: 'Failed to setup workspace connection',
+              errorMessage: 'Failed to setup workspace source',
             }))
           } finally {
             setIsLoadingSpaces(false)
