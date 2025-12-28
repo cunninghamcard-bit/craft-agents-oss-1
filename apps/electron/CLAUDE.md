@@ -66,14 +66,14 @@ The spinner is based on [SpinKit Grid](https://github.com/tobiasahlin/SpinKit):
 
 ### Source Avatars
 
-**Always use `SourceAvatar`** for displaying source icons (MCP servers, APIs, Gmail). Never use `ServiceLogo` directly or create custom avatar implementations.
+**Always use `SourceAvatar`** for displaying source icons (MCP servers, APIs, Gmail, local sources). Never use `ServiceLogo` directly or create custom avatar implementations.
 
 ```tsx
 import { SourceAvatar } from "@/components/ui/source-avatar"
 
-// Basic usage - type determines fallback icon automatically
+// Pattern 1: Direct props - for subagent MCP servers and APIs
 <SourceAvatar
-  type="mcp"           // 'mcp' | 'api' | 'gmail'
+  type="mcp"           // 'mcp' | 'api' | 'gmail' | 'local'
   name="My Server"     // Alt text
   logoUrl={server.logo} // Google Favicon URL (optional)
   size="md"            // 'xs' | 'sm' | 'md' | 'lg'
@@ -87,22 +87,22 @@ import { SourceAvatar } from "@/components/ui/source-avatar"
   size="lg"
 />
 
-// In source lists
-{sources.map(source => (
-  <SourceAvatar
-    type={source.type as SourceType}
-    name={source.name}
-    serviceUrl={getSourceLogoUrl(source)}
-    size="sm"
-  />
+// Pattern 2: Source object - for LoadedSource objects (sidebar, source lists)
+import type { LoadedSource } from '../../../../shared/types'
+
+<SourceAvatar source={loadedSource} size="sm" />
+
+// In sidebar source lists
+{sources.map((source: LoadedSource) => (
+  <SourceAvatar source={source} size="sm" />
 ))}
 ```
 
 **Size variants:**
 | Size | Dimensions | Use case |
 |------|------------|----------|
-| `xs` | 14x14 | Inline, sidebar source list |
-| `sm` | 16x16 | Dropdowns, avatar groups |
+| `xs` | 14x14 | Inline, compact lists |
+| `sm` | 16x16 | Sidebar source list, dropdowns, avatar groups |
 | `md` | 20x20 | Auth steps, setup flows |
 | `lg` | 24x24 | Info panels, detail views |
 
@@ -110,11 +110,12 @@ import { SourceAvatar } from "@/components/ui/source-avatar"
 - `mcp` → MCP icon (plug-like)
 - `api` → Globe icon
 - `gmail` → Mail icon
+- `local` → HardDrive icon
 
 **Features:**
 - Consistent ring border styling (`ring-1 ring-border/30`)
 - Smooth crossfade from fallback to loaded image
-- Auto-derives favicon URL from `serviceUrl` if `logoUrl` not provided
+- Auto-derives favicon URL from `serviceUrl` or `LoadedSource` config
 - Uses Google Favicon API for logos
 
 ### Keyboard Shortcuts

@@ -24,6 +24,7 @@ import { loadStoredConfig, type Workspace } from '@craft-agent/shared/config';
 import { getCredentialManager } from '@craft-agent/shared/credentials';
 import { SubAgentManager } from '@craft-agent/shared/agents';
 import { CraftMcpClient } from '@craft-agent/shared/mcp';
+import { loadWorkspaceSources, type LoadedSource } from '@craft-agent/shared/sources';
 import { debug } from '@craft-agent/shared/utils';
 ```
 
@@ -32,7 +33,7 @@ import { debug } from '@craft-agent/shared/utils';
 ```
 src/
 ├── agent/              # CraftAgent, SubmitPlan tool, errors
-├── agents/             # Subagent management, extraction, cache
+├── agents/             # Agent management, extraction, cache
 ├── auth/               # OAuth, balance, craft-token, state
 ├── clients/            # External API clients (Craft API)
 ├── config/             # Storage, preferences, models
@@ -40,6 +41,7 @@ src/
 ├── headless/           # Non-interactive execution mode
 ├── mcp/                # MCP client and connection validation
 ├── prompts/            # System prompt generation
+├── sources/            # Source types and storage (MCP, API, local)
 ├── subscription/       # Craft subscription checking
 ├── utils/              # Debug logging, file handling, summarization
 ├── validation/         # URL validation
@@ -64,8 +66,11 @@ All sensitive credentials (API keys, OAuth tokens) are stored in an AES-256-GCM 
 ### Configuration (`src/config/storage.ts`)
 Multi-workspace configuration stored in `~/.craft-agent/config.json`. Supports multiple workspaces with separate MCP servers and sessions.
 
-### Subagents (`src/agents/`)
-Subagents are specialized agents defined in Craft documents. The `SubAgentManager` handles discovery, extraction, and activation.
+### Agents (`src/agents/`)
+Agents are specialized configurations that extend the base agent with custom instructions, MCP servers, and REST APIs. Stored as folders at `~/.craft-agent/agents/{slug}/`.
+
+### Sources (`src/sources/`)
+Sources are external data connections (MCP servers, APIs, local filesystems). Stored at `~/.craft-agent/sources/{slug}/` with config.json and guide.md. Types: `mcp`, `api`, `local`.
 
 ## Dependencies
 

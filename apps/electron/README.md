@@ -20,7 +20,8 @@ apps/electron/
 │   │   ├── ipc.ts         # IPC handler registration
 │   │   ├── menu.ts        # Application menu (File, Edit, View, Help)
 │   │   ├── sessions.ts    # Session management, CraftAgent integration
-│   │   └── agent-service.ts # Agent listing, caching, auth checking
+│   │   ├── agent-service.ts # Agent listing, caching, auth checking
+│   │   └── sources-service.ts # Source and authentication service
 │   ├── preload/           # Context bridge (main ↔ renderer)
 │   │   └── index.ts       # Exposes electronAPI to renderer
 │   ├── renderer/          # React UI
@@ -28,7 +29,7 @@ apps/electron/
 │   │   ├── components/
 │   │   │   ├── chat/      # Chat UI (ChatInput, ChatDisplay, PermissionBanner)
 │   │   │   ├── markdown/  # Markdown renderer with Shiki
-│   │   │   └── ui/        # shadcn/ui components
+│   │   │   └── ui/        # shadcn/ui components (incl. source-avatar.tsx)
 │   │   ├── hooks/
 │   │   │   └── useAgentState.ts  # Agent activation state machine
 │   │   └── playground/    # Component development playground
@@ -211,6 +212,7 @@ DevTools opens automatically (configured in `index.ts`). Remove `mainWindow.webC
 | `main/ipc.ts` | IPC channel handlers (sessions, files, shell) |
 | `main/menu.ts` | Application menu (File, Edit, View, Help) |
 | `main/agent-service.ts` | Agent listing, caching, auth checking |
+| `main/sources-service.ts` | Source loading and authentication service |
 | `preload/index.ts` | Context bridge API |
 | `renderer/App.tsx` | React root, state management |
 | `renderer/hooks/useAgentState.ts` | Agent activation state machine (IPC-based) |
@@ -220,5 +222,6 @@ DevTools opens automatically (configured in `index.ts`). Remove `mainWindow.webC
 | `renderer/components/chat/PermissionBanner.tsx` | Bash command approval UI |
 | `renderer/components/chat/SessionList.tsx` | Session sidebar with rename support |
 | `renderer/components/chat/AttachmentPreview.tsx` | File attachment bubbles |
+| `renderer/components/ui/source-avatar.tsx` | Unified source icon component |
 | `renderer/playground/` | Component development playground |
 | `shared/types.ts` | IPC channels, Message/Session/FileAttachment types |

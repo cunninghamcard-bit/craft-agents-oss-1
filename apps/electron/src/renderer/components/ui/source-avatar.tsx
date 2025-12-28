@@ -4,7 +4,12 @@
  * Provides consistent styling for all source icons (global sources and subagent sources).
  * Uses CrossfadeAvatar internally for smooth image loading with fallback support.
  *
+ * Two usage patterns:
+ * 1. Direct props: <SourceAvatar type="mcp" name="Linear" logoUrl="..." />
+ * 2. Source object: <SourceAvatar source={loadedSource} />
+ *
  * Size variants:
+ * - xs: 14x14 (compact)
  * - sm: 16x16 (dropdowns, inline, sidebar)
  * - md: 20x20 (auth steps)
  * - lg: 24x24 (info panels)
@@ -13,14 +18,16 @@
 import * as React from 'react'
 import { CrossfadeAvatar } from '@/components/ui/avatar'
 import { cn } from '@/lib/utils'
-import { Mail, Plug, Globe } from 'lucide-react'
+import { Mail, Plug, Globe, HardDrive } from 'lucide-react'
 import { McpIcon } from '@/components/icons/McpIcon'
 import { getLogoUrl } from '@craft-agent/shared/utils/logo'
+import type { LoadedSource } from '../../../../shared/types'
 
-export type SourceType = 'mcp' | 'api' | 'gmail'
+export type SourceType = 'mcp' | 'api' | 'gmail' | 'local'
 export type SourceAvatarSize = 'xs' | 'sm' | 'md' | 'lg'
 
-interface SourceAvatarProps {
+/** Props for direct usage with explicit type/name/logo */
+interface DirectSourceAvatarProps {
   /** Source type for automatic fallback icon */
   type: SourceType
   /** Service name for alt text */
@@ -33,7 +40,26 @@ interface SourceAvatarProps {
   size?: SourceAvatarSize
   /** Additional className overrides */
   className?: string
+  /** Not used in direct mode */
+  source?: never
 }
+
+/** Props for usage with LoadedSource object */
+interface LoadedSourceAvatarProps {
+  /** LoadedSource object to extract type/name/logo from */
+  source: LoadedSource
+  /** Size variant */
+  size?: SourceAvatarSize
+  /** Additional className overrides */
+  className?: string
+  /** Not used in source mode */
+  type?: never
+  name?: never
+  logoUrl?: never
+  serviceUrl?: never
+}
+
+type SourceAvatarProps = DirectSourceAvatarProps | LoadedSourceAvatarProps
 
 // Size configurations
 const SIZE_CONFIG: Record<SourceAvatarSize, { container: string; icon: string }> = {
@@ -48,6 +74,7 @@ const FALLBACK_ICONS: Record<SourceType, React.ComponentType<{ className?: strin
   mcp: McpIcon,
   api: Globe,
   gmail: Mail,
+  local: HardDrive,
 }
 
 /**
@@ -57,16 +84,39 @@ export function getSourceFallbackIcon(type: SourceType): React.ComponentType<{ c
   return FALLBACK_ICONS[type] ?? Plug
 }
 
-export function SourceAvatar({
-  type,
-  name,
-  logoUrl,
-  serviceUrl,
-  size = 'md',
-  className,
-}: SourceAvatarProps) {
-  // Resolve logo URL: use provided logoUrl, or derive from serviceUrl
-  const resolvedLogoUrl = logoUrl ?? (serviceUrl ? getLogoUrl(serviceUrl) : null)
+/**
+ * Helper to extract service URL from a LoadedSource for logo derivation
+ */
+function getSourceServiceUrl(source: LoadedSource): string | undefined {
+  const config = source.config
+  if (config.mcp?.url) return config.mcp.url
+  if (config.api?.baseUrl) return config.api.baseUrl
+  if (config.local?.websiteUrl) return config.local.websiteUrl
+  return undefined
+}
+
+export function SourceAvatar(props: SourceAvatarProps) {
+  const { size = 'md', className } = props
+
+  // Extract type, name, and logo URL based on props variant
+  let type: SourceType
+  let name: string
+  let resolvedLogoUrl: string | null
+
+  if ('source' in props && props.source) {
+    // LoadedSource mode
+    const source = props.source
+    type = source.config.type as SourceType
+    name = source.config.name
+    const serviceUrl = getSourceServiceUrl(source)
+    resolvedLogoUrl = serviceUrl ? getLogoUrl(serviceUrl) : null
+  } else {
+    // Direct props mode
+    const directProps = props as DirectSourceAvatarProps
+    type = directProps.type
+    name = directProps.name
+    resolvedLogoUrl = directProps.logoUrl ?? (directProps.serviceUrl ? getLogoUrl(directProps.serviceUrl) : null)
+  }
 
   const sizeConfig = SIZE_CONFIG[size]
   const FallbackIcon = FALLBACK_ICONS[type] ?? Plug
