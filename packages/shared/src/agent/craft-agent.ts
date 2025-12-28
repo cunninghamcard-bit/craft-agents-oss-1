@@ -1428,7 +1428,7 @@ export class CraftAgent {
       // See also: apps/electron/src/main/sessions.ts implements similar tracking
       // at the session manager level (parentToolStack, toolToParentMap).
       // ═══════════════════════════════════════════════════════════════════════════
-      const PARENT_TOOL_NAMES = ['Task', 'AgentOutputTool'];
+      const PARENT_TOOL_NAMES = ['Task', 'TaskOutput'];
       // Track parent tools that are currently running
       const activeParentTools = new Set<string>();
       // Track which tools are children of which parent (parentId -> childIds in order)
@@ -1971,7 +1971,7 @@ export class CraftAgent {
 
               let parentToolUseId: string | undefined;
               if (isParentTool) {
-                // This is a parent tool (Task, AgentOutputTool) - it can spawn children
+                // This is a parent tool (Task, TaskOutput) - it can spawn children
                 activeParentTools.add(block.id);
                 parentToChildren.set(block.id, []);
                 this.onDebug?.(`Parent tool started: ${block.name} (${block.id})`);
@@ -2080,7 +2080,7 @@ export class CraftAgent {
 
             let parentToolUseId: string | undefined;
             if (isParentTool) {
-              // This is a parent tool (Task, AgentOutputTool) - it can spawn children
+              // This is a parent tool (Task, TaskOutput) - it can spawn children
               activeParentTools.add(toolBlock.id);
               parentToChildren.set(toolBlock.id, []);
               console.log(`[CraftAgent] PARENT REGISTERED (stream): ${toolBlock.name} (${toolBlock.id})`);
@@ -2126,7 +2126,7 @@ export class CraftAgent {
         // ─────────────────────────────────────────────────────────────────────────
         // Three cases to handle:
         //
-        // Case 1: parent_tool_use_id is a PARENT tool (Task, AgentOutputTool)
+        // Case 1: parent_tool_use_id is a PARENT tool (Task, TaskOutput)
         //   → Result is for a CHILD of that parent, match using FIFO
         //
         // Case 2: parent_tool_use_id is a regular tool ID
@@ -2142,7 +2142,7 @@ export class CraftAgent {
           const { activeParentTools, parentToChildren, childToParent } = parentChildTracking;
 
           if (toolUseId && activeParentTools.has(toolUseId)) {
-            // Case 1: parent_tool_use_id points to a PARENT tool (Task, AgentOutputTool)
+            // Case 1: parent_tool_use_id points to a PARENT tool (Task, TaskOutput)
             // This result is for a CHILD of that parent, not the parent itself
             // Match to the first unmatched child in FIFO order
             const children = parentToChildren.get(toolUseId);

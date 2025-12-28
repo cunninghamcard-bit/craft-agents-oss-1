@@ -465,12 +465,11 @@ function isReadOnlyApiMethod(method: string, mode: Mode): boolean {
  */
 const ALWAYS_ALLOWED_TOOLS = new Set([
   'Read', 'Glob', 'Grep',           // File reading
-  'Task', 'AgentOutputTool',        // Agent orchestration
+  'Task', 'TaskOutput',             // Agent orchestration (TaskOutput replaces BashOutput + AgentOutputTool)
   'WebFetch', 'WebSearch',          // Web research
   'TodoWrite',                       // Task tracking
   'AskUserQuestion',                // User interaction
   'SubmitPlan',                     // Plan submission (works in any mode)
-  'BashOutput',                     // Reading bash output (not executing)
 ]);
 
 /**

@@ -1501,8 +1501,8 @@ export class SessionManager {
 
         // Track parent-child relationships for nested tool calls
         // Parent tools spawn child tools (e.g., Task runs Read, Grep, etc.)
-        // Include Task (subagents) and AgentOutputTool (retrieves subagent results)
-        const PARENT_TOOLS = ['Task', 'AgentOutputTool']
+        // Include Task (subagents) and TaskOutput (retrieves task results)
+        const PARENT_TOOLS = ['Task', 'TaskOutput']
         const isParentTool = PARENT_TOOLS.includes(event.toolName)
 
         // Determine parent BEFORE potentially pushing this tool onto the stack
@@ -1585,7 +1585,7 @@ export class SessionManager {
         managed.pendingTools.delete(event.toolUseId)
 
         // Parent tool names for defensive cleanup
-        const PARENT_TOOLS = ['Task', 'AgentOutputTool']
+        const PARENT_TOOLS = ['Task', 'TaskOutput']
 
         // Remove this tool from parent stack if it's there (parent tool completing)
         const stackIndex = managed.parentToolStack.indexOf(event.toolUseId)
