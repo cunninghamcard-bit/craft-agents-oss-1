@@ -1271,6 +1271,19 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
     managed.streamingText = ''
     managed.abortController = new AbortController()
 
+    // Auto-transition to in_progress when user sends a message
+    // This overrides done/needs_review states since we're actively working
+    if (managed.todoState !== 'in-progress') {
+      managed.todoState = 'in-progress'
+      const workspaceSlug = getWorkspaceSlug(managed.workspace)
+      setStoredSessionTodoState(workspaceSlug, sessionId, 'in-progress')
+      this.sendEvent({
+        type: 'todo_state_changed',
+        sessionId,
+        todoState: 'in-progress',
+      }, managed.workspace.id)
+    }
+
     // Capture the abort controller reference to detect if a new request supersedes this one
     // This prevents the finally block from clobbering state when a follow-up message arrives
     const myAbortController = managed.abortController

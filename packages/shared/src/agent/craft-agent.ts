@@ -937,7 +937,7 @@ export class CraftAgent {
           description: `Execute bash command: ${command}`,
         });
         // Automatically set status to needs_review when asking for permission
-        this.onStatusChange?.('needs_review');
+        await this.onStatusChange?.('needs_review');
       } else {
         // No permission handler - deny by default for safety
         this.pendingPermissions.delete(requestId);
@@ -1139,7 +1139,7 @@ export class CraftAgent {
                       type: 'safe_mode',
                     });
                     // Automatically set status to needs_review when asking for permission
-                    this.onStatusChange?.('needs_review');
+                    await this.onStatusChange?.('needs_review');
                   } else {
                     // No permission handler - deny by default for safety
                     this.pendingPermissions.delete(requestId);
@@ -1282,7 +1282,7 @@ export class CraftAgent {
                     description: `Execute: ${commandStr}`,
                   });
                   // Automatically set status to needs_review when asking for permission
-                  this.onStatusChange?.('needs_review');
+                  await this.onStatusChange?.('needs_review');
                 } else {
                   this.pendingPermissions.delete(requestId);
                   return {
@@ -1463,7 +1463,7 @@ export class CraftAgent {
 
               // Automatically set status to needs_review when asking user a question
               if (this.onStatusChange) {
-                this.onStatusChange('needs_review');
+                await this.onStatusChange('needs_review');
               }
 
               // Wait for user to answer
