@@ -61,8 +61,12 @@ export type { PlanReviewRequest, PlanReviewResult } from '../agents/plan-types.t
 
 // Export safe-mode-config - customizable Safe Mode per workspace/source
 export {
-  // Parser
-  parseSafeModeMarkdown,
+  // Parser and validation
+  parseSafeModeJson,
+  validateSafeModeConfig,
+  SafeModeConfigSchema,
+  // API endpoint checking
+  isApiEndpointAllowed,
   // Storage functions
   loadWorkspaceSafeModeConfig,
   loadSourceSafeModeConfig,
@@ -71,7 +75,10 @@ export {
   // Cache singleton
   safeModeConfigCache,
   // Types
+  type ApiEndpointRule,
+  type CompiledApiEndpointRule,
   type SafeModeCustomConfig,
+  type SafeModeConfigFile,
   type MergedSafeModeConfig,
   type SafeModeContext,
 } from './safe-mode-config.ts';

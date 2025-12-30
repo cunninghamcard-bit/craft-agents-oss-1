@@ -2,28 +2,73 @@
  * Safe Mode Configuration
  *
  * Allows customization of Safe Mode rules per workspace and per source.
- * Users can create safe-mode.md files to extend the default rules.
+ * Users can create safe-mode.json files to extend the default rules.
  *
  * File locations:
- * - Workspace: ~/.craft-agent/workspaces/{slug}/safe-mode.md
- * - Per-source: ~/.craft-agent/workspaces/{slug}/sources/{sourceSlug}/safe-mode.md
+ * - Workspace: ~/.craft-agent/workspaces/{slug}/safe-mode.json
+ * - Per-source: ~/.craft-agent/workspaces/{slug}/sources/{sourceSlug}/safe-mode.json
  *
  * Rules are additive - custom configs extend the defaults (more permissive).
  */
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { z } from 'zod';
 import { debug } from '../utils/debug.ts';
 import { getWorkspacePath } from '../workspaces/storage.ts';
 import { getSourcePath } from '../sources/storage.ts';
 import { MODE_CONFIGS } from './mode-manager.ts';
 
 // ============================================================
+// Zod Schemas
+// ============================================================
+
+/**
+ * API endpoint rule - method + path pattern
+ */
+const ApiEndpointRuleSchema = z.object({
+  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']),
+  path: z.string().describe('Regex pattern for API path'),
+  comment: z.string().optional(),
+});
+
+export type ApiEndpointRule = z.infer<typeof ApiEndpointRuleSchema>;
+
+/**
+ * Pattern with optional comment
+ */
+const PatternSchema = z.union([
+  z.string(),
+  z.object({
+    pattern: z.string(),
+    comment: z.string().optional(),
+  }),
+]);
+
+/**
+ * Safe mode JSON configuration schema
+ */
+export const SafeModeConfigSchema = z.object({
+  /** Additional tools to block */
+  blockedTools: z.array(z.string()).optional(),
+  /** Bash command patterns to allow (regex strings) */
+  allowedBashPatterns: z.array(PatternSchema).optional(),
+  /** MCP tool patterns to allow (regex strings) */
+  allowedMcpPatterns: z.array(PatternSchema).optional(),
+  /** API endpoint rules - method + path pattern */
+  allowedApiEndpoints: z.array(ApiEndpointRuleSchema).optional(),
+  /** Legacy: API methods to allow (use allowedApiEndpoints for finer control) */
+  allowedApiMethods: z.array(z.string()).optional(),
+});
+
+export type SafeModeConfigFile = z.infer<typeof SafeModeConfigSchema>;
+
+// ============================================================
 // Types
 // ============================================================
 
 /**
- * Parsed safe mode configuration from markdown file
+ * Parsed and normalized safe mode configuration
  */
 export interface SafeModeCustomConfig {
   /** Additional tools to block */
@@ -32,8 +77,18 @@ export interface SafeModeCustomConfig {
   allowedBashPatterns: string[];
   /** Additional MCP patterns to allow (as regex strings) */
   allowedMcpPatterns: string[];
-  /** Additional API methods to allow */
+  /** Additional API methods to allow (legacy, coarse-grained) */
   allowedApiMethods: string[];
+  /** API endpoint rules for fine-grained control */
+  allowedApiEndpoints: ApiEndpointRule[];
+}
+
+/**
+ * Compiled API endpoint rule for runtime
+ */
+export interface CompiledApiEndpointRule {
+  method: string;
+  pathPattern: RegExp;
 }
 
 /**
@@ -44,6 +99,8 @@ export interface MergedSafeModeConfig {
   readOnlyBashPatterns: RegExp[];
   readOnlyMcpPatterns: RegExp[];
   readOnlyApiMethods: Set<string>;
+  /** Fine-grained API endpoint rules */
+  allowedApiEndpoints: CompiledApiEndpointRule[];
   /** Display name for error messages */
   displayName: string;
   /** Keyboard shortcut hint */
@@ -60,85 +117,99 @@ export interface SafeModeContext {
 }
 
 // ============================================================
-// Markdown Parser
+// JSON Parser
 // ============================================================
 
 /**
- * Parse safe-mode.md file into structured config
- *
- * Expected format:
- * ```markdown
- * # Safe Mode Configuration
- *
- * ## Blocked Tools
- * - `ToolName`
- *
- * ## Allowed Bash Patterns
- * - `^pattern\b` - optional comment
- *
- * ## Allowed MCP Patterns
- * - `pattern`
- *
- * ## Allowed API Methods
- * - `HEAD`
- * ```
+ * Parse and validate safe-mode.json file
  */
-export function parseSafeModeMarkdown(content: string): SafeModeCustomConfig {
-  const config: SafeModeCustomConfig = {
+export function parseSafeModeJson(content: string): SafeModeCustomConfig {
+  const emptyConfig: SafeModeCustomConfig = {
     blockedTools: [],
     allowedBashPatterns: [],
     allowedMcpPatterns: [],
     allowedApiMethods: [],
+    allowedApiEndpoints: [],
   };
 
-  // Split into sections by ## headings
-  const sections = content.split(/^##\s+/m);
+  try {
+    const json = JSON.parse(content);
+    const result = SafeModeConfigSchema.safeParse(json);
 
-  for (const section of sections) {
-    const lines = section.trim().split('\n');
-    const firstLine = lines[0];
-    if (!firstLine) continue;
-
-    const heading = firstLine.toLowerCase().trim();
-
-    // Extract list items from the section
-    const items = extractListItems(lines.slice(1));
-
-    if (heading.includes('blocked tools')) {
-      config.blockedTools = items;
-    } else if (heading.includes('allowed bash patterns')) {
-      config.allowedBashPatterns = items;
-    } else if (heading.includes('allowed mcp patterns')) {
-      config.allowedMcpPatterns = items;
-    } else if (heading.includes('allowed api methods')) {
-      config.allowedApiMethods = items;
+    if (!result.success) {
+      debug('[SafeMode] Validation errors:', result.error.issues);
+      // Log specific errors for debugging
+      for (const issue of result.error.issues) {
+        debug(`[SafeMode]   - ${issue.path.join('.')}: ${issue.message}`);
+      }
+      return emptyConfig;
     }
-  }
 
-  return config;
+    const data = result.data;
+
+    // Normalize patterns (extract string from pattern objects)
+    const normalizePatterns = (patterns: Array<string | { pattern: string; comment?: string }> | undefined): string[] => {
+      if (!patterns) return [];
+      return patterns.map(p => typeof p === 'string' ? p : p.pattern);
+    };
+
+    return {
+      blockedTools: data.blockedTools ?? [],
+      allowedBashPatterns: normalizePatterns(data.allowedBashPatterns),
+      allowedMcpPatterns: normalizePatterns(data.allowedMcpPatterns),
+      allowedApiMethods: data.allowedApiMethods ?? [],
+      allowedApiEndpoints: data.allowedApiEndpoints ?? [],
+    };
+  } catch (error) {
+    debug('[SafeMode] JSON parse error:', error);
+    return emptyConfig;
+  }
 }
 
 /**
- * Extract list items from markdown lines
- * Handles: - `pattern` - comment, - pattern, - `pattern`
+ * Validate a regex pattern string, return null if invalid
  */
-function extractListItems(lines: string[]): string[] {
-  const items: string[] = [];
+function validateRegex(pattern: string): RegExp | null {
+  try {
+    return new RegExp(pattern);
+  } catch {
+    return null;
+  }
+}
 
-  for (const line of lines) {
-    const trimmed = line.trim();
+/**
+ * Validate safe mode config and return errors
+ */
+export function validateSafeModeConfig(config: SafeModeConfigFile): string[] {
+  const errors: string[] = [];
 
-    // Match list item: - `pattern` or - pattern
-    const match = trimmed.match(/^-\s+`?([^`]+)`?(?:\s+-.*)?$/);
-    if (match?.[1]) {
-      const item = match[1].trim();
-      if (item) {
-        items.push(item);
+  // Validate regex patterns
+  const checkPatterns = (patterns: Array<string | { pattern: string }> | undefined, name: string) => {
+    if (!patterns) return;
+    for (let i = 0; i < patterns.length; i++) {
+      const p = patterns[i];
+      if (!p) continue;
+      const patternStr = typeof p === 'string' ? p : p.pattern;
+      if (!validateRegex(patternStr)) {
+        errors.push(`${name}[${i}]: Invalid regex pattern: ${patternStr}`);
+      }
+    }
+  };
+
+  checkPatterns(config.allowedBashPatterns, 'allowedBashPatterns');
+  checkPatterns(config.allowedMcpPatterns, 'allowedMcpPatterns');
+
+  // Validate API endpoint patterns
+  if (config.allowedApiEndpoints) {
+    for (let i = 0; i < config.allowedApiEndpoints.length; i++) {
+      const rule = config.allowedApiEndpoints[i];
+      if (!validateRegex(rule.path)) {
+        errors.push(`allowedApiEndpoints[${i}].path: Invalid regex pattern: ${rule.path}`);
       }
     }
   }
 
-  return items;
+  return errors;
 }
 
 // ============================================================
@@ -146,17 +217,17 @@ function extractListItems(lines: string[]): string[] {
 // ============================================================
 
 /**
- * Get path to workspace safe-mode.md
+ * Get path to workspace safe-mode.json
  */
 export function getWorkspaceSafeModePath(workspaceSlug: string): string {
-  return join(getWorkspacePath(workspaceSlug), 'safe-mode.md');
+  return join(getWorkspacePath(workspaceSlug), 'safe-mode.json');
 }
 
 /**
- * Get path to source safe-mode.md
+ * Get path to source safe-mode.json
  */
 export function getSourceSafeModePath(workspaceSlug: string, sourceSlug: string): string {
-  return join(getSourcePath(workspaceSlug, sourceSlug), 'safe-mode.md');
+  return join(getSourcePath(workspaceSlug, sourceSlug), 'safe-mode.json');
 }
 
 /**
@@ -168,7 +239,7 @@ export function loadWorkspaceSafeModeConfig(workspaceSlug: string): SafeModeCust
 
   try {
     const content = readFileSync(path, 'utf-8');
-    const config = parseSafeModeMarkdown(content);
+    const config = parseSafeModeJson(content);
     debug(`[SafeMode] Loaded workspace config from ${path}:`, config);
     return config;
   } catch (error) {
@@ -189,13 +260,43 @@ export function loadSourceSafeModeConfig(
 
   try {
     const content = readFileSync(path, 'utf-8');
-    const config = parseSafeModeMarkdown(content);
+    const config = parseSafeModeJson(content);
     debug(`[SafeMode] Loaded source config from ${path}:`, config);
     return config;
   } catch (error) {
     debug(`[SafeMode] Error loading source config:`, error);
     return null;
   }
+}
+
+// ============================================================
+// API Endpoint Checking
+// ============================================================
+
+/**
+ * Check if an API call is allowed by endpoint rules
+ */
+export function isApiEndpointAllowed(
+  method: string,
+  path: string,
+  config: MergedSafeModeConfig
+): boolean {
+  const upperMethod = method.toUpperCase();
+
+  // GET is always allowed
+  if (upperMethod === 'GET') return true;
+
+  // Check legacy method-based rules
+  if (config.readOnlyApiMethods.has(upperMethod)) return true;
+
+  // Check fine-grained endpoint rules
+  for (const rule of config.allowedApiEndpoints) {
+    if (rule.method === upperMethod && rule.pathPattern.test(path)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 // ============================================================
@@ -284,6 +385,7 @@ class SafeModeConfigCache {
       readOnlyBashPatterns: [...defaults.readOnlyBashPatterns],
       readOnlyMcpPatterns: [...defaults.readOnlyMcpPatterns],
       readOnlyApiMethods: new Set(defaults.readOnlyApiMethods),
+      allowedApiEndpoints: [],
       displayName: defaults.displayName,
       shortcutHint: defaults.shortcutHint,
     };
@@ -315,25 +417,40 @@ class SafeModeConfigCache {
 
     // Add allowed bash patterns (making config more permissive)
     for (const pattern of custom.allowedBashPatterns) {
-      try {
-        merged.readOnlyBashPatterns.push(new RegExp(pattern));
-      } catch {
+      const regex = validateRegex(pattern);
+      if (regex) {
+        merged.readOnlyBashPatterns.push(regex);
+      } else {
         debug(`[SafeMode] Invalid bash pattern, skipping: ${pattern}`);
       }
     }
 
     // Add allowed MCP patterns
     for (const pattern of custom.allowedMcpPatterns) {
-      try {
-        merged.readOnlyMcpPatterns.push(new RegExp(pattern));
-      } catch {
+      const regex = validateRegex(pattern);
+      if (regex) {
+        merged.readOnlyMcpPatterns.push(regex);
+      } else {
         debug(`[SafeMode] Invalid MCP pattern, skipping: ${pattern}`);
       }
     }
 
-    // Add allowed API methods
+    // Add allowed API methods (legacy)
     for (const method of custom.allowedApiMethods) {
       merged.readOnlyApiMethods.add(method.toUpperCase());
+    }
+
+    // Add allowed API endpoints (fine-grained)
+    for (const rule of custom.allowedApiEndpoints) {
+      const pathRegex = validateRegex(rule.path);
+      if (pathRegex) {
+        merged.allowedApiEndpoints.push({
+          method: rule.method,
+          pathPattern: pathRegex,
+        });
+      } else {
+        debug(`[SafeMode] Invalid API endpoint path pattern, skipping: ${rule.path}`);
+      }
     }
   }
 

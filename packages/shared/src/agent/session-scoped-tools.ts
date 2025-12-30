@@ -2142,7 +2142,7 @@ export function createSourceDeleteTool(sessionId: string, workspaceSlug: string)
 
 /**
  * Create or update Safe Mode rules for a source.
- * Creates a safe-mode.md file in the source folder.
+ * Creates a safe-mode.json file in the source folder with Zod validation.
  */
 export function createSourceSafeModeUpdateTool(sessionId: string, workspaceSlug: string, activeAgentSlug?: string) {
   return tool(
@@ -2153,7 +2153,7 @@ Safe Mode is a read-only exploration mode. Custom rules let you allow specific o
 
 **Rule Types:**
 - \`allowedMcpPatterns\`: Regex patterns for MCP tool names to allow (e.g., \`^mcp__linear__list\`)
-- \`allowedApiMethods\`: HTTP methods to allow (e.g., \`POST\` for APIs that use POST for search)
+- \`allowedApiEndpoints\`: Fine-grained API rules with method + path pattern (e.g., POST /search)
 - \`allowedBashPatterns\`: Regex patterns for bash commands to allow
 - \`blockedTools\`: Additional tools to block (rarely needed)
 
@@ -2164,10 +2164,11 @@ Rules are additive - they extend the defaults to make Safe Mode more permissive 
         pattern: z.string().describe('Regex pattern for tool names (e.g., ^mcp__linear__list)'),
         comment: z.string().optional().describe('Optional comment explaining the pattern'),
       })).optional().describe('MCP tool patterns to allow'),
-      allowedApiMethods: z.array(z.object({
-        method: z.string().describe('HTTP method (e.g., POST, HEAD, OPTIONS)'),
-        comment: z.string().optional().describe('Optional comment explaining why'),
-      })).optional().describe('HTTP methods to allow'),
+      allowedApiEndpoints: z.array(z.object({
+        method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']).describe('HTTP method'),
+        path: z.string().describe('Regex pattern for API path (e.g., ^/search, ^/v1/query)'),
+        comment: z.string().optional().describe('Optional comment explaining the rule'),
+      })).optional().describe('API endpoint rules (method + path pattern)'),
       allowedBashPatterns: z.array(z.object({
         pattern: z.string().describe('Regex pattern for bash commands'),
         comment: z.string().optional().describe('Optional comment explaining the pattern'),
@@ -2178,9 +2179,10 @@ Rules are additive - they extend the defaults to make Safe Mode more permissive 
       debug('[source_safe_mode_update] Updating safe mode for source:', args.sourceSlug);
 
       try {
-        const { existsSync, writeFileSync, mkdirSync } = await import('fs');
+        const { existsSync, writeFileSync, mkdirSync, readFileSync } = await import('fs');
         const { join } = await import('path');
         const { getSourcePath, getAgentSourcePath, sourceExists, agentSourceExists } = await import('../sources/storage.ts');
+        const { validateSafeModeConfig } = await import('./safe-mode-config.ts');
 
         // Check if source exists (agent-scoped first if activeAgentSlug, then workspace)
         // Skip agent scope check for built-in agents (dot-prefixed like .source-setup)
@@ -2206,7 +2208,6 @@ Rules are additive - they extend the defaults to make Safe Mode more permissive 
         try {
           const configPath = join(sourcePath, 'config.json');
           if (existsSync(configPath)) {
-            const { readFileSync } = await import('fs');
             const config = JSON.parse(readFileSync(configPath, 'utf-8'));
             sourceName = config.name || args.sourceSlug;
           }
@@ -2214,64 +2215,51 @@ Rules are additive - they extend the defaults to make Safe Mode more permissive 
           // Ignore, use slug as name
         }
 
-        // Generate markdown content
-        const lines: string[] = [
-          `# Safe Mode Configuration for ${sourceName}`,
-          '',
-          'Rules here extend the defaults (more permissive).',
-          '',
-        ];
+        // Build the JSON config object
+        const config: Record<string, unknown> = {};
 
         if (args.allowedMcpPatterns && args.allowedMcpPatterns.length > 0) {
-          lines.push('## Allowed MCP Patterns', '');
-          lines.push('Additional MCP tools to allow in Safe Mode:', '');
-          for (const { pattern, comment } of args.allowedMcpPatterns) {
-            lines.push(comment ? `- \`${pattern}\` - ${comment}` : `- \`${pattern}\``);
-          }
-          lines.push('');
+          config.allowedMcpPatterns = args.allowedMcpPatterns;
         }
 
-        if (args.allowedApiMethods && args.allowedApiMethods.length > 0) {
-          lines.push('## Allowed API Methods', '');
-          lines.push('Additional HTTP methods to allow:', '');
-          for (const { method, comment } of args.allowedApiMethods) {
-            lines.push(comment ? `- \`${method}\` - ${comment}` : `- \`${method}\``);
-          }
-          lines.push('');
+        if (args.allowedApiEndpoints && args.allowedApiEndpoints.length > 0) {
+          config.allowedApiEndpoints = args.allowedApiEndpoints;
         }
 
         if (args.allowedBashPatterns && args.allowedBashPatterns.length > 0) {
-          lines.push('## Allowed Bash Patterns', '');
-          lines.push('Additional bash commands to allow (regex):', '');
-          for (const { pattern, comment } of args.allowedBashPatterns) {
-            lines.push(comment ? `- \`${pattern}\` - ${comment}` : `- \`${pattern}\``);
-          }
-          lines.push('');
+          config.allowedBashPatterns = args.allowedBashPatterns;
         }
 
         if (args.blockedTools && args.blockedTools.length > 0) {
-          lines.push('## Blocked Tools', '');
-          lines.push('Additional tools to block:', '');
-          for (const tool of args.blockedTools) {
-            lines.push(`- \`${tool}\``);
-          }
-          lines.push('');
+          config.blockedTools = args.blockedTools;
         }
 
-        // Write the file
-        const safeModePath = join(sourcePath, 'safe-mode.md');
-        mkdirSync(sourcePath, { recursive: true });
-        writeFileSync(safeModePath, lines.join('\n'), 'utf-8');
+        // Validate the config before writing
+        const errors = validateSafeModeConfig(config);
+        if (errors.length > 0) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Invalid safe mode configuration:\n${errors.map(e => `- ${e}`).join('\n')}`,
+            }],
+            isError: true,
+          };
+        }
 
-        debug('[source_safe_mode_update] Created safe-mode.md at:', safeModePath);
+        // Write the JSON file
+        const safeModePath = join(sourcePath, 'safe-mode.json');
+        mkdirSync(sourcePath, { recursive: true });
+        writeFileSync(safeModePath, JSON.stringify(config, null, 2), 'utf-8');
+
+        debug('[source_safe_mode_update] Created safe-mode.json at:', safeModePath);
 
         // Build summary of what was configured
         const summary: string[] = [];
         if (args.allowedMcpPatterns?.length) {
           summary.push(`${args.allowedMcpPatterns.length} MCP pattern(s)`);
         }
-        if (args.allowedApiMethods?.length) {
-          summary.push(`${args.allowedApiMethods.length} API method(s)`);
+        if (args.allowedApiEndpoints?.length) {
+          summary.push(`${args.allowedApiEndpoints.length} API endpoint(s)`);
         }
         if (args.allowedBashPatterns?.length) {
           summary.push(`${args.allowedBashPatterns.length} bash pattern(s)`);

@@ -45,6 +45,14 @@ export interface ModeCallbacks {
 }
 
 /**
+ * Compiled API endpoint rule for runtime checking
+ */
+export interface CompiledApiEndpointRule {
+  method: string;
+  pathPattern: RegExp;
+}
+
+/**
  * Mode configuration - defines behavior for each mode
  */
 export interface ModeConfig {
@@ -54,8 +62,10 @@ export interface ModeConfig {
   readOnlyBashPatterns: RegExp[];
   /** Read-only MCP patterns (tools matching these are allowed) */
   readOnlyMcpPatterns: RegExp[];
-  /** Read-only API methods */
+  /** Read-only API methods (legacy, coarse-grained) */
   readOnlyApiMethods: Set<string>;
+  /** Fine-grained API endpoint rules (method + path pattern) */
+  allowedApiEndpoints: CompiledApiEndpointRule[];
   /** User-friendly name */
   displayName: string;
   /** Keyboard shortcut hint */
@@ -232,6 +242,7 @@ export const MODE_CONFIGS: Record<Mode, ModeConfig> = {
       /^mcp__docs__/,
     ],
     readOnlyApiMethods: new Set(['GET']),
+    allowedApiEndpoints: [], // Use safe-mode.json to add endpoint-specific rules
     displayName: 'Safe Mode',
     shortcutHint: 'SHIFT+TAB',
   },
@@ -456,10 +467,28 @@ function isReadOnlyMcpToolWithConfig(toolName: string, config: ToolCheckConfig):
 }
 
 /**
- * Check if an API method is read-only using the given config
+ * Check if an API call is allowed using the given config
+ * Checks both legacy method-based rules and fine-grained endpoint rules
  */
-function isReadOnlyApiMethodWithConfig(method: string, config: ToolCheckConfig): boolean {
-  return config.readOnlyApiMethods.has(method.toUpperCase());
+function isApiCallAllowedWithConfig(method: string, path: string | undefined, config: ToolCheckConfig): boolean {
+  const upperMethod = method.toUpperCase();
+
+  // GET is always allowed
+  if (upperMethod === 'GET') return true;
+
+  // Check legacy method-based rules
+  if (config.readOnlyApiMethods.has(upperMethod)) return true;
+
+  // Check fine-grained endpoint rules (if path is available)
+  if (path && config.allowedApiEndpoints) {
+    for (const rule of config.allowedApiEndpoints) {
+      if (rule.method === upperMethod && rule.pathPattern.test(path)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -474,13 +503,6 @@ function isReadOnlyBashCommand(command: string, mode: Mode): boolean {
  */
 function isReadOnlyMcpTool(toolName: string, mode: Mode): boolean {
   return isReadOnlyMcpToolWithConfig(toolName, MODE_CONFIGS[mode]);
-}
-
-/**
- * Check if an API method is read-only in a specific mode (legacy, uses default config)
- */
-function isReadOnlyApiMethod(method: string, mode: Mode): boolean {
-  return isReadOnlyApiMethodWithConfig(method, MODE_CONFIGS[mode]);
 }
 
 /**
@@ -590,16 +612,17 @@ export function shouldAllowToolInMode(
     };
   }
 
-  // Handle API tools - allow GET, block mutations
+  // Handle API tools - allow GET, block mutations unless endpoint is whitelisted
   if (toolName.startsWith('api_')) {
     const input = toolInput as Record<string, unknown> | null;
     const method = (input?.method as string) || 'GET';
-    if (isReadOnlyApiMethodWithConfig(method, config)) {
+    const path = input?.path as string | undefined;
+    if (isApiCallAllowedWithConfig(method, path, config)) {
       return { allowed: true };
     }
     return {
       allowed: false,
-      reason: `API mutations are blocked in ${config.displayName}. Exit ${config.displayName} (${config.shortcutHint}) to make changes.`
+      reason: `API ${method} ${path ?? ''} is blocked in ${config.displayName}. Exit ${config.displayName} (${config.shortcutHint}) to make changes.`
     };
   }
 

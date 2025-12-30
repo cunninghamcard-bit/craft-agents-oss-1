@@ -88,9 +88,9 @@ export interface ConfigWatcherCallbacks {
   onAgentsListChange?: (agents: LoadedAgent[]) => void;
 
   // Safe Mode callbacks
-  /** Called when workspace safe-mode.md changes */
+  /** Called when workspace safe-mode.json changes */
   onWorkspaceSafeModeChange?: (workspaceSlug: string) => void;
-  /** Called when a source's safe-mode.md changes */
+  /** Called when a source's safe-mode.json changes */
   onSourceSafeModeChange?: (sourceSlug: string) => void;
 
   // Error callbacks
@@ -179,9 +179,9 @@ export class ConfigWatcher {
     // Watch preferences.json
     this.watchFile(PREFERENCES_FILE, 'preferences.json', () => this.handlePreferencesChange());
 
-    // Watch workspace safe-mode.md
-    const workspaceSafeModePath = join(this.workspaceDir, 'safe-mode.md');
-    this.watchFile(workspaceSafeModePath, 'workspace-safe-mode.md', () =>
+    // Watch workspace safe-mode.json
+    const workspaceSafeModePath = join(this.workspaceDir, 'safe-mode.json');
+    this.watchFile(workspaceSafeModePath, 'workspace-safe-mode.json', () =>
       this.handleWorkspaceSafeModeChange()
     );
 
@@ -426,8 +426,8 @@ export class ConfigWatcher {
       }
     }
 
-    // Watch safe-mode.md for per-source Safe Mode customization
-    const safeModePath = join(sourceDir, 'safe-mode.md');
+    // Watch safe-mode.json for per-source Safe Mode customization
+    const safeModePath = join(sourceDir, 'safe-mode.json');
     if (existsSync(safeModePath)) {
       try {
         const watcher = watch(safeModePath, (eventType) => {
@@ -437,7 +437,7 @@ export class ConfigWatcher {
         });
         watchers.push(watcher);
       } catch (error) {
-        debug('[ConfigWatcher] Error watching source safe-mode.md:', slug, error);
+        debug('[ConfigWatcher] Error watching source safe-mode.json:', slug, error);
       }
     }
 
@@ -448,10 +448,10 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle source safe-mode.md change
+   * Handle source safe-mode.json change
    */
   private handleSourceSafeModeChange(slug: string): void {
-    debug('[ConfigWatcher] Source safe-mode.md changed:', slug);
+    debug('[ConfigWatcher] Source safe-mode.json changed:', slug);
 
     // Invalidate cache
     safeModeConfigCache.invalidateSource(this.workspaceSlug, slug);
@@ -461,10 +461,10 @@ export class ConfigWatcher {
   }
 
   /**
-   * Handle workspace safe-mode.md change
+   * Handle workspace safe-mode.json change
    */
   private handleWorkspaceSafeModeChange(): void {
-    debug('[ConfigWatcher] Workspace safe-mode.md changed:', this.workspaceSlug);
+    debug('[ConfigWatcher] Workspace safe-mode.json changed:', this.workspaceSlug);
 
     // Invalidate cache
     safeModeConfigCache.invalidateWorkspace(this.workspaceSlug);
