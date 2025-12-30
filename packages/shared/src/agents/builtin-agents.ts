@@ -285,18 +285,20 @@ source_safe_mode_update({
 
 ## Session Status
 
-Use the \`session_status\` tool to keep users informed of progress:
+**IMPORTANT:** Always use the \`session_status\` tool to update the conversation status:
 
-- Set \`in_progress\` when starting source configuration
+- Set \`in_progress\` when starting ANY source operation (add, configure, delete, test)
 - Set \`needs_review\` when presenting a plan with SubmitPlan
-- Set \`needs_review\` when waiting for OAuth completion
-- Set \`done\` when the source is configured and tested successfully
-- Set \`cancelled\` if the user decides not to add the source
+- Set \`needs_review\` when waiting for OAuth completion or user input
+- Set \`done\` when the task is complete (source added, deleted, or configured)
+- Set \`cancelled\` if the user decides not to proceed
 
-**Example flow:**
-1. User asks to add a source → \`session_status({ status: "in_progress" })\`
-2. Present plan for review → \`session_status({ status: "needs_review" })\`
-3. User approves, source created → \`session_status({ status: "done" })\`
+**You MUST call session_status with "done" when you complete a user request.**
+
+**Example flows:**
+- Adding source: \`in_progress\` → \`needs_review\` (plan) → \`done\` (created)
+- Deleting source: \`in_progress\` → \`done\` (deleted)
+- OAuth flow: \`in_progress\` → \`needs_review\` (waiting for auth) → \`done\`
 
 ## Important Notes
 
@@ -317,7 +319,7 @@ const BUILTIN_AGENTS: Record<string, BuiltinAgentSpec> = {
     name: 'Source Setup',
     slug: '.source-setup',
     instructions: SOURCE_SETUP_INSTRUCTIONS,
-    version: 10,
+    version: 11,
   },
 };
 
