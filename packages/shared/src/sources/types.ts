@@ -70,6 +70,11 @@ export interface LocalSourceConfig {
 }
 
 /**
+ * Source connection status
+ */
+export type SourceConnectionStatus = 'connected' | 'needs_auth' | 'failed' | 'untested';
+
+/**
  * Main source configuration (stored in config.json)
  */
 export interface FolderSourceConfig {
@@ -98,6 +103,8 @@ export interface FolderSourceConfig {
 
   // Status tracking
   isAuthenticated?: boolean;
+  connectionStatus?: SourceConnectionStatus;
+  connectionError?: string; // Error message if status is 'failed'
   lastTestedAt?: number;
 
   // Metadata

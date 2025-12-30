@@ -848,8 +848,15 @@ export function createSourceTestTool(sessionId: string, workspaceSlug: string, a
         if (source.type === 'api') {
           const result = await testApiSource(source, workspaceSlug);
 
-          // Update the source's lastTestedAt timestamp
+          // Update the source's status and timestamp
           source.lastTestedAt = Date.now();
+          if (result.success) {
+            source.connectionStatus = 'connected';
+            source.connectionError = undefined;
+          } else {
+            source.connectionStatus = 'failed';
+            source.connectionError = result.error;
+          }
           saveSourceConfigWithContext(workspaceSlug, source, sourceContext);
 
           if (result.success) {
@@ -873,6 +880,12 @@ export function createSourceTestTool(sessionId: string, workspaceSlug: string, a
 
         // Handle local sources
         if (source.type === 'local') {
+          // Update status - local sources are always connected
+          source.lastTestedAt = Date.now();
+          source.connectionStatus = 'connected';
+          source.connectionError = undefined;
+          saveSourceConfigWithContext(workspaceSlug, source, sourceContext);
+
           return {
             content: [{
               type: 'text' as const,
@@ -949,8 +962,18 @@ export function createSourceTestTool(sessionId: string, workspaceSlug: string, a
           claudeOAuthToken: claudeOAuthToken ?? undefined,
         });
 
-        // Update the source's lastTestedAt timestamp
+        // Update the source's status and timestamp
         source.lastTestedAt = Date.now();
+        if (result.success) {
+          source.connectionStatus = 'connected';
+          source.connectionError = undefined;
+        } else if (result.errorType === 'needs-auth') {
+          source.connectionStatus = 'needs_auth';
+          source.connectionError = undefined;
+        } else {
+          source.connectionStatus = 'failed';
+          source.connectionError = getValidationErrorMessage(result);
+        }
         saveSourceConfigWithContext(workspaceSlug, source, sourceContext);
 
         if (result.success) {
@@ -1165,6 +1188,8 @@ A browser window will open for the user to complete authentication.
 
         // Update source status
         source.isAuthenticated = true;
+        source.connectionStatus = 'connected';
+        source.connectionError = undefined;
         source.updatedAt = Date.now();
         saveSourceConfigWithContext(workspaceSlug, source, sourceContext);
 
@@ -1306,6 +1331,8 @@ After successful authentication, the tokens are stored and the source is marked 
 
         // Update source status with email info
         source.isAuthenticated = true;
+        source.connectionStatus = 'connected';
+        source.connectionError = undefined;
         source.updatedAt = Date.now();
         saveSourceConfigWithContext(workspaceSlug, source, sourceContext);
 
@@ -1813,8 +1840,12 @@ ${scopeDescription}
         // Determine effective agent slug for scoping:
         // 1. If explicit agentSlug provided, use it
         // 2. If scope is 'workspace', no agent scoping
-        // 3. Otherwise, default to activeAgentSlug (if in agent context)
-        const effectiveAgentSlug = args.agentSlug ?? (args.scope === 'workspace' ? undefined : activeAgentSlug);
+        // 3. If active agent is a built-in (dot-prefixed like .source-setup), default to workspace
+        // 4. Otherwise, default to activeAgentSlug (if in agent context)
+        const isBuiltinAgent = activeAgentSlug?.startsWith('.');
+        const effectiveAgentSlug = args.agentSlug ?? (
+          args.scope === 'workspace' || isBuiltinAgent ? undefined : activeAgentSlug
+        );
 
         // Create source: agent-scoped or workspace-scoped
         const config = effectiveAgentSlug
@@ -2017,6 +2048,171 @@ export function createSourceDeleteTool(sessionId: string, workspaceSlug: string)
 }
 
 // ============================================================
+// Source Safe Mode Tool
+// ============================================================
+
+/**
+ * Create or update Safe Mode rules for a source.
+ * Creates a safe-mode.md file in the source folder.
+ */
+export function createSourceSafeModeUpdateTool(sessionId: string, workspaceSlug: string, activeAgentSlug?: string) {
+  return tool(
+    'source_safe_mode_update',
+    `Create or update Safe Mode rules for a source.
+
+Safe Mode is a read-only exploration mode. Custom rules let you allow specific operations that would otherwise be blocked.
+
+**Rule Types:**
+- \`allowedMcpPatterns\`: Regex patterns for MCP tool names to allow (e.g., \`^mcp__linear__list\`)
+- \`allowedApiMethods\`: HTTP methods to allow (e.g., \`POST\` for APIs that use POST for search)
+- \`allowedBashPatterns\`: Regex patterns for bash commands to allow
+- \`blockedTools\`: Additional tools to block (rarely needed)
+
+Rules are additive - they extend the defaults to make Safe Mode more permissive for this source.`,
+    {
+      sourceSlug: z.string().describe('The slug of the source to configure'),
+      allowedMcpPatterns: z.array(z.object({
+        pattern: z.string().describe('Regex pattern for tool names (e.g., ^mcp__linear__list)'),
+        comment: z.string().optional().describe('Optional comment explaining the pattern'),
+      })).optional().describe('MCP tool patterns to allow'),
+      allowedApiMethods: z.array(z.object({
+        method: z.string().describe('HTTP method (e.g., POST, HEAD, OPTIONS)'),
+        comment: z.string().optional().describe('Optional comment explaining why'),
+      })).optional().describe('HTTP methods to allow'),
+      allowedBashPatterns: z.array(z.object({
+        pattern: z.string().describe('Regex pattern for bash commands'),
+        comment: z.string().optional().describe('Optional comment explaining the pattern'),
+      })).optional().describe('Bash command patterns to allow'),
+      blockedTools: z.array(z.string()).optional().describe('Additional tools to block'),
+    },
+    async (args) => {
+      debug('[source_safe_mode_update] Updating safe mode for source:', args.sourceSlug);
+
+      try {
+        const { existsSync, writeFileSync, mkdirSync } = await import('fs');
+        const { join } = await import('path');
+        const { getSourcePath, getAgentSourcePath, sourceExists, agentSourceExists } = await import('../sources/storage.ts');
+
+        // Check if source exists (agent-scoped first if activeAgentSlug, then workspace)
+        // Skip agent scope check for built-in agents (dot-prefixed like .source-setup)
+        let sourcePath: string;
+        let sourceName = args.sourceSlug;
+        const isBuiltinAgent = activeAgentSlug?.startsWith('.');
+
+        if (activeAgentSlug && !isBuiltinAgent && agentSourceExists(workspaceSlug, activeAgentSlug, args.sourceSlug)) {
+          sourcePath = getAgentSourcePath(workspaceSlug, activeAgentSlug, args.sourceSlug);
+        } else if (sourceExists(workspaceSlug, args.sourceSlug)) {
+          sourcePath = getSourcePath(workspaceSlug, args.sourceSlug);
+        } else {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Source '${args.sourceSlug}' not found.`,
+            }],
+            isError: true,
+          };
+        }
+
+        // Try to get source name from config
+        try {
+          const configPath = join(sourcePath, 'config.json');
+          if (existsSync(configPath)) {
+            const { readFileSync } = await import('fs');
+            const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+            sourceName = config.name || args.sourceSlug;
+          }
+        } catch {
+          // Ignore, use slug as name
+        }
+
+        // Generate markdown content
+        const lines: string[] = [
+          `# Safe Mode Configuration for ${sourceName}`,
+          '',
+          'Rules here extend the defaults (more permissive).',
+          '',
+        ];
+
+        if (args.allowedMcpPatterns && args.allowedMcpPatterns.length > 0) {
+          lines.push('## Allowed MCP Patterns', '');
+          lines.push('Additional MCP tools to allow in Safe Mode:', '');
+          for (const { pattern, comment } of args.allowedMcpPatterns) {
+            lines.push(comment ? `- \`${pattern}\` - ${comment}` : `- \`${pattern}\``);
+          }
+          lines.push('');
+        }
+
+        if (args.allowedApiMethods && args.allowedApiMethods.length > 0) {
+          lines.push('## Allowed API Methods', '');
+          lines.push('Additional HTTP methods to allow:', '');
+          for (const { method, comment } of args.allowedApiMethods) {
+            lines.push(comment ? `- \`${method}\` - ${comment}` : `- \`${method}\``);
+          }
+          lines.push('');
+        }
+
+        if (args.allowedBashPatterns && args.allowedBashPatterns.length > 0) {
+          lines.push('## Allowed Bash Patterns', '');
+          lines.push('Additional bash commands to allow (regex):', '');
+          for (const { pattern, comment } of args.allowedBashPatterns) {
+            lines.push(comment ? `- \`${pattern}\` - ${comment}` : `- \`${pattern}\``);
+          }
+          lines.push('');
+        }
+
+        if (args.blockedTools && args.blockedTools.length > 0) {
+          lines.push('## Blocked Tools', '');
+          lines.push('Additional tools to block:', '');
+          for (const tool of args.blockedTools) {
+            lines.push(`- \`${tool}\``);
+          }
+          lines.push('');
+        }
+
+        // Write the file
+        const safeModePath = join(sourcePath, 'safe-mode.md');
+        mkdirSync(sourcePath, { recursive: true });
+        writeFileSync(safeModePath, lines.join('\n'), 'utf-8');
+
+        debug('[source_safe_mode_update] Created safe-mode.md at:', safeModePath);
+
+        // Build summary of what was configured
+        const summary: string[] = [];
+        if (args.allowedMcpPatterns?.length) {
+          summary.push(`${args.allowedMcpPatterns.length} MCP pattern(s)`);
+        }
+        if (args.allowedApiMethods?.length) {
+          summary.push(`${args.allowedApiMethods.length} API method(s)`);
+        }
+        if (args.allowedBashPatterns?.length) {
+          summary.push(`${args.allowedBashPatterns.length} bash pattern(s)`);
+        }
+        if (args.blockedTools?.length) {
+          summary.push(`${args.blockedTools.length} blocked tool(s)`);
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `**Safe Mode rules created for '${sourceName}'**\n\nConfigured: ${summary.join(', ') || 'empty config'}\n\nFile: \`${safeModePath}\`\n\nThese rules will be applied when Safe Mode is active.`,
+          }],
+          isError: false,
+        };
+      } catch (error) {
+        debug('[source_safe_mode_update] Error:', error);
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Error creating Safe Mode rules: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
+// ============================================================
 // Credential Prompt Tool
 // ============================================================
 
@@ -2143,8 +2339,10 @@ credential_prompt({
           );
         }
 
-        // Mark source as authenticated
+        // Mark source as authenticated and connected
         source.isAuthenticated = true;
+        source.connectionStatus = 'connected';
+        source.connectionError = undefined;
         source.updatedAt = Date.now();
         saveSourceConfigWithContext(workspaceSlug, source, sourceContext);
 
@@ -2197,7 +2395,7 @@ export function createAgentListTool(sessionId: string, workspaceSlug: string) {
     `List all agents in the workspace.
 
 Returns a list of all agents with their name, slug, enabled status, and source info.
-Use this to discover what agents are available before creating or syncing.`,
+Use this to discover what agents are available before creating new ones.`,
     {},
     async () => {
       debug('[agent_list] Listing agents in workspace:', workspaceSlug);
@@ -2210,7 +2408,7 @@ Use this to discover what agents are available before creating or syncing.`,
           return {
             content: [{
               type: 'text' as const,
-              text: 'No agents found in this workspace.\n\nUse `agent_create` to create a new agent, or `agent_sync` to sync agents from a Craft Space.',
+              text: 'No agents found in this workspace.\n\nUse `agent_create` to create a new agent.',
             }],
             isError: false,
           };
@@ -2311,114 +2509,6 @@ agent_create({
           content: [{
             type: 'text' as const,
             text: `Error creating agent: ${error instanceof Error ? error.message : 'Unknown error'}`,
-          }],
-          isError: true,
-        };
-      }
-    }
-  );
-}
-
-/**
- * Sync agents from a Craft Space.
- */
-export function createAgentSyncTool(sessionId: string, workspaceSlug: string) {
-  return tool(
-    'agent_sync',
-    `Sync agents from a Craft Space's "Agents" folder.
-
-This discovers documents in the "Agents" folder of the connected Craft Space and creates/updates local agents from them.
-
-**How it works:**
-1. Uses the workspace's Craft source (auto-created from workspace MCP URL)
-2. Finds the "Agents" folder in the Craft Space
-3. For each document in that folder:
-   - Document title becomes the agent name
-   - Document content becomes the agent instructions
-4. Creates new local agents or updates existing ones
-
-**Prerequisites:**
-- The workspace must have a Craft source configured (auto-created if workspace has MCP URL)
-- The Craft Space must have an "Agents" folder at the root level
-
-**Example:**
-\`\`\`
-agent_sync({})  // Sync all agents from Craft
-agent_sync({ forceUpdate: true })  // Force update even if unchanged
-\`\`\``,
-    {
-      forceUpdate: z.boolean().optional().describe('Force update even if content unchanged (default: false)'),
-    },
-    async (args) => {
-      debug('[agent_sync] Syncing agents from Craft');
-
-      try {
-        const { AgentSyncService } = await import('../agents/sync-service.ts');
-
-        const syncService = new AgentSyncService(workspaceSlug);
-        const result = await syncService.syncFromCraft({
-          forceUpdate: args.forceUpdate,
-        });
-
-        if (!result.folderFound) {
-          return {
-            content: [{
-              type: 'text' as const,
-              text: `**No "Agents" folder found in Craft Space**
-
-To sync agents from Craft:
-1. Create a folder named "Agents" in your Craft Space root
-2. Add documents to that folder - each document becomes an agent
-3. Document title = agent name, document content = instructions
-
-Alternatively, use \`agent_create\` to create agents locally.`,
-            }],
-            isError: false,
-          };
-        }
-
-        // Trigger agents reload callback
-        const callbacks = getSessionScopedToolCallbacks(sessionId);
-        try {
-          await callbacks?.onAgentsChanged?.();
-        } catch (err) {
-          console.log('[agent_sync] onAgentsChanged callback error:', err);
-        }
-
-        const summary = [];
-        if (result.created.length > 0) {
-          summary.push(`Created: ${result.created.map(a => a.name).join(', ')}`);
-        }
-        if (result.updated.length > 0) {
-          summary.push(`Updated: ${result.updated.map(a => a.name).join(', ')}`);
-        }
-        if (result.unchanged.length > 0) {
-          summary.push(`Unchanged: ${result.unchanged.length} agent(s)`);
-        }
-        if (result.errors.length > 0) {
-          summary.push(`Errors: ${result.errors.map(e => e.error).join(', ')}`);
-        }
-
-        const totalAgents = result.created.length + result.updated.length + result.unchanged.length;
-
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `**Sync complete**
-
-Discovered: ${result.discoveredCount} document(s) in Agents folder
-Total agents: ${totalAgents}
-
-${summary.join('\n')}`,
-          }],
-          isError: result.errors.length > 0 && totalAgents === 0,
-        };
-      } catch (error) {
-        debug('[agent_sync] Error:', error);
-        return {
-          content: [{
-            type: 'text' as const,
-            text: `Error syncing agents: ${error instanceof Error ? error.message : 'Unknown error'}`,
           }],
           isError: true,
         };
@@ -2536,10 +2626,10 @@ export function getSessionScopedTools(sessionId: string, workspaceSlug: string, 
         createSourceCreateTool(sessionId, workspaceSlug, activeAgentSlug),
         createSourceUpdateTool(sessionId, workspaceSlug, activeAgentSlug),
         createSourceDeleteTool(sessionId, workspaceSlug),
+        createSourceSafeModeUpdateTool(sessionId, workspaceSlug, activeAgentSlug),
         // Agent tools
         createAgentListTool(sessionId, workspaceSlug),
         createAgentCreateTool(sessionId, workspaceSlug),
-        createAgentSyncTool(sessionId, workspaceSlug),
         createAgentDeleteTool(sessionId, workspaceSlug),
       ],
     });

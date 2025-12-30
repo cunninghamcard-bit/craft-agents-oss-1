@@ -39,6 +39,7 @@ import {
   blockWithReason,
   getActiveModes,
 } from './mode-manager.ts';
+import type { SafeModeContext } from './safe-mode-config.ts';
 import { getSessionPlansPath } from '../sessions/storage.ts';
 import {
   ConfigWatcher,
@@ -1064,14 +1065,22 @@ export class CraftAgent {
               // ============================================================
               // SAFE MODE: Block write operations when in read-only mode
               // All logic is centralized in mode-manager.ts
+              // Uses per-workspace and per-source custom configs when available
               // ============================================================
               if (isSafeMode) {
                 const plansFolderPath = sessionId ? getSessionPlansPath(this.workspaceSlug, sessionId) : undefined;
+
+                // Build context for custom safe mode rules
+                const safeModeContext: SafeModeContext = {
+                  workspaceSlug: this.workspaceSlug,
+                  activeSourceSlugs: Array.from(this.activeSourceServerNames),
+                };
+
                 const result = shouldAllowToolInMode(
                   input.tool_name,
                   input.tool_input,
                   'safe',
-                  { plansFolderPath }
+                  { plansFolderPath, safeModeContext }
                 );
 
                 if (!result.allowed) {

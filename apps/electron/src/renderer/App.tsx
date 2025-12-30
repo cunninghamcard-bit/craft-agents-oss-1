@@ -697,16 +697,6 @@ export default function App() {
     if (windowWorkspaceId) {
       setIsLoadingAgents(true)
       try {
-        // First sync from Craft (downloads new/updated agents from Craft "Agents" folder)
-        const syncResult = await window.electronAPI.syncAgentsFromCraft(windowWorkspaceId)
-        if (syncResult.errors.length > 0) {
-          console.warn('[App] Agent sync errors:', syncResult.errors)
-        }
-        if (syncResult.created.length > 0 || syncResult.updated.length > 0) {
-          console.log(`[App] Synced agents from Craft: ${syncResult.created.length} created, ${syncResult.updated.length} updated`)
-        }
-
-        // Then reload local agents (includes newly synced ones)
         const refreshedAgents = await window.electronAPI.refreshAgents(windowWorkspaceId)
         setAgents(refreshedAgents)
       } finally {

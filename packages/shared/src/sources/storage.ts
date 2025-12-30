@@ -583,6 +583,21 @@ export function createSource(
     config.iconUrl = input.iconUrl;
   }
 
+  // Set initial connection status based on type and auth requirements
+  if (input.type === 'local') {
+    // Local sources are always connected
+    config.connectionStatus = 'connected';
+  } else if (
+    (input.type === 'mcp' && input.mcp?.authType && input.mcp.authType !== 'none') ||
+    (input.type === 'api' && input.api?.authType && input.api.authType !== 'none')
+  ) {
+    // Sources requiring auth start in needs_auth state
+    config.connectionStatus = 'needs_auth';
+  } else {
+    // No auth required - untested until source_test is run
+    config.connectionStatus = 'untested';
+  }
+
   saveSourceConfig(workspaceSlug, config);
 
   // Create default guide.md
@@ -710,6 +725,21 @@ export function createAgentSource(
   // Add icon URL if provided
   if (input.iconUrl) {
     config.iconUrl = input.iconUrl;
+  }
+
+  // Set initial connection status based on type and auth requirements
+  if (input.type === 'local') {
+    // Local sources are always connected
+    config.connectionStatus = 'connected';
+  } else if (
+    (input.type === 'mcp' && input.mcp?.authType && input.mcp.authType !== 'none') ||
+    (input.type === 'api' && input.api?.authType && input.api.authType !== 'none')
+  ) {
+    // Sources requiring auth start in needs_auth state
+    config.connectionStatus = 'needs_auth';
+  } else {
+    // No auth required - untested until source_test is run
+    config.connectionStatus = 'untested';
   }
 
   saveAgentSourceConfig(workspaceSlug, agentSlug, config);

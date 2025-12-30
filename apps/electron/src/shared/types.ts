@@ -51,8 +51,8 @@ import type { AuthType } from '@craft-agent/shared/config';
 export type { AuthState, SetupNeeds, AuthType };
 
 // Import source types for session source selection
-import type { LoadedSource, FolderSourceConfig } from '@craft-agent/shared/sources';
-export type { LoadedSource, FolderSourceConfig };
+import type { LoadedSource, FolderSourceConfig, SourceConnectionStatus } from '@craft-agent/shared/sources';
+export type { LoadedSource, FolderSourceConfig, SourceConnectionStatus };
 export { generateMessageId } from '@craft-agent/core/types';
 
 /**
@@ -428,11 +428,6 @@ export const IPC_CHANNELS = {
   SAVE_API_CREDENTIALS: 'agents:saveApiCredentials',
   VALIDATE_MCP_CONNECTION: 'agents:validateMcpConnection',
 
-  // Agent sync (Craft discovery)
-  SYNC_AGENTS_FROM_CRAFT: 'agents:syncFromCraft',
-  DISCOVER_ALL_AGENTS: 'agents:discoverAll',
-  GET_AGENTS_SYNC_STATUS: 'agents:getSyncStatus',
-
   // Agent state management (unified state machine, agent-scoped by workspaceId:agentId)
   AGENT_GET_STATUS: 'agent:getStatus',           // (workspaceId, agentId) → AgentStatus
   AGENT_ACTIVATE: 'agent:activate',               // (workspaceId, agentId, options?) → AgentStatus
@@ -694,16 +689,6 @@ export interface ElectronAPI {
   reloadAgentState(workspaceId: string, agentId: string): Promise<AgentStatus>
   resetAgentState(workspaceId: string, agentId: string): Promise<void>
   markAgentActive(workspaceId: string, agentId: string): Promise<void>
-
-  // Agent sync (from Craft)
-  syncAgentsFromCraft(workspaceId: string, options?: { documentIds?: string[]; forceUpdate?: boolean }): Promise<{
-    created: string[]
-    updated: string[]
-    unchanged: string[]
-    errors: Array<{ slug: string; name: string; action: string; error: string }>
-    folderFound: boolean
-    discoveredCount: number
-  }>
 
   // Event listeners
   onSessionEvent(callback: (event: SessionEvent) => void): () => void

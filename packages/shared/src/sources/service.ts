@@ -292,11 +292,12 @@ export class SourceService {
       } else if (source.config.type === 'api') {
         if (api?.authType === 'oauth') {
           type = 'agent_source_oauth';
-        } else if (api?.authType === 'bearer' || api?.authType === 'header') {
+        } else if (api?.authType === 'bearer') {
           type = 'agent_source_bearer';
         } else if (api?.authType === 'basic') {
           type = 'agent_source_basic';
         } else {
+          // header, query, or other → stored as apikey
           type = 'agent_source_apikey';
         }
       } else {
@@ -315,13 +316,17 @@ export class SourceService {
     if (source.config.type === 'mcp') {
       type = mcp?.authType === 'bearer' ? 'source_bearer' : 'source_oauth';
     } else if (source.config.type === 'api') {
-      if (api?.authType === 'oauth') {
+      // Gmail always uses OAuth flow regardless of authType in config
+      if (source.config.provider === 'gmail') {
         type = 'source_oauth';
-      } else if (api?.authType === 'bearer' || api?.authType === 'header') {
+      } else if (api?.authType === 'oauth') {
+        type = 'source_oauth';
+      } else if (api?.authType === 'bearer') {
         type = 'source_bearer';
       } else if (api?.authType === 'basic') {
         type = 'source_basic';
       } else {
+        // header, query, or other → stored as apikey
         type = 'source_apikey';
       }
     } else {

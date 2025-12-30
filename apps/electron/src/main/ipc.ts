@@ -542,25 +542,6 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   })
 
   // ============================================================
-  // Agent Sync (Craft Discovery)
-  // ============================================================
-
-  // Sync agents from connected Craft Space
-  ipcMain.handle(IPC_CHANNELS.SYNC_AGENTS_FROM_CRAFT, async (_event, workspaceId: string, options?: { documentIds?: string[]; forceUpdate?: boolean }) => {
-    return agentService.syncAgentsFromCraft(workspaceId, options)
-  })
-
-  // Discover all agents (local + Craft)
-  ipcMain.handle(IPC_CHANNELS.DISCOVER_ALL_AGENTS, async (_event, workspaceId: string) => {
-    return agentService.discoverAllAgents(workspaceId)
-  })
-
-  // Get sync status for all agents
-  ipcMain.handle(IPC_CHANNELS.GET_AGENTS_SYNC_STATUS, async (_event, workspaceId: string) => {
-    return agentService.getAgentsSyncStatus(workspaceId)
-  })
-
-  // ============================================================
   // Agent State Management (agent-scoped, unified state machine)
   // ============================================================
 

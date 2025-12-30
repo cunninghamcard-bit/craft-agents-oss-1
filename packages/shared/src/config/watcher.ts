@@ -28,7 +28,8 @@ import type { LoadedSource, SourceGuide } from '../sources/types.ts';
 import type { LoadedAgent } from '../agents/folder-types.ts';
 import { loadSource, loadWorkspaceSources, loadSourceGuide } from '../sources/storage.ts';
 import { loadAgent, loadWorkspaceAgents, loadAgentInstructions } from '../agents/folder-storage.ts';
-import { getWorkspaceSourcesPath, getWorkspaceAgentsPath } from '../workspaces/storage.ts';
+import { safeModeConfigCache } from '../agent/safe-mode-config.ts';
+import { getWorkspacePath, getWorkspaceSourcesPath, getWorkspaceAgentsPath } from '../workspaces/storage.ts';
 
 // ============================================================
 // Constants
@@ -86,6 +87,12 @@ export interface ConfigWatcherCallbacks {
   /** Called when the agents list changes (add/remove folders) */
   onAgentsListChange?: (agents: LoadedAgent[]) => void;
 
+  // Safe Mode callbacks
+  /** Called when workspace safe-mode.md changes */
+  onWorkspaceSafeModeChange?: (workspaceSlug: string) => void;
+  /** Called when a source's safe-mode.md changes */
+  onSourceSafeModeChange?: (sourceSlug: string) => void;
+
   // Error callbacks
   /** Called when a validation error occurs */
   onValidationError?: (file: string, result: ValidationResult) => void;
@@ -136,12 +143,14 @@ export class ConfigWatcher {
   private knownAgents: Set<string> = new Set();
 
   // Computed paths
+  private workspaceDir: string;
   private sourcesDir: string;
   private agentsDir: string;
 
   constructor(workspaceSlug: string, callbacks: ConfigWatcherCallbacks) {
     this.workspaceSlug = workspaceSlug;
     this.callbacks = callbacks;
+    this.workspaceDir = getWorkspacePath(workspaceSlug);
     this.sourcesDir = getWorkspaceSourcesPath(workspaceSlug);
     this.agentsDir = getWorkspaceAgentsPath(workspaceSlug);
   }
@@ -169,6 +178,12 @@ export class ConfigWatcher {
 
     // Watch preferences.json
     this.watchFile(PREFERENCES_FILE, 'preferences.json', () => this.handlePreferencesChange());
+
+    // Watch workspace safe-mode.md
+    const workspaceSafeModePath = join(this.workspaceDir, 'safe-mode.md');
+    this.watchFile(workspaceSafeModePath, 'workspace-safe-mode.md', () =>
+      this.handleWorkspaceSafeModeChange()
+    );
 
     // Watch sources directory
     this.watchSourcesDir();
@@ -411,10 +426,51 @@ export class ConfigWatcher {
       }
     }
 
+    // Watch safe-mode.md for per-source Safe Mode customization
+    const safeModePath = join(sourceDir, 'safe-mode.md');
+    if (existsSync(safeModePath)) {
+      try {
+        const watcher = watch(safeModePath, (eventType) => {
+          if (eventType === 'change' || (eventType === 'rename' && existsSync(safeModePath))) {
+            this.debounce(`source-safemode:${slug}`, () => this.handleSourceSafeModeChange(slug));
+          }
+        });
+        watchers.push(watcher);
+      } catch (error) {
+        debug('[ConfigWatcher] Error watching source safe-mode.md:', slug, error);
+      }
+    }
+
     if (watchers.length > 0) {
       this.sourceWatchers.set(slug, watchers);
       debug('[ConfigWatcher] Watching source:', slug);
     }
+  }
+
+  /**
+   * Handle source safe-mode.md change
+   */
+  private handleSourceSafeModeChange(slug: string): void {
+    debug('[ConfigWatcher] Source safe-mode.md changed:', slug);
+
+    // Invalidate cache
+    safeModeConfigCache.invalidateSource(this.workspaceSlug, slug);
+
+    // Notify callback
+    this.callbacks.onSourceSafeModeChange?.(slug);
+  }
+
+  /**
+   * Handle workspace safe-mode.md change
+   */
+  private handleWorkspaceSafeModeChange(): void {
+    debug('[ConfigWatcher] Workspace safe-mode.md changed:', this.workspaceSlug);
+
+    // Invalidate cache
+    safeModeConfigCache.invalidateWorkspace(this.workspaceSlug);
+
+    // Notify callback
+    this.callbacks.onWorkspaceSafeModeChange?.(this.workspaceSlug);
   }
 
   /**

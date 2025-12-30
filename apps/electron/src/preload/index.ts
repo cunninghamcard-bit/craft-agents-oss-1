@@ -54,11 +54,6 @@ const api: ElectronAPI = {
   saveApiCredentials: (workspaceId: string, agentId: string, apiName: string, credential: string) => ipcRenderer.invoke(IPC_CHANNELS.SAVE_API_CREDENTIALS, workspaceId, agentId, apiName, credential),
   validateMcpConnection: (serverUrl: string, accessToken?: string) => ipcRenderer.invoke(IPC_CHANNELS.VALIDATE_MCP_CONNECTION, serverUrl, accessToken),
 
-  // Agent sync (Craft discovery)
-  syncAgentsFromCraft: (workspaceId: string, options?: { documentIds?: string[]; forceUpdate?: boolean }) => ipcRenderer.invoke(IPC_CHANNELS.SYNC_AGENTS_FROM_CRAFT, workspaceId, options),
-  discoverAllAgents: (workspaceId: string) => ipcRenderer.invoke(IPC_CHANNELS.DISCOVER_ALL_AGENTS, workspaceId),
-  getAgentsSyncStatus: (workspaceId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_AGENTS_SYNC_STATUS, workspaceId),
-
   // Agent state management (unified state machine, agent-scoped)
   getAgentStatus: (workspaceId: string, agentId: string) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_GET_STATUS, workspaceId, agentId),
   activateAgent: (workspaceId: string, agentId: string, options?: AgentActivateOptions) => ipcRenderer.invoke(IPC_CHANNELS.AGENT_ACTIVATE, workspaceId, agentId, options),
