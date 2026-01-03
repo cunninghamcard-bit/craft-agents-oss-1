@@ -986,9 +986,14 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
         const { mcpServers, apiServers } = await sourceService.buildAllServers(enabledSources)
         managed.sourceMcpServers = mcpServers
         managed.sourceApiServers = apiServers
-        managed.agent?.setSourceServers(mcpServers, apiServers)
+        // Pass intended slugs so agent shows sources as active even if build failed
+        const intendedSlugs = enabledSources.map(s => s.config.slug)
+        managed.agent?.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
         console.log(`[SessionManager] Sources reloaded: ${Object.keys(mcpServers).length} MCP servers, ${Object.keys(apiServers).length} API servers`)
+
+        // Broadcast to renderer so UI updates immediately
+        this.broadcastSourcesChanged(allSources)
       }
 
       // Wire up onSourceActivated to enable a source for this session
@@ -1015,7 +1020,9 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
         const { mcpServers, apiServers } = await sourceService.buildAllServers(enabledSources)
         managed.sourceMcpServers = mcpServers
         managed.sourceApiServers = apiServers
-        managed.agent?.setSourceServers(mcpServers, apiServers)
+        // Pass intended slugs so agent shows sources as active even if build failed
+        const intendedSlugs = enabledSources.map(s => s.config.slug)
+        managed.agent?.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
         // Persist the session with updated enabled sources
         this.persistSession(managed)
@@ -1110,7 +1117,9 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
       const allSources = loadWorkspaceSources(workspaceRootPath)
       managed.agent.setAllSources(allSources)
       // Set active source servers (tools are only available from these)
-      managed.agent.setSourceServers(mcpServers, apiServers)
+      // Pass intended slugs so agent shows sources as active even if build failed
+      const intendedSlugs = sources.filter(s => s.config.enabled && s.config.isAuthenticated).map(s => s.config.slug)
+      managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
       console.log(`[SessionManager] Applied ${Object.keys(mcpServers).length} MCP + ${Object.keys(apiServers).length} API sources to active agent (${allSources.length} total)`)
     }
 
@@ -1389,8 +1398,8 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
     // Apply source servers if any are enabled
     if (managed.enabledSourceSlugs?.length) {
       // Build server configs if not already built
+      const sources = getSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs)
       if (!managed.sourceMcpServers) {
-        const sources = getSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs)
         const sourceService = createSourceService()
         const { mcpServers, apiServers, errors } = await sourceService.buildAllServers(sources)
         if (errors.length > 0) {
@@ -1403,8 +1412,10 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
       // Apply source servers to the agent
       const mcpCount = Object.keys(managed.sourceMcpServers || {}).length
       const apiCount = Object.keys(managed.sourceApiServers || {}).length
-      if (mcpCount > 0 || apiCount > 0) {
-        agent.setSourceServers(managed.sourceMcpServers || {}, managed.sourceApiServers || {})
+      if (mcpCount > 0 || apiCount > 0 || managed.enabledSourceSlugs.length > 0) {
+        // Pass intended slugs so agent shows sources as active even if build failed
+        const intendedSlugs = sources.filter(s => s.config.enabled && s.config.isAuthenticated).map(s => s.config.slug)
+        agent.setSourceServers(managed.sourceMcpServers || {}, managed.sourceApiServers || {}, intendedSlugs)
         console.log(`[SessionManager] Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
       }
     }
@@ -1542,31 +1553,18 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
       return { success: false, error: 'Session not found' }
     }
 
-    console.log(`[SessionManager] Killing shell ${shellId} for session: ${sessionId}`)
+    console.log(`[SessionManager] Hiding shell ${shellId} for session: ${sessionId}`)
 
-    // Background shells are managed by the Claude Agent SDK. The only way to terminate
-    // them is by having the agent invoke the KillShell tool. We send a direct instruction
-    // to the agent asking it to terminate the shell.
+    // Background shells are managed by the Claude Agent SDK. There's no direct API
+    // to terminate them from outside the agent's tool calling loop.
     //
-    // NOTE: This approach relies on the model correctly understanding and executing the
-    // request. In practice, the model reliably invokes KillShell when given a specific
-    // shell ID. However, there's no guaranteed way to force termination from outside
-    // the agent's tool calling loop.
+    // Rather than sending a visible message to the LLM (which creates poor UX),
+    // we simply acknowledge the request and let the UI remove the task badge.
+    // The shell may continue running in the background until it completes naturally.
     //
     // TODO: Consider adding a direct SDK API for shell termination if this becomes
-    // unreliable in practice.
-    try {
-      await this.sendMessage(
-        sessionId,
-        `Use the KillShell tool to terminate shell ID: ${shellId}`,
-        []
-      )
-      return { success: true }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error)
-      console.error(`[SessionManager] Failed to kill shell: ${errorMsg}`)
-      return { success: false, error: errorMsg }
-    }
+    // a problem in practice.
+    return { success: true }
   }
 
   /**

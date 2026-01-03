@@ -72,11 +72,39 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
   const pendingPermission = usePendingPermission(chatTab.sessionId)
   const pendingCredential = usePendingCredential(chatTab.sessionId)
 
-  // Get initial draft value for this session (only on mount/session change)
-  // Using useMemo to call getter only once - subsequent typing is handled by FreeFormInput's internal state
-  const initialInputValue = React.useMemo(() => {
-    return getDraft(chatTab.sessionId)
+  // Track draft value for this session
+  // We need to re-sync when draft changes externally (e.g., "Edit in Chat" pre-fills input)
+  // Use state + effect instead of useMemo so we can react to external draft changes
+  const [inputValue, setInputValue] = React.useState(() => getDraft(chatTab.sessionId))
+  const inputValueRef = React.useRef(inputValue)
+  inputValueRef.current = inputValue
+
+  // Re-sync from parent when session changes
+  React.useEffect(() => {
+    setInputValue(getDraft(chatTab.sessionId))
   }, [getDraft, chatTab.sessionId])
+
+  // Also sync when draft is set externally (e.g., from SourceInfoTabPanel's "Edit in Chat")
+  // This polls the draft ref to detect external changes
+  React.useEffect(() => {
+    // Check for external draft changes every 50ms for a short period after mount
+    // This handles the case where openNewChat sets the draft after tab is mounted
+    let attempts = 0
+    const maxAttempts = 10 // 500ms total
+    const interval = setInterval(() => {
+      const currentDraft = getDraft(chatTab.sessionId)
+      if (currentDraft !== inputValueRef.current && currentDraft !== '') {
+        setInputValue(currentDraft)
+        clearInterval(interval)
+      }
+      attempts++
+      if (attempts >= maxAttempts) {
+        clearInterval(interval)
+      }
+    }, 50)
+
+    return () => clearInterval(interval)
+  }, [chatTab.sessionId, getDraft])
 
   const handleInputChange = React.useCallback((value: string) => {
     onInputChange(chatTab.sessionId, value)
@@ -196,8 +224,8 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
       onUltrathinkChange={(enabled) => setOption('ultrathinkEnabled', enabled)}
       permissionMode={sessionOpts.permissionMode}
       onPermissionModeChange={setPermissionMode}
-      // Input draft preservation - initial value only, FreeFormInput manages its own state
-      inputValue={initialInputValue}
+      // Input draft preservation - synced from parent, FreeFormInput manages its own internal state
+      inputValue={inputValue}
       onInputChange={handleInputChange}
       // Sources
       sources={enabledSources}

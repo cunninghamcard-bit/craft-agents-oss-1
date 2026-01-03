@@ -22,6 +22,7 @@ import type {
   LoadedSource,
 } from '../../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from '../hooks/useSessionOptions'
+import type { NewChatActionParams } from '../hooks/useDeepLinkNavigation'
 import { defaultSessionOptions } from '../hooks/useSessionOptions'
 import { sessionAtomFamily } from '../atoms/sessions'
 
@@ -99,6 +100,9 @@ export interface ChatContextType {
 
   // Chat input ref (for focusing)
   textareaRef?: React.RefObject<HTMLTextAreaElement>
+
+  // Open a new chat with optional agent, name, and pre-filled input
+  openNewChat?: (params?: NewChatActionParams) => Promise<void>
 }
 
 const ChatContext = createContext<ChatContextType | null>(null)

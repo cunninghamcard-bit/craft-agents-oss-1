@@ -32,6 +32,10 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
+  # Code signing & notarization (disabled by default for local builds)
+  # To enable: set CSC_LINK, APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, APPLE_TEAM_ID
+  # notarize:
+  #   teamId: ${APPLE_TEAM_ID}
 
 dmg:
   contents:

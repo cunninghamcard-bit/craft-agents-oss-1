@@ -91,10 +91,25 @@ function handleBackgroundTaskEvent(
         : t
     ))
   } else if (event.type === 'tool_result' && 'toolUseId' in evt) {
-    // Remove task when it completes
-    const currentTasks = store.get(backgroundTasksAtom)
-    store.set(backgroundTasksAtom, currentTasks.filter(t => t.toolUseId !== evt.toolUseId))
+    // Remove task when it completes - but NOT if this is the initial backgrounding result
+    // Background tasks return immediately with agentId/shell_id/backgroundTaskId,
+    // we should only remove when the task actually completes
+    const result = typeof evt.result === 'string' ? evt.result : JSON.stringify(evt.result)
+    const isBackgroundingResult = result && (
+      /agentId:\s*[a-zA-Z0-9_-]+/.test(result) ||
+      /shell_id:\s*[a-zA-Z0-9_-]+/.test(result) ||
+      /"backgroundTaskId":\s*"[a-zA-Z0-9_-]+"/.test(result)
+    )
+    if (!isBackgroundingResult) {
+      const currentTasks = store.get(backgroundTasksAtom)
+      store.set(backgroundTasksAtom, currentTasks.filter(t => t.toolUseId !== evt.toolUseId))
+    }
   }
+  // Note: We do NOT clear background tasks on complete/error/interrupted
+  // Background tasks should persist and keep running after the turn ends
+  // They are only removed when:
+  // 1. Their tool_result comes back (task finished)
+  // 2. User manually kills them
 }
 
 export default function App() {
@@ -539,13 +554,7 @@ export default function App() {
     return session
   }, [agents, addSession])
 
-  // Deep link navigation - handles craftagents:// URLs
-  // Must be after handleCreateSession is defined
-  useDeepLinkNavigation({
-    workspaceId: windowWorkspaceId,
-    onCreateSession: handleCreateSession,
-    isReady: appState === 'ready',
-  })
+  // Deep link navigation is initialized later after handleInputChange is defined
 
   const handleDeleteSession = useCallback(async (sessionId: string, skipConfirmation = false): Promise<boolean> => {
     // Show confirmation dialog before deleting (unless skipped or session is empty)
@@ -815,6 +824,15 @@ export default function App() {
     draftSaveTimeoutRef.current.set(sessionId, timeout)
   }, [])
 
+  // Deep link navigation - handles craftagents:// URLs
+  // Must be after handleCreateSession and handleInputChange are defined
+  const { openNewChat } = useDeepLinkNavigation({
+    workspaceId: windowWorkspaceId,
+    onCreateSession: handleCreateSession,
+    onInputChange: handleInputChange,
+    isReady: appState === 'ready',
+  })
+
   const handleRespondToPermission = useCallback(async (sessionId: string, requestId: string, allowed: boolean, alwaysAllow: boolean) => {
     console.log('[App] handleRespondToPermission called:', { sessionId, requestId, allowed, alwaysAllow })
 
@@ -1036,6 +1054,8 @@ export default function App() {
     // Session options
     onSessionOptionsChange: handleSessionOptionsChange,
     onInputChange: handleInputChange,
+    // New chat (via deep link navigation)
+    openNewChat,
   }), [
     sessions,
     workspaces,
@@ -1070,6 +1090,7 @@ export default function App() {
     handleReset,
     handleSessionOptionsChange,
     handleInputChange,
+    openNewChat,
   ])
 
   // Loading state

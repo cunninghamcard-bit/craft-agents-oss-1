@@ -407,18 +407,21 @@ export function useInlineSlashCommand({
   }, [textareaRef])
 
   const handleSelect = React.useCallback((commandId: SlashCommandId): string => {
-    onSelect(commandId)
-    setIsOpen(false)
-
+    // Capture values BEFORE any state changes to avoid race conditions
+    let result = ''
     if (textareaRef.current && slashStart >= 0) {
       const currentValue = textareaRef.current.value
       const before = currentValue.slice(0, slashStart)
       const cursorPos = textareaRef.current.selectionStart
       const after = currentValue.slice(cursorPos)
-      return (before + after).trim()
+      result = (before + after).trim()
     }
 
-    return ''
+    // Now safe to trigger state changes
+    onSelect(commandId)
+    setIsOpen(false)
+
+    return result
   }, [onSelect, textareaRef, slashStart])
 
   const close = React.useCallback(() => {

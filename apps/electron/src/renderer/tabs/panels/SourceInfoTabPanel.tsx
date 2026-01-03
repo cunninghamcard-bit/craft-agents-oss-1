@@ -16,6 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/markdown'
 import { cn } from '@/lib/utils'
 import { CONTENT_MAX_WIDTH_CLASS } from '@/config/layout'
+import { useChatContext } from '@/context/ChatContext'
 import type { Tab, SourceInfoTab } from '../types'
 import type { LoadedSource, McpToolWithPermission } from '../../../shared/types'
 import type { PermissionsConfigFile } from '@craft-agent/shared/agent'
@@ -70,6 +71,7 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
   const sourceInfoTab = tab as SourceInfoTab
   const { sourceSlug, workspaceId, agentSlug } = sourceInfoTab
 
+  const { textareaRef, openNewChat } = useChatContext()
   const [source, setSource] = useState<LoadedSource | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -220,6 +222,63 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
     }
   }, [source])
 
+  // Handle "Edit in chat" - opens a new chat with the .settings agent
+  const handleEditInChat = useCallback(async (section: 'connection' | 'permissions') => {
+    if (!source || !openNewChat) return
+
+    try {
+      // Ensure the .settings builtin agent exists
+      const agentId = await window.electronAPI.ensureBuiltinAgent(workspaceId, '.settings')
+      if (!agentId) {
+        console.error('[SourceInfoTabPanel] Failed to create settings agent')
+        return
+      }
+
+      const sessionName = section === 'connection'
+        ? `Edit ${source.config.name} connection`
+        : `Edit ${source.config.name} permissions`
+
+      const message = section === 'connection'
+        ? `I would like to edit the connection settings for the "${source.config.name}" source: `
+        : `I would like to edit the permissions for the "${source.config.name}" source: `
+
+      // Use openNewChat which handles session creation, tab opening, and input pre-filling
+      await openNewChat({
+        agentId,
+        name: sessionName,
+        input: message,
+      })
+
+      // Focus the textarea and move cursor to end after the tab is mounted and input is set
+      // The deep link hook sets input after 100ms, so we wait a bit longer
+      setTimeout(() => {
+        const textarea = textareaRef?.current
+        if (textarea) {
+          textarea.focus()
+          // Move cursor to end of text
+          const length = textarea.value.length
+          textarea.setSelectionRange(length, length)
+        }
+      }, 150)
+    } catch (error) {
+      console.error('[SourceInfoTabPanel] Failed to edit in chat:', error)
+    }
+  }, [source, workspaceId, openNewChat, textareaRef])
+
+  // Handle editing guide.md in Monaco markdown editor
+  const handleEditGuide = useCallback(async () => {
+    if (!source) return
+
+    const guidePath = `${source.folderPath}/guide.md`
+    const previewId = `source-guide:${sourceSlug}`
+
+    await window.electronAPI.openMarkdownPreview(previewId, {
+      mode: 'readWrite',
+      filePath: guidePath,
+      title: `${source.config.name} - guide.md`,
+    })
+  }, [source, sourceSlug])
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -268,14 +327,14 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
             <div className="flex items-center justify-between mb-2">
               <SectionHeader>Connection</SectionHeader>
               <button
-                onClick={handleOpenSourceFolder}
+                onClick={() => handleEditInChat('connection')}
                 className={cn(
                   "transition-colors text-[13px] cursor-pointer",
                   "text-muted-foreground hover:text-foreground hover:underline",
                   "focus:outline-none focus-visible:underline"
                 )}
               >
-                Edit
+                Edit in chat
               </button>
             </div>
 
@@ -335,14 +394,14 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
               <div className="flex items-center justify-between mb-2">
                 <SectionHeader>Permissions</SectionHeader>
                 <button
-                  onClick={handleOpenSourceFolder}
+                  onClick={() => handleEditInChat('permissions')}
                   className={cn(
                     "transition-colors text-[13px] cursor-pointer",
                     "text-muted-foreground hover:text-foreground hover:underline",
                     "focus:outline-none focus-visible:underline"
                   )}
                 >
-                  Edit
+                  Edit in chat
                 </button>
               </div>
 
@@ -425,14 +484,14 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
               <div className="flex items-center justify-between mb-2">
                 <SectionHeader>Tools</SectionHeader>
                 <button
-                  onClick={handleOpenSourceFolder}
+                  onClick={() => handleEditInChat('permissions')}
                   className={cn(
                     "transition-colors text-[13px] cursor-pointer",
                     "text-muted-foreground hover:text-foreground hover:underline",
                     "focus:outline-none focus-visible:underline"
                   )}
                 >
-                  Edit Permissions
+                  Edit in chat
                 </button>
               </div>
 
@@ -515,14 +574,14 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
               <div className="flex items-center justify-between mb-2">
                 <SectionHeader>Permissions</SectionHeader>
                 <button
-                  onClick={handleOpenSourceFolder}
+                  onClick={() => handleEditInChat('permissions')}
                   className={cn(
                     "transition-colors text-[13px] cursor-pointer",
                     "text-muted-foreground hover:text-foreground hover:underline",
                     "focus:outline-none focus-visible:underline"
                   )}
                 >
-                  Edit
+                  Edit in chat
                 </button>
               </div>
 
@@ -581,7 +640,7 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
               <div className="flex items-center justify-between mb-2">
                 <SectionHeader>Documentation</SectionHeader>
                 <button
-                  onClick={handleOpenSourceFolder}
+                  onClick={handleEditGuide}
                   className={cn(
                     "transition-colors text-[13px] cursor-pointer",
                     "text-muted-foreground hover:text-foreground hover:underline",

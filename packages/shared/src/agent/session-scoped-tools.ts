@@ -17,6 +17,7 @@
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { z } from 'zod';
 import { existsSync, readFileSync, statSync } from 'fs';
+import { basename } from 'path';
 import { getSessionPlansPath } from '../sessions/storage.ts';
 import { debug } from '../utils/debug.ts';
 import { getCredentialManager } from '../credentials/index.ts';
@@ -482,7 +483,9 @@ async function testApiSource(
     // Get credentials if needed - try multiple credential types
     if (source.api.authType && source.api.authType !== 'none') {
       const credentialManager = getCredentialManager();
-      const baseId = { workspaceId: workspaceId, sourceId: source.slug };
+      // Use basename for credential lookups - workspaceId might be a full path
+      const workspaceSlug = basename(workspaceId);
+      const baseId = { workspaceId: workspaceSlug, sourceId: source.slug };
 
       // Try credential types in order of preference
       const credTypesToTry: Array<'source_oauth' | 'source_bearer' | 'source_apikey' | 'source_basic'> = [
@@ -517,20 +520,59 @@ async function testApiSource(
       }
     }
 
-    // Try HEAD first (lighter), fall back to GET
-    let response = await fetch(source.api.baseUrl, { method: 'HEAD', headers });
+    let response: Response;
+    let usedTestEndpoint = false;
 
-    // Some APIs don't support HEAD, try GET
-    if (response.status === 405) {
-      response = await fetch(source.api.baseUrl, { method: 'GET', headers });
+    // Use testEndpoint if configured for real validation
+    if (source.api.testEndpoint) {
+      usedTestEndpoint = true;
+      const testUrl = new URL(source.api.testEndpoint.path, source.api.baseUrl).toString();
+      const fetchOptions: RequestInit = {
+        method: source.api.testEndpoint.method,
+        headers,
+      };
+
+      if (source.api.testEndpoint.method === 'POST' && source.api.testEndpoint.body) {
+        headers['Content-Type'] = 'application/json';
+        fetchOptions.body = JSON.stringify(source.api.testEndpoint.body);
+      }
+
+      response = await fetch(testUrl, fetchOptions);
+    } else {
+      // Fallback: Try HEAD first (lighter), fall back to GET
+      response = await fetch(source.api.baseUrl, { method: 'HEAD', headers });
+
+      // Some APIs don't support HEAD, try GET
+      if (response.status === 405) {
+        response = await fetch(source.api.baseUrl, { method: 'GET', headers });
+      }
     }
 
-    if (response.ok || response.status === 401 || response.status === 403) {
-      // 401/403 means server is reachable but auth may be needed
+    if (response.ok) {
       return {
-        success: response.ok,
+        success: true,
         status: response.status,
-        error: response.ok ? undefined : `HTTP ${response.status} - Authentication may be required`,
+        credentialType,
+      };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      // Server is reachable but auth is needed/invalid
+      return {
+        success: false,
+        status: response.status,
+        error: `HTTP ${response.status} - Authentication required`,
+        credentialType,
+      };
+    }
+
+    if (response.status === 404 && !usedTestEndpoint) {
+      // 404 on base URL fallback - server responds but no root endpoint
+      // This is still a connectivity success, just not fully validated
+      return {
+        success: true,
+        status: response.status,
+        error: 'Server reachable (no root endpoint). Configure testEndpoint for full validation.',
         credentialType,
       };
     }
@@ -696,10 +738,12 @@ export function createSourceTestTool(sessionId: string, workspaceId: string, act
         let mcpAccessToken: string | undefined;
         if (source.isAuthenticated && source.mcp.authType !== 'none') {
           const credentialManager = getCredentialManager();
+          // Use basename for credential lookups - workspaceId might be a full path
+          const workspaceSlug = basename(workspaceId);
           // Try OAuth first, then bearer
           const oauthCred = await credentialManager.get({
             type: 'source_oauth',
-            workspaceId,
+            workspaceId: workspaceSlug,
             sourceId: args.sourceSlug,
           });
           if (oauthCred?.value) {
@@ -707,7 +751,7 @@ export function createSourceTestTool(sessionId: string, workspaceId: string, act
           } else {
             const bearerCred = await credentialManager.get({
               type: 'source_bearer',
-              workspaceId,
+              workspaceId: workspaceSlug,
               sourceId: args.sourceSlug,
             });
             if (bearerCred?.value) {
@@ -971,10 +1015,12 @@ A browser window will open for the user to complete authentication.
 
         // Store the tokens
         const credentialManager = getCredentialManager();
+        // Use basename for credential storage - workspaceId might be a full path
+        const workspaceSlug = basename(workspaceId);
         await credentialManager.set(
           {
             type: 'source_oauth',
-            workspaceId,
+            workspaceId: workspaceSlug,
             sourceId: args.sourceSlug,
           },
           {
@@ -1116,10 +1162,12 @@ After successful authentication, the tokens are stored and the source is marked 
 
         // Store the tokens
         const credentialManager = getCredentialManager();
+        // Use basename for credential storage - workspaceId might be a full path
+        const workspaceSlug = basename(workspaceId);
         await credentialManager.set(
           {
             type: 'source_oauth',
-            workspaceId,
+            workspaceId: workspaceSlug,
             sourceId: args.sourceSlug,
           },
           {
@@ -1285,6 +1333,11 @@ ${scopeDescription}
       apiBaseUrl: z.string().optional().describe('API base URL (required for type=api)'),
       apiAuthType: z.enum(['bearer', 'header', 'query', 'basic', 'oauth', 'none']).optional().describe('API auth type (default: none)'),
       apiHeaderName: z.string().optional().describe('Header name for header auth (e.g., "X-API-Key")'),
+      apiTestEndpoint: z.object({
+        method: z.enum(['GET', 'POST']).describe('HTTP method for test request'),
+        path: z.string().describe('Path to test (e.g., "/search", "/v1/models")'),
+        body: z.record(z.unknown()).optional().describe('Request body for POST tests'),
+      }).optional().describe('Endpoint used for connection testing. If not set, tests base URL only.'),
       localPath: z.string().optional().describe('Local path (required for type=local)'),
       iconUrl: z.string().optional().describe('Icon URL: relative path (./icon.png), direct image URL, or domain for favicon lookup'),
       enabled: z.boolean().optional().describe('Whether source is enabled (default: true)'),
@@ -1301,7 +1354,7 @@ ${scopeDescription}
           provider: string;
           type: 'mcp' | 'api' | 'local';
           mcp?: { url: string; authType: 'oauth' | 'bearer' | 'none' };
-          api?: { baseUrl: string; authType: 'bearer' | 'header' | 'query' | 'basic' | 'oauth' | 'none'; headerName?: string };
+          api?: { baseUrl: string; authType: 'bearer' | 'header' | 'query' | 'basic' | 'oauth' | 'none'; headerName?: string; testEndpoint?: { method: 'GET' | 'POST'; path: string; body?: Record<string, unknown> } };
           local?: { path: string };
           iconUrl?: string;
           enabled?: boolean;
@@ -1346,6 +1399,7 @@ ${scopeDescription}
             baseUrl: args.apiBaseUrl,
             authType: args.apiAuthType ?? 'none',
             headerName: args.apiHeaderName,
+            testEndpoint: args.apiTestEndpoint,
           };
         } else if (args.type === 'local') {
           if (!args.localPath) {
@@ -1833,23 +1887,25 @@ source_credential_prompt({
 
         // Store credentials based on mode
         const credManager = getCredentialManager();
+        // Use basename for credential storage - workspaceId might be a full path
+        const workspaceSlug = basename(workspaceId);
 
         if (args.mode === 'basic') {
           // Encode basic auth as base64 (username:password)
           const encoded = Buffer.from(`${response.username}:${response.password}`).toString('base64');
           await credManager.set(
-            { type: 'source_basic', workspaceId: workspaceId, sourceId: args.sourceSlug },
+            { type: 'source_basic', workspaceId: workspaceSlug, sourceId: args.sourceSlug },
             { value: encoded }
           );
         } else if (args.mode === 'bearer') {
           await credManager.set(
-            { type: 'source_bearer', workspaceId: workspaceId, sourceId: args.sourceSlug },
+            { type: 'source_bearer', workspaceId: workspaceSlug, sourceId: args.sourceSlug },
             { value: response.value! }
           );
         } else {
           // header or query - stored as API key
           await credManager.set(
-            { type: 'source_apikey', workspaceId: workspaceId, sourceId: args.sourceSlug },
+            { type: 'source_apikey', workspaceId: workspaceSlug, sourceId: args.sourceSlug },
             { value: response.value! }
           );
         }

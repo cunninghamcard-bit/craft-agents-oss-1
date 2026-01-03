@@ -379,34 +379,34 @@ apps/electron/
 ❌ **Wrong** (will fail with errors like `randomUUID is not a function`):
 ```tsx
 // In renderer component
-const { loadSourceSafeModeConfig } = await import('@craft-agent/shared/agent')
-const config = loadSourceSafeModeConfig(workspaceId, sourceSlug)
+const { loadSourcePermissionsConfig } = await import('@craft-agent/shared/agent')
+const config = loadSourcePermissionsConfig(workspaceId, sourceSlug)
 ```
 
 ✅ **Correct** (use IPC to call main process):
 ```tsx
 // 1. Add IPC channel to shared/types.ts
 export const IPC_CHANNELS = {
-  SOURCES_GET_SAFE_MODE: 'sources:getSafeMode',
+  SOURCES_GET_PERMISSIONS: 'sources:getPermissions',
   // ...
 }
 
 // 2. Add handler in main/ipc.ts
-ipcMain.handle(IPC_CHANNELS.SOURCES_GET_SAFE_MODE, async (_event, workspaceId: string, sourceSlug: string) => {
-  const { loadSourceSafeModeConfig } = await import('@craft-agent/shared/agent')
+ipcMain.handle(IPC_CHANNELS.SOURCES_GET_PERMISSIONS, async (_event, workspaceId: string, sourceSlug: string) => {
+  const { loadSourcePermissionsConfig } = await import('@craft-agent/shared/agent')
   const workspace = getWorkspaceByNameOrId(workspaceId)
-  return loadSourceSafeModeConfig(workspace.rootPath, sourceSlug)
+  return loadSourcePermissionsConfig(workspace.rootPath, sourceSlug)
 })
 
 // 3. Add to preload/index.ts
 contextBridge.exposeInMainWorld('electronAPI', {
-  getSourceSafeModeConfig: (workspaceId: string, sourceSlug: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET_SAFE_MODE, workspaceId, sourceSlug),
+  getSourcePermissionsConfig: (workspaceId: string, sourceSlug: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET_PERMISSIONS, workspaceId, sourceSlug),
   // ...
 })
 
 // 4. Use in renderer
-const config = await window.electronAPI.getSourceSafeModeConfig(workspaceId, sourceSlug)
+const config = await window.electronAPI.getSourcePermissionsConfig(workspaceId, sourceSlug)
 ```
 
 **Why?** The `@craft-agent/shared` package uses Node.js APIs (`crypto`, `fs`, etc.) that aren't available in the browser/renderer context. All business logic must run in the main process and communicate via IPC.
@@ -414,19 +414,29 @@ const config = await window.electronAPI.getSourceSafeModeConfig(workspaceId, sou
 ### Directory Structure (continued)
 
 ```
+│   │   ├── atoms/         # Jotai atom definitions
 │   │   │   └── sessions.ts # Per-session Jotai atoms for performance isolation
 │   │   ├── components/
 │   │   │   ├── chat/      # Chat UI (Chat, ChatInput, ChatDisplay, SessionList, PermissionBanner)
+│   │   │   ├── code-preview/  # Code preview window component
+│   │   │   ├── diff-preview/  # Diff preview window component
+│   │   │   ├── files/         # File viewer component
 │   │   │   ├── icons/     # Custom SVG icons (PanelLeftRounded, SquarePenRounded)
 │   │   │   ├── markdown/  # Markdown renderer with syntax highlighting
-│   │   │   ├── onboarding/ # Onboarding flow components
 │   │   │   ├── multi-file-diff/ # Multi-file diff viewer
+│   │   │   ├── onboarding/ # Onboarding flow components
+│   │   │   ├── preview/   # Preview window components (Monaco, TOC)
+│   │   │   ├── terminal-preview/ # Terminal preview window
 │   │   │   └── ui/        # shadcn/ui components
-│   │   ├── config/        # Renderer configuration
+│   │   ├── config/        # Renderer configuration (todo-states, etc.)
 │   │   ├── context/
 │   │   │   ├── NavigationContext.tsx  # Agent selection
 │   │   │   ├── ChatContext.tsx        # Chat state and session management
 │   │   │   └── ThemeContext.tsx       # Theme state management
+│   │   ├── event-processor/ # Event streaming and processing
+│   │   │   ├── processor.ts   # Event processor logic
+│   │   │   ├── helpers.ts     # Processing helpers
+│   │   │   └── handlers/      # Event type handlers
 │   │   ├── hooks/
 │   │   │   ├── useAgentState.ts  # Agent activation state machine (IPC-based)
 │   │   │   ├── useBackgroundTasks.ts # Background task tracking
@@ -436,8 +446,9 @@ const config = await window.electronAPI.getSourceSafeModeConfig(workspaceId, sou
 │   │   │   ├── useSession.ts     # Session hook for isolated access
 │   │   │   ├── useOnboarding.ts  # Onboarding flow management
 │   │   │   └── keyboard/         # Keyboard handling hooks
+│   │   ├── lib/           # Utility functions (utils.ts, local-storage.ts)
 │   │   ├── tabs/          # Tab system management
-│   │   ├── utils/         # Utility functions
+│   │   ├── utils/         # Additional utilities
 │   │   └── playground/    # Component development playground
 │   │       ├── PlaygroundApp.tsx     # Main playground component
 │   │       ├── ComponentPreview.tsx  # Component preview display
@@ -455,30 +466,64 @@ The app uses Electron's IPC for main ↔ renderer communication:
 
 | Channel | Direction | Purpose |
 |---------|-----------|---------|
+| **Sessions** | | |
 | `sessions:*` | renderer → main | Session CRUD (create, delete, rename, archive) |
 | `sessions:sendMessage` | renderer → main | Send message with optional file attachments |
-| `sessions:setPermissionMode` | renderer → main | Set session permission mode ('safe', 'ask', 'allow-all') |
-| `workspaces:get` | renderer → main | Get configured workspaces |
-| `agents:*` | renderer → main | Get agents, refresh, check auth status |
-| `session:event` | main → renderer | Stream events (text_delta, tool_start, task_backgrounded, etc.) |
+| `sessions:setPermissionMode` | renderer → main | Set permission mode ('safe', 'ask', 'allow-all') |
+| `sessions:flag/unflag` | renderer → main | Flag/unflag session for attention |
+| `sessions:setTodoState` | renderer → main | Set session workflow status |
+| `sessions:markRead/markUnread` | renderer → main | Mark session read status |
+| `sessions:respondToPermission` | renderer → main | Respond to permission request |
+| `sessions:respondToCredential` | renderer → main | Respond to credential request |
+| `sessions:updateWorkingDirectory` | renderer → main | Update session working directory |
+| `sessions:killShell` | renderer → main | Kill a background shell by ID |
+| `tasks:getOutput` | renderer → main | Get output from background task |
+| `session:event` | main → renderer | Stream events (text_delta, tool_start, etc.) |
+| **Files** | | |
 | `file:read` | renderer → main | Read files (path-validated) |
 | `file:openDialog` | renderer → main | Open native file picker |
 | `file:readAttachment` | renderer → main | Read file as FileAttachment |
+| `file:generateThumbnail` | renderer → main | Generate image thumbnail |
+| `file:storeAttachment` | renderer → main | Store file attachment |
+| **Shell** | | |
 | `shell:openUrl` | renderer → main | Open URL in external browser |
 | `shell:openFile` | renderer → main | Open file in default application |
-| `shell:killShell` | renderer → main | Kill a background shell by ID |
-| `theme:*` | both | Theme preference sync |
-| `deeplink:navigate` | main → renderer | Deep link tab navigation |
-| `sources:getPermissions` | renderer → main | Get permissions config for a source |
-| `sources:getMcpTools` | renderer → main | Get MCP tools with permission status |
-| `settings:getDefaultPermissionMode` | renderer → main | Get default permission mode for new sessions |
-| `settings:setDefaultPermissionMode` | renderer → main | Set default permission mode |
-| `multiFileDiff:open` | renderer → main | Open multi-file diff window |
-| `multiFileDiff:getData` | main → renderer | Get diff data for window |
-| `multiFileDiff:readFile` | renderer → main | Read file for diff context |
-| `statuses:list` | renderer → main | Get workspace statuses |
-| `statuses:changed` | main → renderer | Broadcast status config changes |
+| **Agents** | | |
+| `agents:list` | renderer → main | List available agents |
+| `agents:refresh` | renderer → main | Refresh agent list |
+| `agents:checkAuth` | renderer → main | Check if agent needs auth |
+| `agents:getDefinition` | renderer → main | Get full agent definition |
+| `agents:changed` | main → renderer | Broadcast agent list changes |
+| **Sources** | | |
+| `sources:get` | renderer → main | Get sources for workspace/agent |
+| `sources:create` | renderer → main | Create new source |
+| `sources:delete` | renderer → main | Delete source |
+| `sources:startOAuth` | renderer → main | Start OAuth flow for source |
+| `sources:saveCredentials` | renderer → main | Save source credentials |
+| `sources:getPermissions` | renderer → main | Get permissions config |
+| `sources:getMcpTools` | renderer → main | Get MCP tools with permissions |
+| `sources:changed` | main → renderer | Broadcast source changes |
+| **Workspace** | | |
+| `workspaces:get` | renderer → main | Get configured workspaces |
 | `workspaceSettings:*` | both | Workspace settings CRUD |
+| `workspace:readImage` | renderer → main | Read workspace image |
+| `workspace:writeImage` | renderer → main | Write workspace image |
+| **Theme** | | |
+| `theme:*` | both | Theme preference sync |
+| `theme:systemChanged` | main → renderer | System theme changed |
+| `theme:appChanged` | main → renderer | App theme changed |
+| **Preview Windows** | | |
+| `codePreview:open/getData` | both | Code preview window |
+| `terminalPreview:open/getData` | both | Terminal preview window |
+| `multiFileDiff:open/getData` | both | Multi-file diff window |
+| **Settings** | | |
+| `settings:getDefaultPermissionMode` | renderer → main | Get default permission mode |
+| `settings:setDefaultPermissionMode` | renderer → main | Set default permission mode |
+| **Statuses** | | |
+| `statuses:list` | renderer → main | Get workspace statuses |
+| `statuses:changed` | main → renderer | Broadcast status changes |
+| **Deep Links** | | |
+| `deeplink:navigate` | main → renderer | Deep link tab navigation |
 
 **Event streaming pattern:** `sendMessage` returns immediately. Results stream via `SESSION_EVENT` channel.
 
@@ -496,8 +541,8 @@ craftagents://workspace/{workspaceId}/action/{actionName}[?params]
 | Use Case | URL |
 |----------|-----|
 | Chat session | `craftagents://workspace/ws123/tab/chat/session456` |
-| Agent setup | `craftagents://workspace/ws123/tab/agent-setup/my-agent` |
 | Agent info | `craftagents://workspace/ws123/tab/agent-info/my-agent` |
+| Source info | `craftagents://workspace/ws123/tab/source-info/my-source` |
 | Settings | `craftagents://workspace/ws123/tab/settings` |
 | Shortcuts | `craftagents://workspace/ws123/tab/shortcuts` |
 | Preferences | `craftagents://workspace/ws123/tab/preferences` |
@@ -516,7 +561,7 @@ craftagents://workspace/{workspaceId}/action/{actionName}[?params]
 3. `handleDeepLink()` focuses/creates workspace window
 4. Sends `DEEP_LINK_NAVIGATE` IPC to renderer
 5. `useDeepLinkNavigation` hook receives event
-6. Calls appropriate `useTabs()` method (e.g., `openAgentSetupTab`)
+6. Calls appropriate `useTabs()` method (e.g., `openAgentInfoTab`)
 7. Tab system deduplicates (activates existing tab if ID matches)
 
 **Cold Start:** If app isn't running, URL is stored in `pendingDeepLink` and processed after `app.whenReady()`.

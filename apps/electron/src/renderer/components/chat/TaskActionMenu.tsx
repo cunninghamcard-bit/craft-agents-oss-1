@@ -52,6 +52,27 @@ export interface TaskActionMenuProps {
 export function TaskActionMenu({ task, sessionId, onKillTask, className }: TaskActionMenuProps) {
   const [open, setOpen] = React.useState(false)
 
+  // Local timer for shell tasks (since they don't get task_progress events)
+  // For agent tasks, we use elapsedSeconds from events
+  const [localElapsed, setLocalElapsed] = React.useState(() => {
+    // Initialize from startTime
+    return Math.floor((Date.now() - task.startTime) / 1000)
+  })
+
+  React.useEffect(() => {
+    // Only use local timer for shell tasks
+    if (task.type !== 'shell') return
+
+    const interval = setInterval(() => {
+      setLocalElapsed(Math.floor((Date.now() - task.startTime) / 1000))
+    }, 1000)
+
+    return () => clearInterval(interval)
+  }, [task.type, task.startTime])
+
+  // Use local timer for shells, event-based for agents
+  const displayElapsed = task.type === 'shell' ? localElapsed : task.elapsedSeconds
+
   const handleViewOutput = async () => {
     try {
       // Fetch task output via IPC
@@ -119,7 +140,7 @@ export function TaskActionMenu({ task, sessionId, onKillTask, className }: TaskA
 
           {/* Elapsed time */}
           <span className="opacity-60 tabular-nums">
-            {formatElapsed(task.elapsedSeconds)}
+            {formatElapsed(displayElapsed)}
           </span>
 
           {/* Dropdown indicator */}

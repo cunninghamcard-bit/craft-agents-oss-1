@@ -93,13 +93,13 @@ bun dev
 | `/tools` | List available Craft MCP tools |
 | `/agent` | List, activate, or deactivate subagents |
 | `/info` | Show active agent info and available tools |
-| `/safe` | Toggle safe mode (read-only exploration) |
+| `/safe` | Toggle Explore mode (read-only) |
 | `/setup` | Re-run the configuration wizard |
 | `/clear` | Clear conversation |
 | `/exit` | Exit application |
 | `Ctrl+C` | Interrupt / Exit |
 | `Up/Down` | Navigate command history |
-| `SHIFT+TAB` | Toggle Safe Mode |
+| `SHIFT+TAB` | Cycle permission modes |
 
 ## Headless Mode (Non-Interactive)
 
@@ -167,9 +167,9 @@ craft --print "Summarize document" --output-format stream-json
 #         {"type":"complete","result":{...}}
 ```
 
-### Safe Mode Disabled
+### Permission Policy in Headless Mode
 
-In headless mode, safe mode is automatically disabled. The agent has full access to all tools and executes tasks directly, which is appropriate for non-interactive automation.
+In headless mode, the permission system uses `--permission-policy` instead of interactive mode selection. Use `allow-all` for full automation or `allow-safe` for read-only operations.
 
 ### Session Management
 

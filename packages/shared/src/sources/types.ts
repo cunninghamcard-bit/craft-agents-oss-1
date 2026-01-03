@@ -50,6 +50,15 @@ export interface McpSourceConfig {
 }
 
 /**
+ * API test endpoint configuration for connection validation
+ */
+export interface ApiTestEndpoint {
+  method: 'GET' | 'POST';
+  path: string;
+  body?: Record<string, unknown>; // For POST requests
+}
+
+/**
  * API-specific configuration
  */
 export interface ApiSourceConfig {
@@ -58,6 +67,7 @@ export interface ApiSourceConfig {
   headerName?: string; // For 'header' auth (e.g., "X-API-Key")
   queryParam?: string; // For 'query' auth (e.g., "api_key")
   authScheme?: string; // For 'bearer' auth (default: "Bearer", could be "Token")
+  testEndpoint?: ApiTestEndpoint; // Endpoint to use for connection testing
 }
 
 /**

@@ -96,6 +96,7 @@ export function handleError(
         ...session,
         messages: [...messagesWithFailedTools, errorMessage],
         isProcessing: false,
+        currentStatus: undefined,  // Clear any lingering status
       },
       streaming: null,
     },
@@ -139,6 +140,7 @@ export function handleTypedError(
         ...session,
         messages: [...messagesWithFailedTools, errorMessage],
         isProcessing: false,
+        currentStatus: undefined,  // Clear any lingering status
       },
       streaming: null,
     },
@@ -251,6 +253,7 @@ export function handleInterrupted(
         ...session,
         isProcessing: false,
         messages: [...messagesWithInterruptedTools, event.message],
+        currentStatus: undefined,  // Clear any lingering status
       },
       streaming: null,
     },

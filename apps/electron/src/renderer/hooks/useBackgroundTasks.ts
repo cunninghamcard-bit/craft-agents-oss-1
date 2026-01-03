@@ -57,15 +57,28 @@ export function useBackgroundTasks({ sessionId }: UseBackgroundTasksOptions): Us
   }, [setTasks])
 
   const killTask = useCallback(async (taskId: string, type: 'agent' | 'shell') => {
+    // Find the task to get its toolUseId
+    const task = tasks.find(t => t.id === taskId)
+
     if (type === 'shell') {
       // Use KillShell IPC for shells
-      await window.electronAPI.killShell(sessionId, taskId)
+      try {
+        await window.electronAPI.killShell(sessionId, taskId)
+      } catch (err) {
+        // Shell may already be gone - that's OK, still remove from UI
+        console.log('Shell already terminated or not found:', taskId)
+      }
     } else {
       // For agents, we don't have a direct kill mechanism yet
       // The model would need to use TaskOutput to check status
       console.warn('Killing agent tasks not yet implemented')
     }
-  }, [sessionId])
+
+    // Always remove from UI after kill attempt
+    if (task) {
+      setTasks(prev => prev.filter(t => t.id !== taskId))
+    }
+  }, [sessionId, tasks, setTasks])
 
   return {
     tasks,

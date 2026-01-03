@@ -539,6 +539,8 @@ export class CraftAgent {
   private sourceApiServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
   // Set of active source server names (for blocking disabled sources)
   private activeSourceServerNames: Set<string> = new Set();
+  // Set of intended active source slugs (what UI shows as active, may differ from activeSourceServerNames if build fails)
+  private intendedActiveSlugs: Set<string> = new Set();
   // Full list of all sources in workspace (for context injection)
   private allSources: LoadedSource[] = [];
   // Sources already introduced to agent this session (for incremental context)
@@ -2098,13 +2100,17 @@ export class CraftAgent {
    * Format source state as a lightweight XML block for injection into user messages.
    * Shows active sources, inactive sources, and introduces new sources with taglines.
    * New sources (not seen before this session) include descriptions to help agent understand usage.
+   *
+   * Active sources are determined by intendedActiveSlugs (what UI shows as active).
+   * If a source is intended-active but has no working tools (build failed), we note the issue.
    */
   private formatSourceState(): string {
-    const activeSlugs = [...this.activeSourceServerNames].sort();
+    // Use intended active slugs (what UI shows) rather than just what built successfully
+    const activeSlugs = [...this.intendedActiveSlugs].sort();
 
-    // Find inactive sources (in allSources but not active)
+    // Find inactive sources (in allSources but not intended-active)
     const inactiveSources = this.allSources.filter(
-      (s) => !this.activeSourceServerNames.has(s.config.slug)
+      (s) => !this.intendedActiveSlugs.has(s.config.slug)
     );
 
     // Find sources not yet seen this session
@@ -2121,8 +2127,16 @@ export class CraftAgent {
     // Build output parts
     const parts: string[] = [];
 
-    // Active sources line
-    parts.push(`Active: ${activeSlugs.join(', ') || 'none'}`);
+    // Active sources line - include warning for sources with failed builds
+    if (activeSlugs.length > 0) {
+      const activeWithStatus = activeSlugs.map((slug) => {
+        const hasWorkingTools = this.activeSourceServerNames.has(slug);
+        return hasWorkingTools ? slug : `${slug} (no tools)`;
+      });
+      parts.push(`Active: ${activeWithStatus.join(', ')}`);
+    } else {
+      parts.push('Active: none');
+    }
 
     // Inactive sources with reason
     if (inactiveSources.length > 0) {
@@ -2714,9 +2728,11 @@ export class CraftAgent {
               }
             }
 
-            // Detect background shell start - Bash tool with shell_id in result
+            // Detect background shell start - Bash tool with shell_id or backgroundTaskId in result
             if (toolUse?.name === 'Bash' && !isError && resultStr) {
-              const shellIdMatch = resultStr.match(/shell_id:\s*([a-zA-Z0-9_-]+)/);
+              // Match both old format (shell_id: xxx) and new JSON format ("backgroundTaskId": "xxx")
+              const shellIdMatch = resultStr.match(/shell_id:\s*([a-zA-Z0-9_-]+)/)
+                || resultStr.match(/"backgroundTaskId":\s*"([a-zA-Z0-9_-]+)"/);
               if (shellIdMatch && shellIdMatch[1]) {
                 const shellId = shellIdMatch[1];
                 // Extract intent from tool input if available
@@ -2762,10 +2778,11 @@ export class CraftAgent {
         console.log(`[CraftAgent] tool_progress: tool=${progress.tool_name} (${progress.tool_use_id}), parent=${progress.parent_tool_use_id}, elapsed=${progress.elapsed_time_seconds}`);
 
         // Forward elapsed time to UI for live progress updates
+        // Use parent_tool_use_id if this is a child tool, so progress updates the parent Task
         if (progress.elapsed_time_seconds !== undefined) {
           events.push({
             type: 'task_progress',
-            toolUseId: progress.tool_use_id,
+            toolUseId: progress.parent_tool_use_id || progress.tool_use_id,
             elapsedSeconds: progress.elapsed_time_seconds,
             turnId: turnId || undefined,
           });
@@ -3025,10 +3042,13 @@ When you see <setup_required> in a message, help the user authenticate those sou
    * These are MCP servers and API tools added via the source selector UI
    * @param mcpServers Pre-built MCP server configs with auth headers
    * @param apiServers In-process MCP servers for REST APIs
+   * @param intendedSlugs Optional list of source slugs that should be considered active
+   *                      (what the UI shows as active, even if build failed)
    */
   setSourceServers(
     mcpServers: Record<string, { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }>,
-    apiServers: Record<string, ReturnType<typeof createSdkMcpServer>>
+    apiServers: Record<string, ReturnType<typeof createSdkMcpServer>>,
+    intendedSlugs?: string[]
   ): void {
     this.sourceMcpServers = mcpServers;
     this.sourceApiServers = apiServers;
@@ -3038,7 +3058,17 @@ When you see <setup_required> in a message, help the user authenticate those sou
       ...Object.keys(mcpServers),
       ...Object.keys(apiServers),
     ]);
+
+    // Update intended active slugs (defaults to what actually built if not specified)
+    this.intendedActiveSlugs = new Set(intendedSlugs ?? [...this.activeSourceServerNames]);
+
     this.onDebug?.(`Active source servers: ${[...this.activeSourceServerNames].join(', ') || 'none'}`);
+    if (intendedSlugs && intendedSlugs.length !== this.activeSourceServerNames.size) {
+      const failed = intendedSlugs.filter(s => !this.activeSourceServerNames.has(s));
+      if (failed.length > 0) {
+        this.onDebug?.(`Sources with failed builds: ${failed.join(', ')}`);
+      }
+    }
   }
 
   /**

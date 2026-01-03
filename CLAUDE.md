@@ -252,15 +252,17 @@ Tools available within agent sessions with per-session callbacks:
 |-----------|---------|
 | `agent/` | CraftAgent, session-scoped-tools, mode-manager, mode-types, permissions-config |
 | `agents/` | folder-manager, folder-storage, api-tools, builtin-agents |
-| `sources/` | types, storage, service |
 | `auth/` | oauth, craft-token, claude-token, gmail-oauth, state |
+| `clients/` | Craft API client |
 | `config/` | storage, preferences, models, theme, watcher |
 | `credentials/` | manager, backends (secure-storage, env) |
+| `headless/` | runner, types, output |
 | `mcp/` | client, validation |
 | `prompts/` | system prompt |
-| `headless/` | runner, types, output |
 | `sessions/` | index, storage, persistence-queue |
+| `sources/` | types, storage, service |
 | `statuses/` | types, crud, storage, default-icons |
+| `types/` | shared type definitions |
 | `utils/` | debug, files, summarize, icon, title-generator |
 | `workspaces/` | storage |
 

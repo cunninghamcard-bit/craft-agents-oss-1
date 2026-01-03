@@ -156,19 +156,6 @@ export function credentialIdToAccount(id: CredentialId): string {
     return parts.join(CREDENTIAL_DELIMITER);
   }
 
-  // Legacy: Source credentials without workspace: source_oauth::{sourceId}
-  if (isSourceCredential(id.type) && id.sourceId && !id.workspaceId) {
-    parts.push(id.sourceId);
-    return parts.join(CREDENTIAL_DELIMITER);
-  }
-
-  // Legacy: Agent-scoped source credentials without workspace: agent_source_oauth::{agentId}::{sourceId}
-  if (isAgentSourceCredential(id.type) && id.agentId && id.sourceId && !id.workspaceId) {
-    parts.push(id.agentId);
-    parts.push(id.sourceId);
-    return parts.join(CREDENTIAL_DELIMITER);
-  }
-
   // Agent secrets: agent_secret::{name}
   if (id.type === 'agent_secret' && id.name) {
     parts.push(id.name);
@@ -200,16 +187,6 @@ export function accountToCredentialId(account: string): CredentialId | null {
   // Agent-scoped source credentials: agent_source_oauth::{workspaceId}::{agentId}::{sourceId}
   if (isAgentSourceCredential(type) && parts.length === 4) {
     return { type, workspaceId: parts[1], agentId: parts[2], sourceId: parts[3] };
-  }
-
-  // Legacy: Source credentials without workspace: source_oauth::{sourceId}
-  if (isSourceCredential(type) && parts.length === 2) {
-    return { type, sourceId: parts[1] };
-  }
-
-  // Legacy: Agent-scoped source credentials without workspace: agent_source_oauth::{agentId}::{sourceId}
-  if (isAgentSourceCredential(type) && parts.length === 3) {
-    return { type, agentId: parts[1], sourceId: parts[2] };
   }
 
   // Agent secrets: agent_secret::{name}

@@ -562,6 +562,7 @@ export function Chat({
     onOpenStoredUserPreferences,
     onReset,
     onSendMessage,
+    openNewChat,
   } = contextValue
   const [isSidebarVisible, setIsSidebarVisible] = React.useState(() => {
     return storage.get(storage.KEYS.sidebarVisible, !defaultCollapsed)
@@ -1383,35 +1384,38 @@ export function Chat({
     openChatTab(newSession.id, activeWorkspace.id, 'New Chat', agentId, { forceNew: true })
   }, [activeWorkspace, chatFilter, selectedAgentId, onCreateSession, openChatTab])
 
-  // Add Source - opens a chat with the .source-setup builtin agent
+  // Add Source - opens a chat with the .settings builtin agent
   const handleAddSource = useCallback(async () => {
-    if (!activeWorkspace) return
+    if (!activeWorkspace || !openNewChat) return
 
     try {
       // Ensure the builtin agent exists
-      const agentId = await window.electronAPI.ensureBuiltinAgent(activeWorkspace.id, '.source-setup')
+      const agentId = await window.electronAPI.ensureBuiltinAgent(activeWorkspace.id, '.settings')
       if (!agentId) {
-        toast.error('Failed to create source setup agent')
+        toast.error('Failed to create settings agent')
         return
       }
 
-      // Create a new session with this agent
-      const newSession = await onCreateSession(activeWorkspace.id, agentId)
-      openChatTab(newSession.id, activeWorkspace.id, 'Add Source', agentId, { forceNew: true })
+      // Use openNewChat which handles session creation, tab opening, and input pre-filling
+      await openNewChat({
+        agentId,
+        name: 'Add Source',
+        input: 'I would like to add a new source: ',
+      })
     } catch (error) {
       console.error('[Chat] Failed to add source:', error)
       toast.error('Failed to start source setup')
     }
-  }, [activeWorkspace, onCreateSession, openChatTab])
+  }, [activeWorkspace, openNewChat])
 
   const handleDeleteSource = useCallback(async (sourceName: string) => {
     if (!activeWorkspace) return
 
     try {
       // Ensure the builtin agent exists
-      const agentId = await window.electronAPI.ensureBuiltinAgent(activeWorkspace.id, '.source-setup')
+      const agentId = await window.electronAPI.ensureBuiltinAgent(activeWorkspace.id, '.settings')
       if (!agentId) {
-        toast.error('Failed to create source setup agent')
+        toast.error('Failed to create settings agent')
         return
       }
 
@@ -2219,6 +2223,17 @@ export function Chat({
                     </StyledDropdownMenuItem>
                   </StyledDropdownMenuContent>
                 </DropdownMenu>
+              )}
+              {/* Add Source button (only for sources mode) */}
+              {isSourcesMode(sidebarMode) && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 shrink-0 rounded-[4px] titlebar-no-drag text-muted-foreground hover:text-foreground"
+                  onClick={handleAddSource}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
               )}
             </motion.div>
             <Separator />

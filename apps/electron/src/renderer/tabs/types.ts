@@ -129,6 +129,8 @@ export interface TabState {
 export interface OpenChatTabOptions {
   /** Force opening a new tab even if session already has one */
   forceNew?: boolean
+  /** Pre-fill the chat input with this text (not sent automatically) */
+  initialInput?: string
 }
 
 /**
