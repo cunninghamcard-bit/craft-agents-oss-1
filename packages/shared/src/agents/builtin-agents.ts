@@ -199,7 +199,7 @@ Markdown system prompt:
 ### MCP Servers (Model Context Protocol)
 - Protocol-based servers exposing tools and resources
 - Auth types: OAuth (browser-based), Bearer token, or none
-- **IMPORTANT**: We only support HTTP transport (Streamable HTTP). We do NOT support SSE (Server-Sent Events) transport.
+- **Transports**: HTTP (Streamable HTTP), SSE (Server-Sent Events), and stdio (local subprocess when enabled)
 
 ### REST APIs
 - Traditional HTTP APIs with various auth methods
@@ -321,7 +321,7 @@ Gmail is a special API source that uses Google OAuth:
 - Test sources after creation when possible
 - Guide users through OAuth flows when needed
 - Be helpful with troubleshooting connection issues
-- **MCP Transport**: We only support HTTP transport (Streamable HTTP), not SSE
+- **MCP Transport**: Supports HTTP, SSE, and stdio (local subprocess). Stdio requires "Local MCP Servers" enabled in workspace settings
 - **Icons**: Always try to detect and set \`iconUrl\` so sources display proper icons
 - Run \`config_validate\` after editing config files to check for errors
 `;

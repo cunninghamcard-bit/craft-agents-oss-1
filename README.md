@@ -287,11 +287,15 @@ Subagents are specialized agents defined in Craft documents. They extend the bas
 
 Create a Craft document with an "Instructions" section containing the agent's system prompt. You can also include:
 
-**MCP Servers** (HTTP/HTTPS only):
+**MCP Servers** (HTTP, SSE, or stdio):
 ```yaml
 servers:
   - name: myserver
     url: https://example.com/mcp
+  - name: filesystem
+    transport: stdio
+    command: npx
+    args: ["-y", "@anthropic/mcp-server-filesystem"]
 ```
 
 **REST APIs** (detected from various sources):
@@ -584,7 +588,7 @@ Session transcripts are stored by the Claude Agent SDK at:
 - **Runtime**: [Bun](https://bun.sh/)
 - **AI**: [@anthropic-ai/claude-agent-sdk](https://www.npmjs.com/package/@anthropic-ai/claude-agent-sdk)
 - **TUI**: [Ink](https://github.com/vadimdemedes/ink) (React for CLIs)
-- **MCP**: HTTP transport via Agent SDK
+- **MCP**: HTTP, SSE, and stdio transports via Agent SDK
 - **Credentials**: AES-256-GCM encrypted file storage
 
 ## License
