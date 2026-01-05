@@ -5,6 +5,8 @@
  * - gmail_list_messages: List emails with optional search query
  * - gmail_get_message: Get full email content by ID
  * - gmail_search: Search emails using Gmail syntax
+ * - gmail_trash_message: Move email to trash (recoverable for 30 days)
+ * - gmail_create_draft: Create a draft email for later review
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
@@ -440,6 +442,151 @@ Combine operators: from:boss@company.com after:2024/01/01 has:attachment`,
 }
 
 /**
+ * Create Gmail trash message tool
+ */
+function createTrashMessageTool(getToken: GmailTokenGetter) {
+  return tool(
+    'gmail_trash_message',
+    `Move an email to trash.
+
+IMPORTANT: Always ask for explicit user permission before trashing emails.
+List the emails to be trashed and wait for user confirmation.
+
+Trashed emails can be recovered from the Trash folder for 30 days.
+For permanent deletion, users must empty trash manually in Gmail.`,
+    {
+      messageId: z.string().describe('Gmail message ID to trash'),
+    },
+    async (args) => {
+      const { messageId } = args;
+
+      try {
+        const accessToken = await getToken();
+
+        debug(`[gmail-tools] Trashing message: ${messageId}`);
+
+        const response = await fetch(
+          `${GMAIL_API_BASE}/users/me/messages/${messageId}/trash`,
+          {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${accessToken}` },
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.text();
+          return {
+            content: [{ type: 'text' as const, text: `Gmail API error: ${error}` }],
+            isError: true,
+          };
+        }
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Message ${messageId} moved to trash. It can be recovered from Trash within 30 days.`,
+          }],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return {
+          content: [{ type: 'text' as const, text: `Failed to trash message: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
+/**
+ * Create Gmail draft tool
+ */
+function createDraftTool(getToken: GmailTokenGetter) {
+  return tool(
+    'gmail_create_draft',
+    `Create a draft email in Gmail.
+
+The draft will be saved but NOT sent. User can review and send it from Gmail.
+Use this when the user wants to compose an email for later review.`,
+    {
+      to: z.string().describe('Recipient email address(es), comma-separated for multiple'),
+      subject: z.string().describe('Email subject line'),
+      body: z.string().describe('Email body content (plain text)'),
+      cc: z.string().optional().describe('CC recipients, comma-separated (optional)'),
+      bcc: z.string().optional().describe('BCC recipients, comma-separated (optional)'),
+    },
+    async (args) => {
+      const { to, subject, body, cc, bcc } = args;
+
+      try {
+        const accessToken = await getToken();
+
+        // Build RFC 2822 formatted email
+        const emailLines = [
+          `To: ${to}`,
+          `Subject: ${subject}`,
+        ];
+
+        if (cc) emailLines.push(`Cc: ${cc}`);
+        if (bcc) emailLines.push(`Bcc: ${bcc}`);
+
+        emailLines.push('Content-Type: text/plain; charset=utf-8');
+        emailLines.push('');
+        emailLines.push(body);
+
+        const email = emailLines.join('\r\n');
+
+        // Encode as base64url
+        const encodedEmail = Buffer.from(email)
+          .toString('base64')
+          .replace(/\+/g, '-')
+          .replace(/\//g, '_')
+          .replace(/=+$/, '');
+
+        debug(`[gmail-tools] Creating draft to: ${to}`);
+
+        const response = await fetch(
+          `${GMAIL_API_BASE}/users/me/drafts`,
+          {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              message: { raw: encodedEmail },
+            }),
+          }
+        );
+
+        if (!response.ok) {
+          const error = await response.text();
+          return {
+            content: [{ type: 'text' as const, text: `Gmail API error: ${error}` }],
+            isError: true,
+          };
+        }
+
+        const draft = await response.json() as { id: string; message: { id: string } };
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Draft created successfully!\n\nDraft ID: ${draft.id}\nTo: ${to}\nSubject: ${subject}\n\nThe draft has been saved in Gmail. You can review and send it from the Drafts folder.`,
+          }],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return {
+          content: [{ type: 'text' as const, text: `Failed to create draft: ${message}` }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
+/**
  * Create an in-process MCP server with Gmail tools.
  *
  * @param getToken - Function that returns a fresh Gmail OAuth access token
@@ -456,6 +603,8 @@ export function createGmailServer(getToken: GmailTokenGetter): ReturnType<typeof
       createListMessagesTool(getToken),
       createGetMessageTool(getToken),
       createSearchTool(getToken),
+      createTrashMessageTool(getToken),
+      createDraftTool(getToken),
     ],
   });
 }

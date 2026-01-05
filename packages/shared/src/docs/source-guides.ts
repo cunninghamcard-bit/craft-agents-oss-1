@@ -497,6 +497,74 @@ GitHub organizes code and collaboration around:
 - Search API has separate lower limits
 `;
 
+const GMAIL_GUIDE = `---
+domains:
+  - gmail.com
+  - api.gmail.com
+  - gmail.googleapis.com
+providers:
+  - gmail
+---
+
+# Gmail
+
+Access and manage your Gmail emails through the Gmail API.
+
+## Capabilities
+
+- **List emails** - Browse recent messages or filter by label
+- **Search emails** - Use Gmail's powerful search syntax
+- **Get message content** - Read full email body, metadata, and attachments
+- **Trash emails** - Move messages to trash (recoverable for 30 days)
+- **Create drafts** - Compose draft emails for user review before sending
+
+## Guidelines
+
+- **Privacy**: This source accesses personal email. All data remains local and is only used to fulfill requests.
+- **IMPORTANT - Trashing**: ALWAYS ask for explicit user permission before trashing any emails. List the emails to be trashed and wait for confirmation.
+- **Drafts not sent**: Draft emails are saved but NOT sent automatically. User must review and send from Gmail.
+
+## Gmail Search Syntax
+
+Common search operators:
+- \`from:sender@example.com\` - Messages from specific sender
+- \`to:recipient@example.com\` - Messages to specific recipient
+- \`subject:keyword\` - Messages with keyword in subject
+- \`is:unread\` - Unread messages
+- \`is:starred\` - Starred messages
+- \`has:attachment\` - Messages with attachments
+- \`after:2024/01/01\` - Messages after a date
+- \`before:2024/12/31\` - Messages before a date
+- \`label:important\` - Messages with specific label
+- \`in:inbox\` - Messages in inbox
+- \`in:sent\` - Sent messages
+
+Combine operators with spaces: \`from:john@example.com after:2024/01/01 has:attachment\`
+
+## Rate Limits
+
+- 250 quota units per user per second
+- Most read operations cost 1-5 units
+- Avoid rapid sequential requests
+
+<!-- SETUP: This section is ONLY for the setup agent -->
+
+## Setup Hints
+
+### Authentication
+Gmail uses Google OAuth 2.0 for authentication. When prompted, use the \`source_gmail_oauth_trigger\` tool to start the OAuth flow.
+
+### Recommended Questions
+- What kinds of emails do you typically search for?
+- Do you need to filter by labels or folders?
+- Are there specific senders or subjects you frequently look up?
+
+### Common Patterns
+- Searching for recent emails from a specific sender
+- Finding emails with specific attachments
+- Listing unread messages in inbox
+`;
+
 /**
  * Map of bundled source guide files
  */
@@ -504,4 +572,5 @@ export const BUNDLED_SOURCE_GUIDES: Record<string, string> = {
   'craft.do.md': CRAFT_DO_GUIDE,
   'linear.app.md': LINEAR_APP_GUIDE,
   'github.com.md': GITHUB_COM_GUIDE,
+  'gmail.com.md': GMAIL_GUIDE,
 };

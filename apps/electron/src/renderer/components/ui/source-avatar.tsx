@@ -102,11 +102,12 @@ export function getSourceFallbackIcon(type: SourceType): React.ComponentType<{ c
 
 /**
  * Derive favicon URL from service URL (for sources without explicit iconUrl)
+ * Uses provider-based canonical domain mapping when available for better logo resolution
  */
 function deriveServiceFavicon(source: LoadedSource): string | null {
   const config = source.config
   const url = config.mcp?.url ?? config.api?.baseUrl
-  return url ? getLogoUrl(url) : null
+  return url ? getLogoUrl(url, config.provider) : null
 }
 
 // Status indicator size based on avatar size

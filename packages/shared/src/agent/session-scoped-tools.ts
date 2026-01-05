@@ -461,12 +461,63 @@ Returns structured validation results with errors, warnings, and suggestions.
 // ============================================================
 
 /**
+ * Test Gmail source by validating OAuth token exists and is not expired.
+ * Gmail uses dedicated tools (createGmailServer) rather than HTTP endpoints,
+ * so we can't test with a standard API request.
+ */
+async function testGmailSource(
+  source: FolderSourceConfig,
+  workspaceId: string
+): Promise<{ success: boolean; status?: number; error?: string; credentialType?: string }> {
+  const credManager = getSourceCredentialManager();
+  const wsId = basename(workspaceId);
+
+  // Build LoadedSource from config for credential manager
+  const loadedSource: LoadedSource = {
+    config: source,
+    guide: null,
+    folderPath: '',
+    workspaceId: wsId,
+  };
+
+  // Check if we have valid credentials using getToken (handles expiry)
+  const token = await credManager.getToken(loadedSource);
+
+  if (token) {
+    // Token is valid (not expired)
+    return { success: true, credentialType: 'source_oauth' };
+  }
+
+  // No valid token - check if we have a refresh token
+  const cred = await credManager.load(loadedSource);
+  if (cred?.refreshToken) {
+    // Try to refresh the token
+    const refreshed = await credManager.refresh(loadedSource);
+    if (refreshed) {
+      return { success: true, credentialType: 'source_oauth' };
+    }
+  }
+
+  // No valid token and refresh failed or not available
+  return {
+    success: false,
+    error: 'Gmail OAuth token missing or expired. Use source_gmail_oauth_trigger to re-authenticate.',
+    credentialType: 'source_oauth',
+  };
+}
+
+/**
  * Test an API source by making a simple HEAD/GET request.
  */
 async function testApiSource(
   source: FolderSourceConfig,
   workspaceId: string
 ): Promise<{ success: boolean; status?: number; error?: string; credentialType?: string }> {
+  // Gmail uses dedicated tools, not HTTP API - use Gmail-specific test
+  if (source.provider === 'gmail') {
+    return testGmailSource(source, workspaceId);
+  }
+
   if (!source.api?.baseUrl) {
     return { success: false, error: 'No API URL configured' };
   }
@@ -701,7 +752,7 @@ After creating or editing a source's config.json, run this tool to:
                             source.type === 'mcp' ? source.mcp?.url : null;
           if (serviceUrl) {
             const { getHighQualityLogoUrl, cacheIcon } = await import('../utils/logo.ts');
-            const logoUrl = await getHighQualityLogoUrl(serviceUrl);
+            const logoUrl = await getHighQualityLogoUrl(serviceUrl, source.provider);
             if (logoUrl) {
               const cached = await cacheIcon(logoUrl, sourcePath);
               if (cached) {

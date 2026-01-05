@@ -10,6 +10,15 @@
 const GOOGLE_FAVICON_URL = 'https://t2.gstatic.com/faviconV2?client=SOCIAL&type=FAVICON&fallback_opts=TYPE,SIZE,URL&size=';
 
 /**
+ * Canonical domains for known providers.
+ * Maps provider names to their canonical domain for proper favicon resolution.
+ * This fixes issues like api.gmail.com returning a globe icon instead of Gmail logo.
+ */
+export const PROVIDER_CANONICAL_DOMAINS: Record<string, string> = {
+  gmail: 'gmail.com',
+};
+
+/**
  * Extract domain from URL
  */
 export function extractDomain(url: string): string | null {
@@ -172,8 +181,20 @@ function pickBestFavicon(favicons: Array<{href: string, sizes: string | null}>):
  *
  * This function makes HTTP requests to find the best quality favicon.
  * Results should be cached (stored in source config) to avoid repeated requests.
+ *
+ * @param serviceUrl - The service URL to get logo for
+ * @param provider - Optional provider name (e.g., 'gmail') to use canonical domain mapping
  */
-export async function getHighQualityLogoUrl(serviceUrl: string): Promise<string | null> {
+export async function getHighQualityLogoUrl(serviceUrl: string, provider?: string): Promise<string | null> {
+  // Check if provider has a canonical domain mapping
+  if (provider) {
+    const canonicalDomain = PROVIDER_CANONICAL_DOMAINS[provider.toLowerCase()];
+    if (canonicalDomain) {
+      // Use canonical domain for favicon resolution
+      return getHighQualityLogoUrl(`https://${canonicalDomain}`);
+    }
+  }
+
   const fullDomain = extractDomain(serviceUrl);
   if (!fullDomain) {
     return null;
@@ -212,9 +233,19 @@ export async function getHighQualityLogoUrl(serviceUrl: string): Promise<string 
  * Get logo URL for a service (synchronous, uses Google Favicon API)
  * Returns Google Favicon URL or null for internal domains
  *
+ * @param serviceUrl - The service URL to get logo for
+ * @param provider - Optional provider name (e.g., 'gmail') to use canonical domain mapping
  * @deprecated Use getHighQualityLogoUrl() when possible for better quality
  */
-export function getLogoUrl(serviceUrl: string): string | null {
+export function getLogoUrl(serviceUrl: string, provider?: string): string | null {
+  // Check if provider has a canonical domain mapping
+  if (provider) {
+    const canonicalDomain = PROVIDER_CANONICAL_DOMAINS[provider.toLowerCase()];
+    if (canonicalDomain) {
+      return `${GOOGLE_FAVICON_URL}128&url=https://${canonicalDomain}`;
+    }
+  }
+
   const fullDomain = extractDomain(serviceUrl);
   if (!fullDomain) {
     return null;

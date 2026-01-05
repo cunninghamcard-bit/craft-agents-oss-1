@@ -577,7 +577,7 @@ export async function createSource(
                        input.type === 'mcp' ? input.mcp?.url : null;
     if (serviceUrl) {
       const { getHighQualityLogoUrl, cacheIcon } = await import('../utils/logo.js');
-      const logoUrl = await getHighQualityLogoUrl(serviceUrl);
+      const logoUrl = await getHighQualityLogoUrl(serviceUrl, input.provider);
       if (logoUrl) {
         const cached = await cacheIcon(logoUrl, sourcePath);
         if (cached) {
@@ -744,7 +744,7 @@ export async function createAgentSource(
                        input.type === 'mcp' ? input.mcp?.url : null;
     if (serviceUrl) {
       const { getHighQualityLogoUrl, cacheIcon } = await import('../utils/logo.js');
-      const logoUrl = await getHighQualityLogoUrl(serviceUrl);
+      const logoUrl = await getHighQualityLogoUrl(serviceUrl, input.provider);
       if (logoUrl) {
         const cached = await cacheIcon(logoUrl, sourcePath);
         if (cached) {
