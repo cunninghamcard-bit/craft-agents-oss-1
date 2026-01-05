@@ -309,11 +309,17 @@ Gmail is a special API source that uses Google OAuth:
      "iconUrl": "https://mail.google.com"
    }
    \`\`\`
+   **CRITICAL**: The \`"provider": "gmail"\` field is REQUIRED. OAuth will fail without it.
 
 2. Trigger Gmail OAuth (uses dedicated tool, NOT source_oauth_trigger):
    \`\`\`
    source_gmail_oauth_trigger({ sourceSlug: "gmail" })
    \`\`\`
+
+3. After successful OAuth, tell the user:
+   - Gmail is now configured and authenticated
+   - To use Gmail tools in a session, enable it via the **source selector** (bottom of chat input, next to the send button)
+   - Available tools: \`gmail_list_messages\`, \`gmail_get_message\`, \`gmail_search\`, \`gmail_trash_message\`, \`gmail_create_draft\`
 
 ## Important Notes
 

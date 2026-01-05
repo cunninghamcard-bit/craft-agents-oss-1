@@ -493,7 +493,7 @@ export class ConfigWatcher {
   private handleSourceConfigChange(slug: string): void {
     debug('[ConfigWatcher] Source config changed:', slug);
 
-    const validation = validateSource(this.workspaceId, slug);
+    const validation = validateSource(this.workspaceDir, slug);
     if (!validation.valid) {
       debug('[ConfigWatcher] Source validation failed:', slug, validation.errors);
       this.callbacks.onValidationError?.(`sources/${slug}/config.json`, validation);
@@ -529,7 +529,7 @@ export class ConfigWatcher {
     debug('[ConfigWatcher] Source permissions.json changed:', slug);
 
     // Invalidate cache
-    permissionsConfigCache.invalidateSource(this.workspaceId, slug);
+    permissionsConfigCache.invalidateSource(this.workspaceDir, slug);
 
     // Notify callback
     this.callbacks.onSourcePermissionsChange?.(slug);
@@ -631,7 +631,7 @@ export class ConfigWatcher {
   private handleAgentConfigChange(slug: string): void {
     debug('[ConfigWatcher] Agent config changed:', slug);
 
-    const validation = validateAgent(this.workspaceId, slug);
+    const validation = validateAgent(this.workspaceDir, slug);
     if (!validation.valid) {
       debug('[ConfigWatcher] Agent validation failed:', slug, validation.errors);
       this.callbacks.onValidationError?.(`agents/${slug}/config.json`, validation);
@@ -671,7 +671,7 @@ export class ConfigWatcher {
     debug('[ConfigWatcher] Workspace permissions.json changed:', this.workspaceId);
 
     // Invalidate cache
-    permissionsConfigCache.invalidateWorkspace(this.workspaceId);
+    permissionsConfigCache.invalidateWorkspace(this.workspaceDir);
 
     // Notify callback
     this.callbacks.onWorkspacePermissionsChange?.(this.workspaceId);
