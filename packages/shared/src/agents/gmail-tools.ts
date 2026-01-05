@@ -10,11 +10,11 @@
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
+import { gmail, type gmail_v1 } from '@googleapis/gmail';
+import { OAuth2Client } from 'google-auth-library';
 import { z } from 'zod';
 import { debug } from '../utils/debug.ts';
 import { estimateTokens, summarizeLargeResult, TOKEN_LIMIT } from '../utils/summarize.ts';
-
-const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1';
 
 /**
  * Token getter function - called before each request to get a fresh token
@@ -23,77 +23,29 @@ const GMAIL_API_BASE = 'https://gmail.googleapis.com/gmail/v1';
 export type GmailTokenGetter = () => Promise<string>;
 
 /**
- * Gmail message header
+ * Create an authenticated Gmail client from a token getter
  */
-interface GmailHeader {
-  name: string;
-  value: string;
-}
-
-/**
- * Gmail message part (for multipart messages)
- */
-interface GmailMessagePart {
-  mimeType: string;
-  body?: {
-    data?: string;
-    size: number;
-  };
-  parts?: GmailMessagePart[];
-  headers?: GmailHeader[];
-}
-
-/**
- * Gmail message from API
- */
-interface GmailMessage {
-  id: string;
-  threadId: string;
-  labelIds?: string[];
-  snippet?: string;
-  payload?: {
-    mimeType: string;
-    headers?: GmailHeader[];
-    body?: {
-      data?: string;
-      size: number;
-    };
-    parts?: GmailMessagePart[];
-  };
-  internalDate?: string;
-}
-
-/**
- * Gmail messages list response
- */
-interface GmailMessagesListResponse {
-  messages?: Array<{ id: string; threadId: string }>;
-  nextPageToken?: string;
-  resultSizeEstimate?: number;
-}
-
-/**
- * Decode base64url encoded string
- */
-function decodeBase64Url(data: string): string {
-  // Convert base64url to base64
-  const base64 = data.replace(/-/g, '+').replace(/_/g, '/');
-  return Buffer.from(base64, 'base64').toString('utf-8');
+async function getGmailClient(getToken: GmailTokenGetter): Promise<gmail_v1.Gmail> {
+  const token = await getToken();
+  const auth = new OAuth2Client();
+  auth.setCredentials({ access_token: token });
+  return gmail({ version: 'v1', auth });
 }
 
 /**
  * Extract header value from message
  */
-function getHeader(headers: GmailHeader[] | undefined, name: string): string | undefined {
-  return headers?.find(h => h.name.toLowerCase() === name.toLowerCase())?.value;
+function getHeader(headers: gmail_v1.Schema$MessagePartHeader[] | undefined, name: string): string | undefined {
+  return headers?.find(h => h.name?.toLowerCase() === name.toLowerCase())?.value ?? undefined;
 }
 
 /**
  * Extract plain text body from message parts
  */
-function extractTextBody(part: GmailMessagePart): string {
+function extractTextBody(part: gmail_v1.Schema$MessagePart): string {
   if (part.mimeType === 'text/plain' && part.body?.data) {
-    return decodeBase64Url(part.body.data);
+    // SDK returns base64url encoded data
+    return Buffer.from(part.body.data, 'base64url').toString('utf-8');
   }
 
   if (part.parts) {
@@ -105,8 +57,7 @@ function extractTextBody(part: GmailMessagePart): string {
 
   // Fall back to HTML if no plain text
   if (part.mimeType === 'text/html' && part.body?.data) {
-    // Simple HTML to text conversion - strip tags
-    const html = decodeBase64Url(part.body.data);
+    const html = Buffer.from(part.body.data, 'base64url').toString('utf-8');
     return html
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
@@ -121,7 +72,7 @@ function extractTextBody(part: GmailMessagePart): string {
 /**
  * Format message for display
  */
-function formatMessage(message: GmailMessage): string {
+function formatMessage(message: gmail_v1.Schema$Message): string {
   const headers = message.payload?.headers;
   const from = getHeader(headers, 'From') || 'Unknown';
   const to = getHeader(headers, 'To') || '';
@@ -131,9 +82,9 @@ function formatMessage(message: GmailMessage): string {
   let body = '';
   if (message.payload) {
     if (message.payload.body?.data) {
-      body = decodeBase64Url(message.payload.body.data);
+      body = Buffer.from(message.payload.body.data, 'base64url').toString('utf-8');
     } else if (message.payload.parts) {
-      body = extractTextBody(message.payload as GmailMessagePart);
+      body = extractTextBody(message.payload);
     }
   }
 
@@ -150,7 +101,7 @@ ${body || message.snippet || '(no content)'}
 /**
  * Format message list item
  */
-function formatMessageListItem(message: GmailMessage): string {
+function formatMessageListItem(message: gmail_v1.Schema$Message): string {
   const headers = message.payload?.headers;
   const from = getHeader(headers, 'From') || 'Unknown';
   const subject = getHeader(headers, 'Subject') || '(no subject)';
@@ -186,49 +137,35 @@ Common queries:
       const { query, maxResults = 10, _intent } = args;
 
       try {
-        // Get fresh token for this request
-        const accessToken = await getToken();
+        const client = await getGmailClient(getToken);
 
-        // First, get message IDs
-        const listUrl = new URL(`${GMAIL_API_BASE}/users/me/messages`);
-        listUrl.searchParams.set('maxResults', String(maxResults));
-        if (query) {
-          listUrl.searchParams.set('q', query);
-        }
+        debug(`[gmail-tools] Listing messages with query: ${query || '(none)'}`);
 
-        debug(`[gmail-tools] Listing messages: ${listUrl}`);
-
-        const listResponse = await fetch(listUrl.toString(), {
-          headers: { Authorization: `Bearer ${accessToken}` },
+        // Get message IDs
+        const listResponse = await client.users.messages.list({
+          userId: 'me',
+          maxResults,
+          q: query || undefined,
         });
 
-        if (!listResponse.ok) {
-          const error = await listResponse.text();
-          return {
-            content: [{ type: 'text' as const, text: `Gmail API error: ${error}` }],
-            isError: true,
-          };
-        }
-
-        const listData = await listResponse.json() as GmailMessagesListResponse;
-
-        if (!listData.messages || listData.messages.length === 0) {
+        const messageRefs = listResponse.data.messages;
+        if (!messageRefs || messageRefs.length === 0) {
           return {
             content: [{ type: 'text' as const, text: 'No messages found.' }],
           };
         }
 
         // Fetch metadata for each message
-        const messages: GmailMessage[] = [];
-        for (const msg of listData.messages) {
-          const msgResponse = await fetch(
-            `${GMAIL_API_BASE}/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
-          );
-
-          if (msgResponse.ok) {
-            messages.push(await msgResponse.json() as GmailMessage);
-          }
+        const messages: gmail_v1.Schema$Message[] = [];
+        for (const ref of messageRefs) {
+          if (!ref.id) continue;
+          const msgResponse = await client.users.messages.get({
+            userId: 'me',
+            id: ref.id,
+            format: 'metadata',
+            metadataHeaders: ['From', 'To', 'Subject', 'Date'],
+          });
+          messages.push(msgResponse.data);
         }
 
         // Format output
@@ -282,26 +219,17 @@ Returns the full email including headers, body, and metadata.`,
       const { messageId, _intent } = args;
 
       try {
-        // Get fresh token for this request
-        const accessToken = await getToken();
+        const client = await getGmailClient(getToken);
 
         debug(`[gmail-tools] Getting message: ${messageId}`);
 
-        const response = await fetch(
-          `${GMAIL_API_BASE}/users/me/messages/${messageId}?format=full`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
-        );
+        const response = await client.users.messages.get({
+          userId: 'me',
+          id: messageId,
+          format: 'full',
+        });
 
-        if (!response.ok) {
-          const error = await response.text();
-          return {
-            content: [{ type: 'text' as const, text: `Gmail API error: ${error}` }],
-            isError: true,
-          };
-        }
-
-        const message = await response.json() as GmailMessage;
-        const formatted = formatMessage(message);
+        const formatted = formatMessage(response.data);
 
         // Check if response needs summarization
         const estimatedTokens = estimateTokens(formatted);
@@ -366,46 +294,34 @@ Combine operators: from:boss@company.com after:2024/01/01 has:attachment`,
       const { query, maxResults = 20, _intent } = args;
 
       try {
-        // Get fresh token for this request
-        const accessToken = await getToken();
-
-        const listUrl = new URL(`${GMAIL_API_BASE}/users/me/messages`);
-        listUrl.searchParams.set('maxResults', String(maxResults));
-        listUrl.searchParams.set('q', query);
+        const client = await getGmailClient(getToken);
 
         debug(`[gmail-tools] Searching: ${query}`);
 
-        const listResponse = await fetch(listUrl.toString(), {
-          headers: { Authorization: `Bearer ${accessToken}` },
+        const listResponse = await client.users.messages.list({
+          userId: 'me',
+          maxResults,
+          q: query,
         });
 
-        if (!listResponse.ok) {
-          const error = await listResponse.text();
-          return {
-            content: [{ type: 'text' as const, text: `Gmail API error: ${error}` }],
-            isError: true,
-          };
-        }
-
-        const listData = await listResponse.json() as GmailMessagesListResponse;
-
-        if (!listData.messages || listData.messages.length === 0) {
+        const messageRefs = listResponse.data.messages;
+        if (!messageRefs || messageRefs.length === 0) {
           return {
             content: [{ type: 'text' as const, text: `No messages found for query: ${query}` }],
           };
         }
 
         // Fetch metadata for each message
-        const messages: GmailMessage[] = [];
-        for (const msg of listData.messages) {
-          const msgResponse = await fetch(
-            `${GMAIL_API_BASE}/users/me/messages/${msg.id}?format=metadata&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Subject&metadataHeaders=Date`,
-            { headers: { Authorization: `Bearer ${accessToken}` } }
-          );
-
-          if (msgResponse.ok) {
-            messages.push(await msgResponse.json() as GmailMessage);
-          }
+        const messages: gmail_v1.Schema$Message[] = [];
+        for (const ref of messageRefs) {
+          if (!ref.id) continue;
+          const msgResponse = await client.users.messages.get({
+            userId: 'me',
+            id: ref.id,
+            format: 'metadata',
+            metadataHeaders: ['From', 'To', 'Subject', 'Date'],
+          });
+          messages.push(msgResponse.data);
         }
 
         // Format output
@@ -461,25 +377,14 @@ For permanent deletion, users must empty trash manually in Gmail.`,
       const { messageId } = args;
 
       try {
-        const accessToken = await getToken();
+        const client = await getGmailClient(getToken);
 
         debug(`[gmail-tools] Trashing message: ${messageId}`);
 
-        const response = await fetch(
-          `${GMAIL_API_BASE}/users/me/messages/${messageId}/trash`,
-          {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${accessToken}` },
-          }
-        );
-
-        if (!response.ok) {
-          const error = await response.text();
-          return {
-            content: [{ type: 'text' as const, text: `Gmail API error: ${error}` }],
-            isError: true,
-          };
-        }
+        await client.users.messages.trash({
+          userId: 'me',
+          id: messageId,
+        });
 
         return {
           content: [{
@@ -519,7 +424,7 @@ Use this when the user wants to compose an email for later review.`,
       const { to, subject, body, cc, bcc } = args;
 
       try {
-        const accessToken = await getToken();
+        const client = await getGmailClient(getToken);
 
         // Build RFC 2822 formatted email
         const emailLines = [
@@ -538,36 +443,18 @@ Use this when the user wants to compose an email for later review.`,
 
         // Encode as base64url
         const encodedEmail = Buffer.from(email)
-          .toString('base64')
-          .replace(/\+/g, '-')
-          .replace(/\//g, '_')
-          .replace(/=+$/, '');
+          .toString('base64url');
 
         debug(`[gmail-tools] Creating draft to: ${to}`);
 
-        const response = await fetch(
-          `${GMAIL_API_BASE}/users/me/drafts`,
-          {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${accessToken}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              message: { raw: encodedEmail },
-            }),
-          }
-        );
+        const response = await client.users.drafts.create({
+          userId: 'me',
+          requestBody: {
+            message: { raw: encodedEmail },
+          },
+        });
 
-        if (!response.ok) {
-          const error = await response.text();
-          return {
-            content: [{ type: 'text' as const, text: `Gmail API error: ${error}` }],
-            isError: true,
-          };
-        }
-
-        const draft = await response.json() as { id: string; message: { id: string } };
+        const draft = response.data;
 
         return {
           content: [{
