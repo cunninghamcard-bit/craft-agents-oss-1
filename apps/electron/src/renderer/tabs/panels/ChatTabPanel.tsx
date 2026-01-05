@@ -107,6 +107,10 @@ export default function ChatTabPanel({ tab }: ChatTabPanelProps) {
   }, [chatTab.sessionId, getDraft])
 
   const handleInputChange = React.useCallback((value: string) => {
+    // Update local state to keep in sync with FreeFormInput
+    setInputValue(value)
+    inputValueRef.current = value
+    // Propagate to parent for draft persistence
     onInputChange(chatTab.sessionId, value)
   }, [chatTab.sessionId, onInputChange])
 
