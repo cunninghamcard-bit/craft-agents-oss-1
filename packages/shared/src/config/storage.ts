@@ -70,6 +70,7 @@ export interface StoredConfig {
   extendedCacheTtl?: boolean;  // Extended cache TTL: true=1h all, false=5m all, undefined=auto (Opus only)
   tokenDisplay?: TokenDisplayMode;  // How to show tokens in status bar: hidden, total, or separate in/out
   showCost?: boolean;  // Whether to show cost in status bar (only relevant for API Key auth)
+  showClock?: boolean;  // Whether to show clock with timezone in header
   cumulativeUsage?: CumulativeUsage;  // Global cumulative cost across all workspaces
   // New session defaults
   defaultPermissionMode?: PermissionMode;  // Default permission mode for new sessions ('safe', 'ask', 'allow-all')
@@ -661,7 +662,37 @@ export function saveWorkspaceConversation(
     savedAt: Date.now(),
   };
 
-  writeFileSync(filePath, JSON.stringify(conversation, null, 2), 'utf-8');
+  try {
+    writeFileSync(filePath, JSON.stringify(conversation, null, 2), 'utf-8');
+  } catch (e) {
+    // Handle cyclic structures or other serialization errors
+    console.error(`[storage] [CYCLIC STRUCTURE] Failed to save workspace conversation:`, e);
+    console.error(`[storage] Message count: ${messages.length}, message types: ${messages.map(m => m.type).join(', ')}`);
+    // Try to save with sanitized messages
+    try {
+      const sanitizedMessages = messages.map((m, i) => {
+        let safeToolInput = m.toolInput;
+        if (m.toolInput) {
+          try {
+            JSON.stringify(m.toolInput);
+          } catch (inputErr) {
+            console.error(`[storage] [CYCLIC STRUCTURE] in message ${i} toolInput (tool: ${m.toolName}), keys: ${Object.keys(m.toolInput).join(', ')}, error: ${inputErr}`);
+            safeToolInput = { error: '[non-serializable input]' };
+          }
+        }
+        return { ...m, toolInput: safeToolInput };
+      });
+      const sanitizedConversation: WorkspaceConversation = {
+        messages: sanitizedMessages,
+        tokenUsage,
+        savedAt: Date.now(),
+      };
+      writeFileSync(filePath, JSON.stringify(sanitizedConversation, null, 2), 'utf-8');
+      console.error(`[storage] Saved sanitized workspace conversation successfully`);
+    } catch (e2) {
+      console.error(`[storage] Failed to save even sanitized workspace conversation:`, e2);
+    }
+  }
 }
 
 // Load workspace conversation

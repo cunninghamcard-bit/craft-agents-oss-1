@@ -95,9 +95,15 @@ bun dev
 | `/info` | Show active agent info and available tools |
 | `/safe` | Toggle Explore mode (read-only) |
 | `/setup` | Re-run the configuration wizard |
-| `/clear` | Clear conversation |
+| `/safemode` | Toggle Safe Mode (require approval for delete/update/move) |
+| `/clear` | Clear conversation (keeps session, starts fresh with Claude) |
+| `/new` | Start a new session |
+| `/resume` | View and resume previous sessions |
 | `/exit` | Exit application |
 | `Ctrl+C` | Interrupt / Exit |
+| `Ctrl+D` | Exit application (same as `/exit`) |
+| `Ctrl+L` | Clear conversation (same as `/clear`) |
+| `Ctrl+S` | Toggle Safe Mode (same as `/safemode`) |
 | `Up/Down` | Navigate command history |
 | `SHIFT+TAB` | Cycle permission modes |
 
@@ -231,6 +237,34 @@ Each workspace, source, and agent can have a `permissions.json` file with custom
 - `allowedBashPatterns` - Regex patterns for safe bash commands
 - `allowedMcpPatterns` - Regex patterns for allowed MCP tools
 - `allowedWritePaths` - Glob patterns for writable directories
+
+## Safe Mode
+
+Safe Mode is an opt-in feature that requires explicit user approval before executing potentially destructive MCP operations.
+
+### Protected Operations
+
+When Safe Mode is enabled, the following operations require approval:
+- **Delete**: `blocks_delete`, `collectionItems_delete`, `tasks_delete`
+- **Update**: `blocks_update`, `collectionItems_update`, `tasks_update`
+- **Move**: `blocks_move`
+
+### Usage
+
+```bash
+Ctrl+S              # Toggle Safe Mode on/off
+/safemode           # Toggle Safe Mode on/off
+/settings           # Also available in Settings menu
+```
+
+When a protected operation is triggered:
+1. A permission prompt appears with the operation details
+2. Press `Y` to allow or `N` to deny
+3. Unlike bash commands, there's no "Always allow" option - each operation requires individual approval
+
+Safe Mode is **off by default** to avoid disrupting existing workflows. Enable it when working with important documents where you want extra confirmation before modifications.
+
+The header shows `🛡 SAFE` indicator when Safe Mode is active.
 
 ## Keyboard Shortcuts
 
@@ -450,7 +484,31 @@ tail -f /tmp/craft-debug.log
 
 This two-terminal setup lets you interact with the app while seeing debug output stream in real-time.
 
+### Extracting Claude Code System Prompts
 
+Tools for extracting and comparing Claude Code system prompts across SDK versions. Useful for tracking changes to the underlying system prompt.
+
+```bash
+# Extract system prompt from current SDK version
+bun run scripts/system-prompt/extract.ts
+# Output: exported_prompts/claude-code/v{version}.md
+
+# Compare two versions (auto-detects most recent if no args)
+bun run scripts/system-prompt/compare.ts
+bun run scripts/system-prompt/compare.ts v0.1.62 v0.1.73
+```
+
+**How it works:**
+1. A fetch interceptor (`scripts/system-prompt/capture-interceptor.ts`) is loaded via `bunfig.toml` preload
+2. The extraction script runs a minimal SDK query with the `claude_code` preset
+3. The interceptor captures the system prompt from the API request and writes it to a temp file
+4. The extraction script formats and saves the prompt to `exported_prompts/claude-code/v{version}.md`
+
+**To extract a different SDK version:**
+1. Edit `package.json` to pin the desired version (e.g., `"@anthropic-ai/claude-agent-sdk": "0.1.62"`)
+2. Run `rm -f bun.lockb && bun install`
+3. Run `bun run scripts/system-prompt/extract.ts`
+4. Restore the original version and reinstall
 
 ## Releasing
 

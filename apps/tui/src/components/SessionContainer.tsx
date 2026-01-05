@@ -10,6 +10,7 @@ import { WorkspaceSelector } from './WorkspaceSelector.tsx';
 import { WorkspaceRename } from './WorkspaceRename.tsx';
 import { ApiKeyChange } from './ApiKeyChange.tsx';
 import { ClaudeMaxAuth } from './ClaudeMaxAuth.tsx';
+import { CraftCreditsAuth } from './CraftCreditsAuth.tsx';
 import { AskUserQuestion } from './AskUserQuestion.tsx';
 import { TodoList } from './TodoList.tsx';
 import { ApiAuth } from './ApiAuth.tsx';
@@ -21,6 +22,7 @@ import { Balance } from './Balance.tsx';
 import { ErrorBanner } from './ErrorBanner.tsx';
 import type { RecoveryAction } from '@craft-agent/shared/agent';
 import { Settings, type SettingsAction } from './Settings.tsx';
+import { AuthModeOptions } from './AuthModeOptions.tsx';
 import {
   useAgent,
   useHistory,
@@ -32,7 +34,7 @@ import {
   useAgentMenuHandlers,
   useSettingsHandlers,
 } from '../hooks/index.ts';
-import { isShiftTab } from '../keyboard/index.ts';
+import { isShiftTab, isClearScreen, isExit, isSafeModeToggle } from '../keyboard/index.ts';
 import {
   PERMISSION_MODE_MESSAGES,
   PERMISSION_MODE_PROMPTS,
@@ -93,7 +95,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
   initialError,
 }) => {
   const { exit } = useApp();
-  const { model, setModel, workspace, setWorkspace, setSession, startNewSession, addUsage } = useGlobalContext();
+  const { model, setModel, workspace, setWorkspace, setSession, startNewSession, resetSession, addUsage } = useGlobalContext();
 
   // Centralized exit function
   const exitApp = useCallback(() => {
@@ -148,6 +150,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     deactivateAgent,
     reloadAgent,
     resetAgent,
+    resetAgentInstance,
     refreshAgents,
     fetchTools,
     agentsLoading,
@@ -223,6 +226,8 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
   const [compactMode, setCompactMode] = useState(true);
   const [tokenDisplayMode, setTokenDisplayMode] = useState<TokenDisplayMode>(getTokenDisplay());
   const [showCostSetting, setShowCostSetting] = useState(getShowCost());
+  const [showClockSetting, setShowClockSetting] = useState(getShowClock());
+  const [safeModeSetting, setSafeModeSetting] = useState(getSafeMode());
   // Only show welcome banner on truly new sessions (no prior messages)
   // This prevents duplicate banners when switching to workspaces with existing sessions
   const [showWelcome, setShowWelcome] = useState(() => {
@@ -236,6 +241,9 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
   const [lastCtrlCTime, setLastCtrlCTime] = useState<number | null>(null);
   const [showExitWarning, setShowExitWarning] = useState(false);
 
+  // Plan mode toggle warning state (when trying to toggle during processing)
+  const [showPlanToggleWarning, setShowPlanToggleWarning] = useState(false);
+
   // Auto-dismiss exit warning after 1000ms
   useEffect(() => {
     if (showExitWarning) {
@@ -246,6 +254,16 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       return () => clearTimeout(timer);
     }
   }, [showExitWarning]);
+
+  // Auto-dismiss plan toggle warning after 1000ms
+  useEffect(() => {
+    if (showPlanToggleWarning) {
+      const timer = setTimeout(() => {
+        setShowPlanToggleWarning(false);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [showPlanToggleWarning]);
 
   // Consolidated modal state - replaces 11 separate useState calls
   const { activeModal, openModal, closeModal, isOpen, hasOpenModal } = useModalState();
@@ -358,6 +376,8 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     setModel,
     setWorkspace,
     startNewSession,
+    resetSession,
+    tokenUsage,
     openModal,
     pendingAttachments,
     setPendingAttachments,
@@ -375,6 +395,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     cancelPlan,
     setSessionPermissionMode,
     exitApp,
+    setSafeModeSetting,
   });
 
   // Workspace handlers hook - handles workspace selector actions
@@ -407,6 +428,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
   // Agent menu handlers hook
   const { handleAgentAction: rawHandleAgentAction, handleAgentMenuCancel } = useAgentMenuHandlers({
     closeModal,
+    openModal,
     activateAgent,
     deactivateAgent,
     reloadAgent,
@@ -435,7 +457,11 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
     setCompactMode,
     setTokenDisplayMode,
     setShowCostSetting,
+    setShowClockSetting,
+    setSafeModeSetting,
     addMessage: addLocalMessage,
+    resetAgentInstance,
+    isProcessing,
   });
 
   const handleErrorAction = useCallback((action: RecoveryAction) => {
@@ -448,6 +474,18 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       openModal('claudeMaxAuth');
     }
   }, [dismissTypedError, openModal]);
+
+  // Reauth selector handler - after deleting selected credentials, trigger auth flow
+  const handleReauthConfirm = useCallback((mcpNames: string[], apiNames: string[]) => {
+    closeModal();
+    // Trigger the auth flows for deleted credentials
+    if (mcpNames.length > 0) {
+      triggerMcpAuth();
+    }
+    if (apiNames.length > 0) {
+      triggerApiAuth();
+    }
+  }, [closeModal, triggerMcpAuth, triggerApiAuth]);
 
   // Plan menu handler
   const handlePlanAction = useCallback((action: PlanAction) => {
@@ -498,7 +536,7 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         .replace(/^==PLAN==\s*/, '')
         .replace(/\s*\(\d{8}-\d{6}\)$/, '')
         .trim();
-      addLocalMessage(`Plan "${displayName}" loaded. Send a message to include it in context.`, 'system');
+      addLocalMessage(`Plan "${displayName}" loaded. Send a message to execute, or type "approve" to run immediately.`, 'system');
     } else {
       addLocalMessage(`Failed to read plan file: ${plan.path}`, 'error');
     }
@@ -587,7 +625,15 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       const att = pendingAttachments[0];
       if (!att) return '1 file';
       const icon = att.type === 'image' ? '🖼' : att.type === 'pdf' ? '📄' : '📝';
-      return `${icon} ${att.name}`;
+      // Truncate long names (especially plan files with ==PLAN== prefix)
+      let displayName = att.name;
+      // Clean plan file names
+      displayName = displayName.replace(/^==PLAN==\s*/, '').replace(/\s*\(\d{8}-\d{6}\)\.md$/, '');
+      // Truncate to max 25 chars
+      if (displayName.length > 25) {
+        displayName = displayName.slice(0, 22) + '...';
+      }
+      return `${icon} ${displayName}`;
     }
     const imageCount = pendingAttachments.filter(a => a.type === 'image').length;
     const fileCount = pendingAttachments.length - imageCount;
@@ -686,6 +732,28 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       return;
     }
 
+    // Ctrl+L: Clear screen (like /clear command)
+    if (isClearScreen(input, key)) {
+      process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+      resetSession();
+      return;
+    }
+
+    // Ctrl+S: Toggle Safe Mode
+    if (isSafeModeToggle(input, key)) {
+      const newMode = !safeModeSetting;
+      setSafeMode(newMode);
+      setSafeModeSetting(newMode);
+      addLocalMessage(`Safe Mode ${newMode ? 'enabled' : 'disabled'}`, 'info');
+      return;
+    }
+
+    // Ctrl+D: Exit (like /exit command) - only when input is empty
+    if (isExit(input, key) && !isProcessing && !hasOpenModal) {
+      exitApp();
+      return;
+    }
+
     if (input === '\x03' || (key.ctrl && input === 'c')) {
       debug('[SessionContainer] main useInput Ctrl+C detected:', { pendingPermission: !!pendingPermission, isProcessing, hasOpenModal, pendingQuestion: !!pendingQuestion, pendingMcpAuth: !!pendingMcpAuth, pendingApiAuth: !!pendingApiAuth });
       if (pendingPermission) {
@@ -721,6 +789,9 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
       if (isOpen('help')) {
         closeModal();
         setStaticResetKey(k => k + 1);
+      } else if (isOpen('planReview') && !activePlan) {
+        // Close /plan view when there's no active plan
+        closeModal();
       } else if (pendingPermission) {
         respondToPermission(false, false);
       } else if (pendingQuestion) {
@@ -787,6 +858,29 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         />
       )}
 
+      {/* Credentials viewer overlay */}
+      {isOpen('credentialsViewer') && activeAgentDefinition && activeAgentName && (
+        <CredentialsViewer
+          definition={activeAgentDefinition}
+          agentName={activeAgentName}
+          getCredential={getAgentCredential}
+          saveCredential={saveAgentCredential}
+          onClose={closeModal}
+        />
+      )}
+
+      {/* Reauth selector overlay */}
+      {isOpen('reauthSelector') && activeAgentDefinition && activeAgentName && (
+        <ReauthSelector
+          definition={activeAgentDefinition}
+          agentName={activeAgentName}
+          getCredential={getAgentCredential}
+          clearCredentials={clearAgentCredentials}
+          onConfirm={handleReauthConfirm}
+          onCancel={closeModal}
+        />
+      )}
+
       {/* Plan menu overlay */}
       {isOpen('planMenu') && (
         <PlanMenu
@@ -804,6 +898,35 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
           onDelete={handlePlanDelete}
           onCancel={closeModal}
         />
+      )}
+
+      {/* Plan review overlay (/plan view command) */}
+      {isOpen('planReview') && activePlan && (
+        <PlanReview
+          plan={activePlan}
+          sessionId={session.id}
+          onApprove={(modifiedPlan, savedPath) => {
+            closeModal();
+            respondToPlanReview({ action: 'approve', modifiedPlan, savedPath });
+          }}
+          onRefine={(feedback) => {
+            closeModal();
+            respondToPlanReview({ action: 'refine', feedback });
+          }}
+          onSaveOnly={(modifiedPlan, savedPath) => {
+            closeModal();
+            respondToPlanReview({ action: 'saveOnly', modifiedPlan, savedPath });
+          }}
+          onCancel={closeModal}
+        />
+      )}
+
+      {/* Plan review overlay - no active plan message */}
+      {isOpen('planReview') && !activePlan && (
+        <Box flexDirection="column" paddingX={1}>
+          <Text dimColor>No active plan. Use '/plan start' to create one or '/plan list' to view saved plans.</Text>
+          <Text dimColor>Press Escape to close.</Text>
+        </Box>
       )}
 
       {/* Session menu overlay */}
@@ -853,6 +976,14 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         />
       )}
 
+      {/* Craft Credits auth */}
+      {isOpen('craftCreditsAuth') && (
+        <CraftCreditsAuth
+          onSubmit={settingsHandlers.handleCraftCreditsSubmit}
+          onCancel={settingsHandlers.handleCraftCreditsCancel}
+        />
+      )}
+
       {/* Balance / AI credits */}
       {isOpen('balance') && (
         <Balance
@@ -868,8 +999,21 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
           currentAuthType={getAuthType()}
           tokenDisplay={tokenDisplayMode}
           showCost={showCostSetting}
+          showClock={showClockSetting}
+          safeMode={safeModeSetting}
           onAction={settingsHandlers.handleSettingsAction}
           onCancel={settingsHandlers.handleSettingsCancel}
+        />
+      )}
+
+      {/* Auth mode options (use existing vs re-authenticate) */}
+      {isOpen('authModeOptions') && settingsHandlers.pendingAuthSwitch && (
+        <AuthModeOptions
+          authType={settingsHandlers.pendingAuthSwitch.authType}
+          maskedCredential={settingsHandlers.pendingAuthSwitch.maskedCredential}
+          onUseExisting={settingsHandlers.handleAuthModeUseExisting}
+          onReauthenticate={settingsHandlers.handleAuthModeReauthenticate}
+          onCancel={settingsHandlers.handleAuthModeCancel}
         />
       )}
 
@@ -968,9 +1112,11 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
           agentsLoading={agentsLoading}
           tokenDisplay={tokenDisplayMode}
           showCost={showCostSetting}
+          showClock={showClockSetting}
           version={getCurrentVersion()}
           permissionMode={permissionMode}
           exitWarning={showExitWarning}
+          planToggleWarning={showPlanToggleWarning}
         />
       </Box>
     </Box>

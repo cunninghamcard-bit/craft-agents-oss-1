@@ -6,7 +6,9 @@ export type SettingsAction =
   | { type: 'set_verbose'; verbose: boolean }
   | { type: 'change_auth_mode'; mode: AuthType }
   | { type: 'set_token_display'; mode: TokenDisplayMode }
-  | { type: 'set_show_cost'; show: boolean };
+  | { type: 'set_show_cost'; show: boolean }
+  | { type: 'set_show_clock'; show: boolean }
+  | { type: 'set_safe_mode'; enabled: boolean };
 
 interface MenuItem {
   key: string;
@@ -23,6 +25,8 @@ export interface SettingsProps {
   currentAuthType: AuthType;
   tokenDisplay: TokenDisplayMode;
   showCost: boolean;
+  showClock: boolean;
+  safeMode: boolean;
   onAction: (action: SettingsAction) => void;
   onCancel: () => void;
 }
@@ -38,6 +42,8 @@ export const Settings: React.FC<SettingsProps> = ({
   currentAuthType,
   tokenDisplay,
   showCost,
+  showClock,
+  safeMode,
   onAction,
   onCancel,
 }) => {
@@ -117,6 +123,50 @@ export const Settings: React.FC<SettingsProps> = ({
         isCurrent: !showCost,
       },
     ] as MenuItem[] : []),
+    // Clock section
+    {
+      key: 'clock_header',
+      label: '── Status Bar Clock ──',
+      desc: '',
+      action: null,
+      isHeader: true,
+    },
+    {
+      key: 'clock_show',
+      label: 'Show',
+      desc: 'Display clock with timezone',
+      action: showClock ? null : { type: 'set_show_clock', show: true },
+      isCurrent: showClock,
+    },
+    {
+      key: 'clock_hide',
+      label: 'Hide',
+      desc: 'Hide clock from status bar',
+      action: showClock ? { type: 'set_show_clock', show: false } : null,
+      isCurrent: !showClock,
+    },
+    // Safe Mode section
+    {
+      key: 'safe_mode_header',
+      label: '── Safe Mode ──',
+      desc: '',
+      action: null,
+      isHeader: true,
+    },
+    {
+      key: 'safe_mode_on',
+      label: 'Enabled',
+      desc: 'Require approval for delete/update/move',
+      action: safeMode ? null : { type: 'set_safe_mode', enabled: true },
+      isCurrent: safeMode,
+    },
+    {
+      key: 'safe_mode_off',
+      label: 'Disabled',
+      desc: 'Execute all operations without prompts',
+      action: safeMode ? { type: 'set_safe_mode', enabled: false } : null,
+      isCurrent: !safeMode,
+    },
     // AI Usage Mode section
     {
       key: 'ai_header',
@@ -128,22 +178,22 @@ export const Settings: React.FC<SettingsProps> = ({
     {
       key: 'craft_credits',
       label: 'Craft Credits',
-      desc: 'Use Craft AI credits',
-      action: currentAuthType === 'craft_credits' ? null : { type: 'change_auth_mode', mode: 'craft_credits' },
+      desc: currentAuthType === 'craft_credits' ? 'Re-authenticate' : 'Use Craft AI credits',
+      action: { type: 'change_auth_mode', mode: 'craft_credits' },
       isCurrent: currentAuthType === 'craft_credits',
     },
     {
       key: 'api_key',
       label: 'API Key',
-      desc: 'Use your Anthropic API key',
-      action: currentAuthType === 'api_key' ? null : { type: 'change_auth_mode', mode: 'api_key' },
+      desc: currentAuthType === 'api_key' ? 'Change API key' : 'Use your Anthropic API key',
+      action: { type: 'change_auth_mode', mode: 'api_key' },
       isCurrent: currentAuthType === 'api_key',
     },
     {
       key: 'oauth_token',
       label: 'Claude Max',
-      desc: 'Use Claude Max subscription',
-      action: currentAuthType === 'oauth_token' ? null : { type: 'change_auth_mode', mode: 'oauth_token' },
+      desc: currentAuthType === 'oauth_token' ? 'Re-authenticate' : 'Use Claude Max subscription',
+      action: { type: 'change_auth_mode', mode: 'oauth_token' },
       isCurrent: currentAuthType === 'oauth_token',
     },
   ];

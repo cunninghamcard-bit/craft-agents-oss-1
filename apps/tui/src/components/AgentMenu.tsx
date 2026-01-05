@@ -6,6 +6,7 @@ export type AgentAction =
   | { type: 'clear' }
   | { type: 'reload' }
   | { type: 'reauth' }
+  | { type: 'credentials' }
   | { type: 'reset' }
   | { type: 'refresh' }
   | { type: 'info' };
@@ -55,6 +56,12 @@ export const AgentMenu: React.FC<AgentMenuProps> = ({
       label: 'Reauthenticate',
       desc: 'Re-authenticate MCP servers and APIs',
       action: { type: 'reauth' },
+    });
+    menuItems.push({
+      key: 'credentials',
+      label: 'Stored Credentials',
+      desc: 'View and update stored credentials',
+      action: { type: 'credentials' },
     });
     // Destructive actions last
     menuItems.push({

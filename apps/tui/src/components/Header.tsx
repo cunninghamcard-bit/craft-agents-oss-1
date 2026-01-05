@@ -1,4 +1,4 @@
-import React, { memo, useMemo } from 'react';
+import React, { memo, useMemo, useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import { formatTokens } from '../utils/markdown.ts';
 import type { AuthType, TokenDisplayMode } from '@craft-agent/shared/config';
@@ -20,6 +20,7 @@ export interface HeaderProps {
   agentsLoading?: boolean;
   tokenDisplay?: TokenDisplayMode;
   showCost?: boolean;
+  showClock?: boolean;
   version?: string;
   /** Current permission mode ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode;
@@ -27,6 +28,8 @@ export interface HeaderProps {
   safeMode?: boolean;
   /** Show "Press Ctrl+C again to exit" warning */
   exitWarning?: boolean;
+  /** Show "Cannot toggle Plan Mode while processing" warning */
+  planToggleWarning?: boolean;
 }
 
 export const Header: React.FC<HeaderProps> = memo(({
@@ -42,10 +45,12 @@ export const Header: React.FC<HeaderProps> = memo(({
   agentsLoading = false,
   tokenDisplay = 'hidden',
   showCost = true,
+  showClock = false,
   version,
   permissionMode,
   safeMode = false,
   exitWarning = false,
+  planToggleWarning = false,
 }) => {
   // Resolve permission mode: prefer explicit prop, fallback to legacy safeMode
   const resolvedMode: PermissionMode = permissionMode ?? (safeMode ? 'safe' : 'ask');
@@ -64,9 +69,39 @@ export const Header: React.FC<HeaderProps> = memo(({
     return `$${costUsd.toFixed(2)}`;
   }, [costUsd]);
 
+  // Format auth type for display
+  const authDisplay = useMemo(() => {
+    if (authType === 'api_key') return 'API Key';
+    if (authType === 'oauth_token') return 'Claude Sub';
+    if (authType === 'craft_credits') return 'Craft Credits';
+    return 'Unknown';
+  }, [authType]);
+
+  // Show only the exit warning when active (replaces entire header)
+  if (exitWarning) {
+    return (
+      <Box justifyContent="space-between">
+        <Text color="yellow" bold>Press Ctrl+C again to exit</Text>
+        <Box />
+      </Box>
+    );
+  }
+
+  // Show plan toggle warning when trying to toggle during processing
+  if (planToggleWarning) {
+    return (
+      <Box justifyContent="space-between">
+        <Text color="magenta" bold>Cannot toggle Plan Mode while agent is processing</Text>
+        <Box />
+      </Box>
+    );
+  }
+
   return (
     <Box justifyContent="space-between">
+      {/* Left side: craft | ● mcp | auth | version */}
       <Box>
+        {/* Agent name or "craft" */}
         {agentsLoading && (
           <>
             <AnimatedSpinner color="magenta" />
@@ -85,23 +120,18 @@ export const Header: React.FC<HeaderProps> = memo(({
           {connected ? '●' : '○'}
         </Text>
         <Text dimColor> | </Text>
-        <Text color={authType === 'oauth_token' ? 'green' : authType === 'craft_credits' ? 'magenta' : 'blue'}>
-          {authType === 'oauth_token' ? 'Claude Sub' : authType === 'craft_credits' ? 'Craft Credits' : 'API Key'}
-        </Text>
+        <Text color={authType === 'api_key' ? 'blue' : authType === 'craft_credits' ? 'magenta' : 'green'}>{authDisplay}</Text>
+
+        {/* Version */}
         {version && (
           <>
             <Text dimColor> | </Text>
             <Text dimColor>v{version}</Text>
           </>
         )}
-        {exitWarning && (
-          <>
-            <Text dimColor> | </Text>
-            <Text color="yellow">Press Ctrl+C again to exit</Text>
-          </>
-        )}
       </Box>
 
+      {/* Right side: tokens | model | workspace */}
       <Box>
         {tokenDisplay !== 'hidden' && (inputTokens > 0 || outputTokens > 0) && (
           <>
@@ -121,6 +151,12 @@ export const Header: React.FC<HeaderProps> = memo(({
           <>
             <Text dimColor> | </Text>
             <Text color="yellow">{workspaceName.length > 20 ? workspaceName.slice(0, 20) + '…' : workspaceName}</Text>
+          </>
+        )}
+        {showClock && clockDisplay && (
+          <>
+            <Text dimColor> | </Text>
+            <Text dimColor>{clockDisplay}</Text>
           </>
         )}
       </Box>

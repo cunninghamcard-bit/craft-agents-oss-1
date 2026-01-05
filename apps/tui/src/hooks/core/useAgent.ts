@@ -189,6 +189,8 @@ export interface UseAgentResult {
   deactivateAgent: () => void;
   reloadAgent: () => Promise<boolean>;
   resetAgent: () => Promise<boolean>;
+  /** Clear the CraftAgent instance so the next message creates a fresh one (for auth changes) */
+  resetAgentInstance: () => void;
   refreshAgents: () => Promise<string[] | { error: string }>;
   fetchTools: () => Promise<{ name: string; tools: { name: string; description?: string }[] }[]>;
   agentsLoading: boolean;
@@ -388,8 +390,14 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
         saveDebounceRef.current = null;
       }
       // Flush pending save immediately on unmount
+      // But first check if session was intentionally cleared (e.g., /clear command)
+      // If storage shows empty messages, don't overwrite with stale ref data
       if (pendingSaveRef.current) {
-        saveSession(pendingSaveRef.current);
+        const storedSession = loadSession(pendingSaveRef.current.id);
+        const wasIntentionallyCleared = storedSession && storedSession.messages.length === 0;
+        if (!wasIntentionallyCleared) {
+          saveSession(pendingSaveRef.current);
+        }
         pendingSaveRef.current = null;
       }
     };
@@ -1131,10 +1139,10 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       const sdkSessionId = agentRef.current?.getSessionId() ?? null;
 
       if (currentSession && currentMessages.length > 0) {
-        const persistableMessages = currentMessages.filter(
-          m => m.type !== 'error' && m.type !== 'status' && m.type !== 'system' && !isSDKErrorMessage(m)
-        );
-        const storedMessages = persistableMessages.map(messageToStoredMessage);
+        // Check if session was intentionally cleared (e.g., /clear command)
+        // If storage shows empty messages, don't overwrite with stale ref data
+        const storedSession = loadSession(currentSession.id);
+        const wasIntentionallyCleared = storedSession && storedSession.messages.length === 0;
 
         // Save to session storage
         const updatedSession: StoredSession = {
@@ -1359,6 +1367,18 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     return true;
   }, [agentState]);
 
+  // Reset the CraftAgent instance (for auth changes)
+  // This clears the agent so the next message creates a fresh one with new credentials
+  const resetAgentInstance = useCallback(() => {
+    debug('[useAgent.resetAgentInstance] Clearing CraftAgent instance for auth change');
+    agentRef.current = null;
+    // Clear session so we start fresh (SDK sessions may be tied to auth)
+    if (session) {
+      debug('[useAgent.resetAgentInstance] Clearing SDK session ID');
+      updateSessionSdkId(session.id, '');
+    }
+  }, [session]);
+
   // Complete MCP auth flow - called when auth finishes (success or failure)
   const completeMcpAuth = useCallback(async (success: boolean) => {
     if (!agentState.isNeedsMcpAuth) {
@@ -1489,6 +1509,37 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
       // If result is needs_api_auth, UI will show auth modal automatically
     }
   }, [agentState]);
+
+  // Credential operations for active agent (encapsulates workspaceId/agentId internally)
+  const getAgentCredential = useCallback(async (type: 'mcp' | 'api', name: string): Promise<string | null> => {
+    const agentId = agentState.agentId;
+    if (!agentId) return null;
+
+    if (type === 'mcp') {
+      const creds = await getServerCredentialsAsync(config.workspace.id, agentId, name);
+      return creds?.accessToken ?? null;
+    } else {
+      return getApiKeyCredentialAsync(config.workspace.id, agentId, name);
+    }
+  }, [agentState.agentId, config.workspace.id]);
+
+  const saveAgentCredential = useCallback(async (type: 'mcp' | 'api', name: string, value: string): Promise<void> => {
+    const agentId = agentState.agentId;
+    if (!agentId) return;
+
+    if (type === 'mcp') {
+      await saveServerCredentialsAsync(config.workspace.id, agentId, name, { accessToken: value });
+    } else {
+      await saveApiKeyCredentialAsync(config.workspace.id, agentId, name, value);
+    }
+  }, [agentState.agentId, config.workspace.id]);
+
+  const clearAgentCredentials = useCallback(async (mcpNames: string[], apiNames: string[]): Promise<void> => {
+    const agentId = agentState.agentId;
+    if (!agentId) return;
+
+    await clearAgentCredentialsAsync(config.workspace.id, agentId, mcpNames, apiNames);
+  }, [agentState.agentId, config.workspace.id]);
 
   // Complete API auth flow - called when API key entry finishes (success or failure)
   const completeApiAuth = useCallback(async (success: boolean) => {
@@ -1714,6 +1765,7 @@ export function useAgent(config: CraftAgentConfig): UseAgentResult {
     deactivateAgent,
     reloadAgent,
     resetAgent,
+    resetAgentInstance,
     refreshAgents,
     fetchTools,
     agentsLoading,

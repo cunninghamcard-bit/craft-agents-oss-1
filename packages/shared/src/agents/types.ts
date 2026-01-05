@@ -146,7 +146,7 @@ export interface ApiConfig {
    * Authentication configuration.
    * - 'none': No authentication required (public API)
    * - 'header': Custom header (uses headerName field)
-   * - 'bearer': Authorization: {authScheme} {key} (authScheme defaults to "Bearer")
+   * - 'bearer': Authorization: {authScheme} {key} (authScheme defaults to "Bearer", use "" for no scheme)
    * - 'query': Query parameter (uses queryParam field)
    * - 'basic': HTTP Basic Authentication (username:password)
    */
@@ -156,13 +156,19 @@ export interface ApiConfig {
     headerName?: string;
     /** Query param name for type='query' (e.g., "api_key", "key") */
     queryParam?: string;
-    /** Custom Authorization scheme for type='bearer' (default: "Bearer"). Examples: "Token", "ApiKey" */
+    /** Custom Authorization scheme for type='bearer' (default: "Bearer"). Use empty string "" for no scheme. */
     authScheme?: string;
     /** Custom label for credential prompt (e.g., "API Key" instead of default). For basic auth, this is the username label. */
     credentialLabel?: string;
     /** Custom label for password field in basic auth (e.g., "Secret Key" instead of "password") */
     secretLabel?: string;
   };
+  /**
+   * Custom headers to include with every request.
+   * These are added in addition to Content-Type and auth headers.
+   * Example: { "X-Api-Version": "1.0", "X-Client": "craft-agent" }
+   */
+  headers?: Record<string, string>;
   /**
    * Rich API documentation as markdown text.
    * Included directly in the tool description so Claude knows how to use the API.

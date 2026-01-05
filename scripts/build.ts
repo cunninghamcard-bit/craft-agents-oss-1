@@ -72,7 +72,7 @@ for (const target of TARGETS) {
     
     // Copy cache-ttl-interceptor.ts for preload by Bun subprocess
     // Note: Bundling breaks the fetch interception logic, must use original TS
-    console.log(await $`cp src/cache-ttl-interceptor.ts ${folder}`.text());
+    console.log(await $`cp packages/shared/src/cache-ttl-interceptor.ts ${folder}`.text());
 
     await create({
         gzip: true,

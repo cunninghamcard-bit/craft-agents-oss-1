@@ -35,4 +35,7 @@ export {
   isDeleteWordForward,
   isKillToEnd,
   isShiftTab,
+  isClearScreen,
+  isExit,
+  isSafeModeToggle,
 } from './mappings.ts';

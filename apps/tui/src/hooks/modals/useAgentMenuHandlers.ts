@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { AgentAction } from '../../components/AgentMenu.tsx';
 import type { SubAgentDefinition, McpServerConfig } from '@craft-agent/shared/agents';
 import type { Message } from '../../components/Messages.tsx';
+import type { ModalName } from './useModalState.ts';
 import { debug } from '@craft-agent/shared/utils';
 
 /**
@@ -25,6 +26,7 @@ export interface AgentActionResult {
  */
 export interface UseAgentMenuHandlersProps {
   closeModal: () => void;
+  openModal: (name: ModalName) => void;
   activateAgent: (name: string) => Promise<boolean | 'pending_auth'>;
   deactivateAgent: () => void;
   reloadAgent: () => Promise<boolean>;
@@ -73,6 +75,7 @@ export interface UseAgentMenuHandlersResult {
 export function useAgentMenuHandlers(props: UseAgentMenuHandlersProps): UseAgentMenuHandlersResult {
   const {
     closeModal,
+    openModal,
     activateAgent,
     deactivateAgent,
     reloadAgent,
@@ -189,8 +192,13 @@ export function useAgentMenuHandlers(props: UseAgentMenuHandlersProps): UseAgent
       }
 
       case 'reauth':
-        triggerMcpAuth();
-        triggerApiAuth();
+        // Open selective reauth modal instead of directly triggering
+        openModal('reauthSelector');
+        return {};
+
+      case 'credentials':
+        // Open credentials viewer modal
+        openModal('credentialsViewer');
         return {};
 
       default:
@@ -198,6 +206,7 @@ export function useAgentMenuHandlers(props: UseAgentMenuHandlersProps): UseAgent
     }
   }, [
     closeModal,
+    openModal,
     activateAgent,
     deactivateAgent,
     reloadAgent,

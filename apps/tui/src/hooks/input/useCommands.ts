@@ -71,6 +71,9 @@ export interface UseCommandsProps {
 
   // Exit handler
   exitApp: () => void;
+
+  // Safe mode
+  setSafeModeSetting: (enabled: boolean) => void;
 }
 
 /**
@@ -102,6 +105,8 @@ export function useCommands(props: UseCommandsProps) {
     setModel,
     setWorkspace,
     startNewSession,
+    resetSession,
+    tokenUsage,
     openModal,
     pendingAttachments,
     setPendingAttachments,
@@ -119,6 +124,7 @@ export function useCommands(props: UseCommandsProps) {
     cancelPlan,
     setSessionPermissionMode,
     exitApp,
+    setSafeModeSetting,
   } = props;
 
   const handleCommand = useCallback(async (input: string): Promise<CommandResult> => {
@@ -145,6 +151,13 @@ export function useCommands(props: UseCommandsProps) {
         return { handled: true };
 
       case '/clear':
+        // Clear messages in current session (preserves session ID)
+        // resetSession() handles clearing storage, updating state, and triggering remount
+        process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+        resetSession();
+        return { handled: true };
+
+      case '/new':
         // Create a new session - triggers component remount via key={session.id}
         process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
         startNewSession();
@@ -329,9 +342,46 @@ export function useCommands(props: UseCommandsProps) {
         openModal('settings');
         return { handled: true };
 
+      case '/safemode': {
+        const currentMode = getSafeMode();
+        const newMode = !currentMode;
+        setSafeMode(newMode);
+        setSafeModeSetting(newMode);
+        return {
+          handled: true,
+          message: {
+            content: `Safe Mode ${newMode ? 'enabled' : 'disabled'}. ${newMode ? 'Delete/update/move operations will require approval.' : 'All operations will execute without prompts.'}`,
+            type: 'info',
+          },
+        };
+      }
+
       case '/credits':
         openModal('balance');
         return { handled: true };
+
+      case '/context': {
+        // Context window limits (all current models use 200k)
+        const contextWindow = 200000;
+        const autocompactBuffer = 45000; // ~22.5% reserved by SDK
+
+        // Build transcript path (same as /debug command)
+        let transcriptPath: string | undefined;
+        if (session.sdkSessionId) {
+          const projectSlug = process.cwd().replace(/\//g, '-');
+          transcriptPath = `${homedir()}/.claude/projects/${projectSlug}/${session.sdkSessionId}.jsonl`;
+        }
+
+        const output = formatContextDisplay({
+          model,
+          contextWindow,
+          autocompactBuffer,
+          totalUsed: tokenUsage.contextTokens,
+          transcriptPath,
+        });
+
+        return { handled: true, message: { content: output, type: 'system' } };
+      }
 
       // ============================================
       // Model Commands
@@ -427,7 +477,7 @@ export function useCommands(props: UseCommandsProps) {
           if (!workspaceToRemove) {
             return {
               handled: true,
-              message: { content: `Workspace not found: ${nameToRemove}`, type: 'error' },
+              message: { content: `Space not found: ${nameToRemove}`, type: 'error' },
             };
           }
 
@@ -435,7 +485,7 @@ export function useCommands(props: UseCommandsProps) {
             return {
               handled: true,
               message: {
-                content: 'Cannot remove the only workspace. Add another workspace first.',
+                content: 'Cannot remove the only space. Add another space first.',
                 type: 'error',
               },
             };
@@ -455,7 +505,7 @@ export function useCommands(props: UseCommandsProps) {
           }
           return {
             handled: true,
-            message: { content: 'Failed to remove workspace', type: 'error' },
+            message: { content: 'Failed to remove space', type: 'error' },
           };
         }
 
@@ -800,6 +850,8 @@ export function useCommands(props: UseCommandsProps) {
     setModel,
     setWorkspace,
     startNewSession,
+    resetSession,
+    tokenUsage,
     openModal,
     pendingAttachments,
     setPendingAttachments,
@@ -817,6 +869,7 @@ export function useCommands(props: UseCommandsProps) {
     cancelPlan,
     setSessionPermissionMode,
     exitApp,
+    setSafeModeSetting,
   ]);
 
   return { handleCommand };

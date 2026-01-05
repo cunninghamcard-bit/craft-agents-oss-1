@@ -4,6 +4,7 @@ import {
   getCumulativeUsage,
   addToCumulativeUsage,
   switchWorkspaceAtomic,
+  clearSessionMessages,
 } from '@craft-agent/shared/config';
 import { createSession, type SessionConfig } from '@craft-agent/shared/sessions';
 
@@ -45,6 +46,14 @@ export interface GlobalContextValue {
   // Start a new session in the current workspace (e.g., /clear command)
   startNewSession: () => SessionConfig;
 
+  // Reset current session (clear messages, keep session ID) - for /clear command
+  // Increments sessionResetKey to force SessionContainer remount
+  resetSession: () => void;
+
+  // Key for forcing SessionContainer remount on session reset
+  // Used in App.tsx as key={`${session.id}-${sessionResetKey}`}
+  sessionResetKey: number;
+
   // Global cumulative usage across all sessions
   cumulativeUsage: CumulativeUsage;
   addUsage: (delta: { costUsd: number; inputTokens: number; outputTokens: number }) => void;
@@ -70,6 +79,7 @@ export function GlobalProvider({
   const [model, setModelState] = useState(initialModel);
   const [workspace, setWorkspaceState] = useState(initialWorkspace);
   const [session, setSessionState] = useState(initialSession);
+  const [sessionResetKey, setSessionResetKey] = useState(0);
   const [cumulativeUsage, setCumulativeUsage] = useState<CumulativeUsage>(() => getCumulativeUsage());
 
   const setModel = useCallback((newModel: string) => {
@@ -108,6 +118,15 @@ export function GlobalProvider({
     return newSession;
   }, [workspace.rootPath]);
 
+  const resetSession = useCallback(() => {
+    // Clear messages in storage (clears SDK session ID for fresh Claude conversation)
+    clearSessionMessages(session.id);
+    // Update React state to clear SDK session ID
+    setSessionState(prev => ({ ...prev, sdkSessionId: undefined }));
+    // Increment reset key to force SessionContainer remount
+    setSessionResetKey(k => k + 1);
+  }, [session.id]);
+
   const addUsage = useCallback((delta: { costUsd: number; inputTokens: number; outputTokens: number }) => {
     // Only add if there's actual new usage
     if (delta.costUsd > 0 || delta.inputTokens > 0 || delta.outputTokens > 0) {
@@ -126,9 +145,11 @@ export function GlobalProvider({
     session,
     setSession,
     startNewSession,
+    resetSession,
+    sessionResetKey,
     cumulativeUsage,
     addUsage,
-  }), [model, setModel, workspace, setWorkspace, session, setSession, startNewSession, cumulativeUsage, addUsage]);
+  }), [model, setModel, workspace, setWorkspace, session, setSession, startNewSession, resetSession, sessionResetKey, cumulativeUsage, addUsage]);
 
   return (
     <GlobalContext.Provider value={contextValue}>

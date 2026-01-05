@@ -85,13 +85,15 @@ export interface ApiConfig {
     headerName?: string;
     /** Query param name for type='query' */
     queryParam?: string;
-    /** Custom Authorization scheme for type='bearer' (default: "Bearer") */
+    /** Custom Authorization scheme for type='bearer' (default: "Bearer"). Use empty string "" for no scheme. */
     authScheme?: string;
     /** Custom label for credential prompt */
     credentialLabel?: string;
     /** Custom label for password field in basic auth */
     secretLabel?: string;
   };
+  /** Custom headers to include with every request */
+  headers?: Record<string, string>;
   /** Rich API documentation as markdown */
   documentation?: string;
   /** Link to official API documentation */
