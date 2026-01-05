@@ -221,11 +221,9 @@ export function SourceAvatar(props: SourceAvatarProps) {
       } else {
         localIconPath = `sources/${source.config.slug}/${iconFilename}`
       }
-    } else if (iconUrl) {
-      // Remote URL - use directly
-      remoteIconUrl = iconUrl
     } else {
-      // No explicit icon - derive from service URL
+      // Use provider-based favicon resolution (handles canonical domain mapping)
+      // This is preferred over raw iconUrl which may be a website URL, not an image
       remoteIconUrl = deriveServiceFavicon(source)
     }
 
