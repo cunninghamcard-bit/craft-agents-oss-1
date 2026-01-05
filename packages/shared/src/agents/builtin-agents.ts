@@ -304,7 +304,7 @@ Gmail is a special API source that uses Google OAuth:
      "type": "api",
      "api": {
        "baseUrl": "https://gmail.googleapis.com",
-       "authType": "oauth"
+       "authType": "bearer"
      },
      "iconUrl": "https://mail.google.com"
    }
