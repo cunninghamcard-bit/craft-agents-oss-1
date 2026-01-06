@@ -617,11 +617,6 @@ export function SessionList({
     return deleted
   }, [onDelete])
 
-  // Handle Delete key
-  const handleDelete = useCallback((item: Session) => {
-    handleDeleteWithToast(item.id)
-  }, [handleDeleteWithToast])
-
   // Roving tabindex for keyboard navigation
   const {
     activeIndex,
@@ -635,7 +630,6 @@ export function SessionList({
     wrap: true,
     onActiveChange: handleActiveChange,
     onEnter: handleEnter,
-    onDelete: handleDelete,
     initialIndex: selectedIndex >= 0 ? selectedIndex : 0,
     enabled: isFocused,
   })
@@ -655,11 +649,8 @@ export function SessionList({
     }
   }, [isFocused, focusActiveItem, flatItems.length, searchActive])
 
-  // Handle single-key shortcuts when focused
-  // Todo state shortcuts: T (todo), P (in-progress), V (needs-review), D (done), X (cancelled)
-  // Other shortcuts: C (toggle complete), R (rename)
-  const handleKeyDown = useCallback((e: React.KeyboardEvent, item: Session) => {
-    // Handle arrow keys for zone navigation (no modifiers required)
+  // Arrow key shortcuts for zone navigation
+  const handleKeyDown = useCallback((e: React.KeyboardEvent, _item: Session) => {
     if (e.key === 'ArrowLeft') {
       e.preventDefault()
       focusZone('sidebar')
@@ -670,40 +661,7 @@ export function SessionList({
       focusZone('chat')
       return
     }
-
-    // Only handle letter shortcuts when no modifiers
-    if (e.metaKey || e.ctrlKey || e.altKey) return
-
-    const key = e.key.toLowerCase()
-
-    // Todo state shortcuts - dynamically built from todoStates
-    const stateShortcuts: Record<string, TodoStateId> = {}
-    todoStates.forEach(state => {
-      if (state.shortcut) {
-        stateShortcuts[state.shortcut.toLowerCase()] = state.id
-      }
-    })
-
-    if (key in stateShortcuts) {
-      e.preventDefault()
-      onTodoStateChange(item.id, stateShortcuts[key])
-      return
-    }
-
-    // Other shortcuts
-    switch (key) {
-      case 'c':
-        e.preventDefault()
-        // Toggle between done and todo
-        const newState = item.todoState === 'done' || item.todoState === 'cancelled' ? 'todo' : 'done'
-        onTodoStateChange(item.id, newState)
-        break
-      case 'r':
-        e.preventDefault()
-        handleRenameClick(item.id, getSessionTitle(item))
-        break
-    }
-  }, [onTodoStateChange, focusZone, todoStates])
+  }, [focusZone])
 
   const handleRenameClick = (sessionId: string, currentName: string) => {
     setRenameSessionId(sessionId)

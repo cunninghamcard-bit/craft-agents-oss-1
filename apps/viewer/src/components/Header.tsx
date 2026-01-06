@@ -4,6 +4,27 @@
 
 import { Sun, Moon, X } from 'lucide-react'
 
+/**
+ * CraftAgentLogo - The Craft Agent "C" logo
+ */
+function CraftAgentLogo({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <g transform="translate(3.4502, 3)" fill="currentColor">
+        <path
+          d="M3.17890888,3.6 L3.17890888,0 L16,0 L16,3.6 L3.17890888,3.6 Z M9.642,7.2 L9.64218223,10.8 L0,10.8 L0,3.6 L16,3.6 L16,7.2 L9.642,7.2 Z M3.17890888,18 L3.178,14.4 L0,14.4 L0,10.8 L16,10.8 L16,18 L3.17890888,18 Z"
+          fillRule="nonzero"
+        />
+      </g>
+    </svg>
+  )
+}
+
 interface HeaderProps {
   hasSession: boolean
   isDark: boolean
@@ -17,9 +38,7 @@ export function Header({ hasSession, isDark, onToggleTheme, onClear }: HeaderPro
       <div className="flex items-center gap-3">
         {/* Logo / Branding */}
         <div className="flex items-center gap-2">
-          <div className="w-6 h-6 rounded-md bg-accent flex items-center justify-center">
-            <span className="text-xs font-bold text-white">C</span>
-          </div>
+          <CraftAgentLogo className="w-6 h-6 text-[#9570BE]" />
           <span className="font-medium text-foreground">Session Viewer</span>
         </div>
       </div>

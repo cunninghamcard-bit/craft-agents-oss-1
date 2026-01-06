@@ -9,3 +9,7 @@ export * from './turn-utils'
 export { TurnCard, type TurnCardProps, type ActivityItem, type ResponseContent, type TodoItem } from './TurnCard'
 export { PlanCard, type PlanCardProps } from './PlanCard'
 export { ChatView, type ChatViewProps, type ChatViewMode } from './ChatView'
+export { UserMessageBubble, type UserMessageBubbleProps } from './UserMessageBubble'
+
+// Attachment helpers
+export { FileTypeIcon, getFileTypeLabel, type FileTypeIconProps } from './attachment-helpers'

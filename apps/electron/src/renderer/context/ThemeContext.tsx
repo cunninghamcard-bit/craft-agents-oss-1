@@ -71,9 +71,9 @@ function applyThemeToDOM(resolvedMode: 'light' | 'dark', colorTheme: string, mod
     delete root.dataset.themeOverride
   }
 
-  // Apply font
-  if (font === 'system') {
-    root.dataset.font = 'system'
+  // Apply font (default CSS is system, data-font="inter" opts into Inter)
+  if (font === 'inter') {
+    root.dataset.font = 'inter'
   } else {
     delete root.dataset.font
   }

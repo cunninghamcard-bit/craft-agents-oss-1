@@ -17,13 +17,12 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { cn } from "@/lib/utils"
 import { Markdown, CollapsibleMarkdownProvider, StreamingMarkdown, type RenderMode } from "@/components/markdown"
 import { AnimatedCollapsibleContent } from "@/components/ui/collapsible"
-import { FileTypeIcon, getFileTypeLabel } from "./AttachmentPreview"
 import { Spinner } from "@craft-agent/ui"
 import { useFocusZone } from "@/hooks/keyboard"
 import type { Session, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, LoadedSource, FileChange, MultiFileDiffData } from "../../../shared/types"
 import type { PermissionMode } from "@craft-agent/shared/agent/modes"
 import { SetupAuthBanner, type BannerState } from "./SetupAuthBanner"
-import { TurnCard, PlanCard, groupMessagesByTurn, formatTurnAsMarkdown, formatActivityAsMarkdown, type Turn, type AssistantTurn, type UserTurn, type SystemTurn, type PlanTurn } from "@craft-agent/ui"
+import { TurnCard, PlanCard, UserMessageBubble, groupMessagesByTurn, formatTurnAsMarkdown, formatActivityAsMarkdown, type Turn, type AssistantTurn, type UserTurn, type SystemTurn, type PlanTurn } from "@craft-agent/ui"
 import { ActiveOptionBadges } from "./ActiveOptionBadges"
 import { InputContainer, type StructuredInputState, type StructuredResponse, type PermissionResponse } from "./input"
 import { useBackgroundTasks } from "@/hooks/useBackgroundTasks"
@@ -931,94 +930,17 @@ function MessageBubble({
   renderMode = 'minimal',
   onPopOut,
 }: MessageBubbleProps) {
-  // === USER MESSAGE: Right-aligned blue bubble with attachments above ===
+  // === USER MESSAGE: Right-aligned bubble with attachments above ===
   if (message.role === 'user') {
-    const hasAttachments = message.attachments && message.attachments.length > 0
-    const isPending = message.isPending
-    const isQueued = message.isQueued
-
     return (
-      <div className="flex flex-col items-end gap-3 w-full">
-        {/* Attachment preview row - stored attachments with thumbnails */}
-        {hasAttachments && (
-          <div className="flex gap-2 justify-end max-w-[80%] flex-wrap">
-            {message.attachments!.map((att, i) => {
-              const isImage = att.type === 'image'
-              const hasThumbnail = !!att.thumbnailBase64
-
-              return (
-                <div
-                  key={att.id || i}
-                  className="shrink-0 cursor-pointer hover:opacity-80 transition-opacity"
-                  onClick={() => att.storedPath && onOpenFile(att.storedPath)}
-                  title={`Click to open ${att.name}`}
-                >
-                  {isImage ? (
-                    /* IMAGE: Square thumbnail only */
-                    <div className="h-14 w-14 rounded-[8px] overflow-hidden bg-background shadow-minimal">
-                      {hasThumbnail ? (
-                        <img
-                          src={`data:image/png;base64,${att.thumbnailBase64}`}
-                          alt={att.name}
-                          className="h-full w-full object-cover"
-                        />
-                      ) : (
-                        <div className="h-full w-full flex items-center justify-center">
-                          <FileTypeIcon type={att.type} mimeType={att.mimeType} className="h-5 w-5" />
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    /* DOCUMENT: Bubble with thumbnail/icon + 2-line text */
-                    <div className="flex items-center gap-2.5 rounded-[8px] bg-foreground/5 pl-1.5 pr-3 py-1.5">
-                      <div className="h-11 w-8 rounded-[6px] overflow-hidden bg-background shadow-minimal flex items-center justify-center shrink-0">
-                        {hasThumbnail ? (
-                          <img
-                            src={`data:image/png;base64,${att.thumbnailBase64}`}
-                            alt={att.name}
-                            className="h-full w-full object-cover object-top"
-                          />
-                        ) : (
-                          <FileTypeIcon type={att.type} mimeType={att.mimeType} className="h-5 w-5" />
-                        )}
-                      </div>
-                      <div className="flex flex-col min-w-0 max-w-[120px]">
-                        <span className="text-xs font-medium line-clamp-2 break-all" title={att.name}>
-                          {att.name}
-                        </span>
-                        <span className="text-[10px] text-muted-foreground">
-                          {getFileTypeLabel(att.type, att.mimeType, att.name)}
-                        </span>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        )}
-        {/* Text content bubble */}
-        <div
-          className={`max-w-[80%] bg-foreground/5 rounded-[16px] px-4 py-1 break-words min-w-0 select-text ${
-            isPending ? 'animate-shimmer' : ''
-          }`}
-        >
-          <Markdown
-            mode="minimal"
-            onUrlClick={onOpenUrl}
-            onFileClick={onOpenFile}
-            className="text-sm [&_a]:underline [&_code]:bg-foreground/10"
-          >
-            {message.content}
-          </Markdown>
-        </div>
-        {/* Queued badge */}
-        {isQueued && (
-          <span className="text-[10px] text-muted-foreground bg-foreground/5 px-2 py-0.5 rounded-full">
-            queued
-          </span>
-        )}
-      </div>
+      <UserMessageBubble
+        content={message.content}
+        attachments={message.attachments}
+        isPending={message.isPending}
+        isQueued={message.isQueued}
+        onUrlClick={onOpenUrl}
+        onFileClick={onOpenFile}
+      />
     )
   }
 

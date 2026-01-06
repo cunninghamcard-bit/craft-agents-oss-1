@@ -17,6 +17,7 @@ import { PlatformProvider, type PlatformActions } from '../../context'
 import { Markdown } from '../markdown'
 import { TurnCard } from './TurnCard'
 import { PlanCard } from './PlanCard'
+import { UserMessageBubble } from './UserMessageBubble'
 import {
   groupMessagesByTurn,
   storedToMessage,
@@ -48,21 +49,23 @@ export interface ChatViewProps {
 }
 
 /**
- * UserMessageBubble - Displays a user message
+ * CraftAgentLogo - The Craft Agent "C" logo for branding
  */
-function UserMessageBubble({
-  content,
-  className,
-}: {
-  content: string
-  className?: string
-}) {
+function CraftAgentLogo({ className }: { className?: string }) {
   return (
-    <div className={cn("px-4 py-3", className)}>
-      <div className="text-sm">
-        <Markdown mode="minimal">{content}</Markdown>
-      </div>
-    </div>
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+    >
+      <g transform="translate(3.4502, 3)" fill="currentColor">
+        <path
+          d="M3.17890888,3.6 L3.17890888,0 L16,0 L16,3.6 L3.17890888,3.6 Z M9.642,7.2 L9.64218223,10.8 L0,10.8 L0,3.6 L16,3.6 L16,7.2 L9.642,7.2 Z M3.17890888,18 L3.178,14.4 L0,14.4 L0,10.8 L16,10.8 L16,18 L3.17890888,18 Z"
+          fillRule="nonzero"
+        />
+      </g>
+    </svg>
   )
 }
 
@@ -181,6 +184,9 @@ export function ChatView({
                   <UserMessageBubble
                     key={turn.message.id}
                     content={turn.message.content}
+                    attachments={turn.message.attachments}
+                    onUrlClick={platformActions.onOpenUrl}
+                    onFileClick={platformActions.onOpenFile}
                   />
                 )
               }
@@ -244,6 +250,11 @@ export function ChatView({
 
               return null
             })}
+
+            {/* Bottom branding */}
+            <div className="flex justify-center pt-16 pb-24">
+              <CraftAgentLogo className="w-8 h-8 text-[#9570BE]/40" />
+            </div>
           </div>
         </div>
 

@@ -1138,7 +1138,7 @@ function TodoList({ todos }: TodoListProps) {
   if (todos.length === 0) return null
 
   return (
-    <div className="pl-4 pr-3 pt-2.5 pb-1.5 space-y-0.5 border-l-2 border-muted ml-[19px] bg-muted/20 rounded-r-md">
+    <div className="pl-4 pr-3 pt-2.5 pb-1.5 space-y-0.5 border-l-2 border-muted ml-[19px]">
       {/* Header */}
       <div className={cn("text-muted-foreground pb-1", SIZE_CONFIG.fontSize)}>
         Todo List
@@ -1340,7 +1340,7 @@ export function TurnCard({
                 <div
                   className={cn(
                     "pl-4 pr-3 py-0 space-y-0.5 border-l-2 border-muted ml-[19px]",
-                    sortedActivities.length > SIZE_CONFIG.maxVisibleActivities && "bg-muted/30 rounded-r-md overflow-y-auto py-1.5"
+                    sortedActivities.length > SIZE_CONFIG.maxVisibleActivities && "rounded-r-md overflow-y-auto py-1.5"
                   )}
                   style={{
                     maxHeight: sortedActivities.length > SIZE_CONFIG.maxVisibleActivities
