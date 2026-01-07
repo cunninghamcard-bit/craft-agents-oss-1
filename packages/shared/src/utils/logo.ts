@@ -34,10 +34,10 @@ export const PROVIDER_ICON_URLS: Record<string, string> = {
 };
 
 /**
- * Canonical domains for known providers.
+ * Static canonical domains for known providers (immutable).
  * Maps provider names to their canonical domain for proper favicon resolution.
  */
-export const PROVIDER_CANONICAL_DOMAINS: Record<string, string> = {
+const STATIC_PROVIDER_DOMAINS: Readonly<Record<string, string>> = Object.freeze({
   // Google services - use product-specific subdomains (docs/sheets use direct URLs instead)
   gmail: 'mail.google.com',
   calendar: 'calendar.google.com',
@@ -47,7 +47,7 @@ export const PROVIDER_CANONICAL_DOMAINS: Record<string, string> = {
   linear: 'linear.app',
   slack: 'slack.com',
   notion: 'notion.so',
-};
+});
 
 // Re-export browser-safe utility for backward compatibility
 export { deriveServiceUrl } from './service-url.ts';
@@ -76,28 +76,35 @@ function loadProviderDomainsCache(): Record<string, string> {
 }
 
 /**
- * Lazy initialization flag for cached domains
+ * Memoized merged provider domains (module-private).
+ * Merges user-cached domains with static domains on first access.
  */
-let providerDomainsInitialized = false;
+let _mergedProviderDomains: Record<string, string> | null = null;
 
 /**
- * Load cached provider domains into memory on first use
+ * Get canonical domain for a provider.
+ * Merges static domains with user-cached domains (static takes precedence).
+ *
+ * @param provider - Provider name (case-insensitive)
+ * @returns Canonical domain or undefined if not found
  */
-function ensureProviderDomainsLoaded(): void {
-  if (providerDomainsInitialized) return;
-  providerDomainsInitialized = true;
-
-  const cached = loadProviderDomainsCache();
-  // Merge cached domains into static map, but static takes precedence.
-  // Using for loop over Object.assign for clarity - we only add keys that don't exist.
-  for (const [provider, domain] of Object.entries(cached)) {
-    if (!PROVIDER_CANONICAL_DOMAINS[provider]) {
-      PROVIDER_CANONICAL_DOMAINS[provider] = domain;
+export function getProviderDomain(provider: string): string | undefined {
+  if (!_mergedProviderDomains) {
+    const cached = loadProviderDomainsCache();
+    _mergedProviderDomains = { ...cached, ...STATIC_PROVIDER_DOMAINS };
+    if (Object.keys(cached).length > 0) {
+      debug(`[logo] Loaded ${Object.keys(cached).length} cached provider domains`);
     }
   }
-  if (Object.keys(cached).length > 0) {
-    debug(`[logo] Loaded ${Object.keys(cached).length} cached provider domains`);
-  }
+  return _mergedProviderDomains[provider.toLowerCase()];
+}
+
+/**
+ * Reset the provider domain cache (for testing).
+ * Allows tests to clear cached state between test cases.
+ */
+export function _resetProviderDomainCache(): void {
+  _mergedProviderDomains = null;
 }
 
 /**
@@ -268,9 +275,6 @@ function pickBestFavicon(favicons: Array<{href: string, sizes: string | null}>):
  * @param provider - Optional provider name (e.g., 'gmail') to use canonical domain mapping
  */
 export async function getHighQualityLogoUrl(serviceUrl: string, provider?: string): Promise<string | null> {
-  // Load cached provider domains on first call
-  ensureProviderDomainsLoaded();
-
   // Check if provider has a direct icon URL (highest priority)
   if (provider) {
     const directIconUrl = PROVIDER_ICON_URLS[provider.toLowerCase()];
@@ -285,7 +289,7 @@ export async function getHighQualityLogoUrl(serviceUrl: string, provider?: strin
     }
 
     // Check if provider has a canonical domain mapping (includes cached domains)
-    const canonicalDomain = PROVIDER_CANONICAL_DOMAINS[provider.toLowerCase()];
+    const canonicalDomain = getProviderDomain(provider);
     if (canonicalDomain) {
       // Use canonical domain for favicon resolution
       return getHighQualityLogoUrl(`https://${canonicalDomain}`);
@@ -364,7 +368,7 @@ export function getLogoUrl(serviceUrl: string, provider?: string): string | null
     }
 
     // Check if provider has a canonical domain mapping
-    const canonicalDomain = PROVIDER_CANONICAL_DOMAINS[provider.toLowerCase()];
+    const canonicalDomain = getProviderDomain(provider);
     if (canonicalDomain) {
       return `${GOOGLE_FAVICON_URL}128&url=https://${canonicalDomain}`;
     }
