@@ -34,6 +34,11 @@ export type ApiAuthType = 'bearer' | 'header' | 'query' | 'basic' | 'none';
 export type GoogleService = 'gmail' | 'calendar' | 'drive' | 'docs' | 'sheets';
 
 /**
+ * Slack service types for OAuth scope selection
+ */
+export type SlackService = 'messaging' | 'channels' | 'users' | 'files' | 'full';
+
+/**
  * Infer Google service from API baseUrl.
  * Returns undefined if URL doesn't match a known Google API pattern.
  *
@@ -66,6 +71,29 @@ export function inferGoogleServiceFromUrl(baseUrl: string | undefined): GoogleSe
     if (pathname.startsWith('/gmail/')) return 'gmail';
     if (pathname.startsWith('/v1/documents') || pathname.startsWith('/documents/')) return 'docs';
     if (pathname.startsWith('/v4/spreadsheets') || pathname.startsWith('/spreadsheets/')) return 'sheets';
+  }
+
+  return undefined;
+}
+
+/**
+ * Infer Slack service from API baseUrl.
+ * Returns 'full' by default if URL matches Slack API pattern.
+ */
+export function inferSlackServiceFromUrl(baseUrl: string | undefined): SlackService | undefined {
+  if (!baseUrl) return undefined;
+
+  let hostname: string;
+  try {
+    const parsed = new URL(baseUrl);
+    hostname = parsed.hostname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+
+  // Match Slack API hostname
+  if (hostname === 'slack.com' || hostname === 'api.slack.com') {
+    return 'full'; // Default to full service for Slack
   }
 
   return undefined;
@@ -161,6 +189,11 @@ export interface ApiSourceConfig {
   // Google OAuth fields (used when provider is 'google')
   googleService?: GoogleService; // Predefined service for scope selection
   googleScopes?: string[]; // Custom scopes (overrides googleService)
+
+  // Slack OAuth fields (used when provider is 'slack')
+  // Uses user_scope for user authentication (posts as the user, not a bot)
+  slackService?: SlackService; // Predefined service for scope selection
+  slackUserScopes?: string[]; // Custom user scopes (overrides slackService)
 }
 
 /**

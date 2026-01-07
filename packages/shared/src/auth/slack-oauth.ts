@@ -1,14 +1,14 @@
 /**
  * Slack OAuth flow using Slack's OAuth 2.0 v2
  *
- * This module handles the complete Slack OAuth flow:
+ * This module handles the complete Slack OAuth flow for USER authentication:
  * 1. Opens browser for Slack consent screen
  * 2. Receives authorization code via local callback server
- * 3. Exchanges code for access and refresh tokens
+ * 3. Exchanges code for user access token
  * 4. Returns tokens and workspace info
  *
- * Supports multiple service presets (messaging, channels, users, files, full)
- * or custom bot/user scopes for other use cases.
+ * Uses user_scope (not scope) to authenticate as the user, not as a bot.
+ * This allows posting messages as the authenticated user.
  */
 
 import { URL } from 'url';
@@ -31,39 +31,34 @@ const SLACK_AUTH_URL = 'https://slack.com/oauth/v2/authorize';
 const SLACK_TOKEN_URL = 'https://slack.com/api/oauth.v2.access';
 
 /**
- * Predefined scope sets for common Slack services
- * Bot scopes are used by default; user scopes are optional for specific use cases
+ * Predefined USER scope sets for common Slack services
+ * These are user scopes (user_scope), not bot scopes (scope)
+ * User scopes allow acting as the authenticated user
  */
-export const SLACK_SERVICE_SCOPES: Record<SlackService, { bot: string[]; user?: string[] }> = {
-  messaging: {
-    bot: ['chat:write', 'chat:write.public', 'im:write'],
-  },
-  channels: {
-    bot: ['channels:read', 'channels:history', 'groups:read', 'groups:history'],
-  },
-  users: {
-    bot: ['users:read', 'users:read.email'],
-  },
-  files: {
-    bot: ['files:read', 'files:write'],
-  },
-  full: {
-    bot: [
-      'chat:write',
-      'chat:write.public',
-      'im:write',
-      'channels:read',
-      'channels:history',
-      'groups:read',
-      'groups:history',
-      'users:read',
-      'users:read.email',
-      'files:read',
-      'files:write',
-      'reactions:read',
-      'reactions:write',
-    ],
-  },
+export const SLACK_SERVICE_SCOPES: Record<SlackService, string[]> = {
+  messaging: ['chat:write'],
+  channels: ['channels:read', 'channels:history', 'groups:read', 'groups:history'],
+  users: ['users:read', 'users:read.email'],
+  files: ['files:read', 'files:write'],
+  full: [
+    'chat:write',
+    'channels:read',
+    'channels:history',
+    'groups:read',
+    'groups:history',
+    'users:read',
+    'users:read.email',
+    'files:read',
+    'files:write',
+    'reactions:read',
+    'reactions:write',
+    'im:read',
+    'im:history',
+    'im:write',
+    'mpim:read',
+    'mpim:history',
+    'search:read',
+  ],
 };
 
 /**
@@ -72,9 +67,7 @@ export const SLACK_SERVICE_SCOPES: Record<SlackService, { bot: string[]; user?: 
 export interface SlackOAuthOptions {
   /** Slack service to authenticate (uses predefined scopes) */
   service?: SlackService;
-  /** Custom bot scopes (overrides service scopes if provided) */
-  botScopes?: string[];
-  /** Custom user scopes (optional, for user-specific actions) */
+  /** Custom user scopes (overrides service scopes if provided) */
   userScopes?: string[];
   /** App type for callback server styling */
   appType?: AppType;
@@ -85,20 +78,18 @@ export interface SlackOAuthOptions {
  */
 export interface SlackOAuthResult {
   success: boolean;
-  /** Bot access token (xoxb-...) */
+  /** User access token (xoxp-...) for acting as the user */
   accessToken?: string;
-  /** Refresh token for token rotation */
+  /** Refresh token for token rotation (if enabled in Slack app settings) */
   refreshToken?: string;
-  /** Token expiration timestamp (ms) */
+  /** Token expiration timestamp (ms) - only if token rotation is enabled */
   expiresAt?: number;
   /** Slack workspace ID */
   teamId?: string;
   /** Slack workspace name */
   teamName?: string;
-  /** Bot user ID in the workspace */
-  botUserId?: string;
-  /** User access token (xoxp-...) if user_scope was requested */
-  userAccessToken?: string;
+  /** Authenticated user ID */
+  userId?: string;
   /** Error message if failed */
   error?: string;
 }
@@ -123,8 +114,7 @@ async function exchangeCodeForTokens(
   expiresIn?: number;
   teamId: string;
   teamName: string;
-  botUserId?: string;
-  userAccessToken?: string;
+  userId: string;
 }> {
   // Use HTTP Basic auth as recommended by Slack
   const authHeader = Buffer.from(`${SLACK_CLIENT_ID}:${SLACK_CLIENT_SECRET}`).toString('base64');
@@ -146,31 +136,38 @@ async function exchangeCodeForTokens(
   const data = (await response.json()) as {
     ok: boolean;
     error?: string;
-    access_token?: string;
-    refresh_token?: string;
-    expires_in?: number;
+    // For user tokens, these come from authed_user
+    authed_user?: {
+      id: string;
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+    };
     team?: { id: string; name: string };
-    bot_user_id?: string;
-    authed_user?: { id: string; access_token?: string };
   };
 
   if (!data.ok) {
     throw new Error(`Slack token exchange failed: ${data.error || 'Unknown error'}`);
   }
 
+  // User token is in authed_user.access_token
+  if (!data.authed_user?.access_token) {
+    throw new Error('No user access token received. Make sure user_scope is set in the OAuth request.');
+  }
+
   return {
-    accessToken: data.access_token!,
-    refreshToken: data.refresh_token,
-    expiresIn: data.expires_in,
+    accessToken: data.authed_user.access_token,
+    refreshToken: data.authed_user.refresh_token,
+    expiresIn: data.authed_user.expires_in,
     teamId: data.team?.id || '',
     teamName: data.team?.name || '',
-    botUserId: data.bot_user_id,
-    userAccessToken: data.authed_user?.access_token,
+    userId: data.authed_user.id,
   };
 }
 
 /**
  * Refresh Slack access token using refresh token
+ * Note: Token rotation must be enabled in Slack app settings for refresh tokens
  */
 export async function refreshSlackToken(
   refreshToken: string,
@@ -219,29 +216,28 @@ export function isSlackOAuthConfigured(): boolean {
 }
 
 /**
- * Get scopes for a Slack service or use custom scopes
+ * Get user scopes for a Slack service or use custom scopes
  */
-export function getSlackScopes(options: SlackOAuthOptions): { bot: string[]; user: string[] } {
+export function getSlackScopes(options: SlackOAuthOptions): string[] {
   // Custom scopes take precedence
-  if (options.botScopes && options.botScopes.length > 0) {
-    return { bot: options.botScopes, user: options.userScopes || [] };
+  if (options.userScopes && options.userScopes.length > 0) {
+    return options.userScopes;
   }
 
   // Use predefined service scopes
   if (options.service && options.service in SLACK_SERVICE_SCOPES) {
-    const scopes = SLACK_SERVICE_SCOPES[options.service];
-    return { bot: scopes.bot, user: scopes.user || [] };
+    return SLACK_SERVICE_SCOPES[options.service];
   }
 
   // Default to full workspace scopes
-  return { bot: SLACK_SERVICE_SCOPES.full.bot, user: [] };
+  return SLACK_SERVICE_SCOPES.full;
 }
 
 /**
- * Start Slack OAuth flow
+ * Start Slack OAuth flow for USER authentication
  *
- * Opens browser for Slack consent, handles callback, and returns tokens + workspace info.
- * Supports multiple Slack services via the service option, or custom scopes.
+ * Opens browser for Slack consent, handles callback, and returns user token + workspace info.
+ * Uses user_scope to authenticate as the user (not a bot), allowing you to post as yourself.
  *
  * @example
  * // Authenticate with full workspace access
@@ -254,7 +250,7 @@ export function getSlackScopes(options: SlackOAuthOptions): { bot: string[]; use
  * @example
  * // Authenticate with custom scopes
  * const result = await startSlackOAuth({
- *   botScopes: ['chat:write', 'users:read']
+ *   userScopes: ['chat:write', 'users:read']
  * });
  */
 export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<SlackOAuthResult> {
@@ -268,8 +264,8 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
       };
     }
 
-    // Get scopes for this request
-    const scopes = getSlackScopes(options);
+    // Get user scopes for this request
+    const userScopes = getSlackScopes(options);
 
     // Generate state for CSRF protection
     const state = generateState();
@@ -280,16 +276,13 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
     const redirectUri = `${callbackServer.url}/callback`;
 
     // Build authorization URL
+    // Use user_scope (not scope) to get a user token instead of bot token
     const authUrl = new URL(SLACK_AUTH_URL);
     authUrl.searchParams.set('client_id', SLACK_CLIENT_ID);
     authUrl.searchParams.set('redirect_uri', redirectUri);
     authUrl.searchParams.set('state', state);
-    authUrl.searchParams.set('scope', scopes.bot.join(','));
-
-    // Add user scopes if provided
-    if (scopes.user.length > 0) {
-      authUrl.searchParams.set('user_scope', scopes.user.join(','));
-    }
+    // user_scope = authenticate as user, scope = install bot
+    authUrl.searchParams.set('user_scope', userScopes.join(','));
 
     // Open browser for authorization
     await open(authUrl.toString());
@@ -332,8 +325,7 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
       expiresAt: tokens.expiresIn ? Date.now() + tokens.expiresIn * 1000 : undefined,
       teamId: tokens.teamId,
       teamName: tokens.teamName,
-      botUserId: tokens.botUserId,
-      userAccessToken: tokens.userAccessToken,
+      userId: tokens.userId,
     };
   } catch (error) {
     return {

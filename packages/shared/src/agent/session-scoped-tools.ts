@@ -60,7 +60,12 @@ import {
   type GoogleOAuthOptions,
   type GoogleOAuthResult,
 } from '../auth/google-oauth.ts';
-import { inferGoogleServiceFromUrl, type GoogleService } from '../sources/types.ts';
+import {
+  startSlackOAuth,
+  type SlackOAuthOptions,
+  type SlackOAuthResult,
+} from '../auth/slack-oauth.ts';
+import { inferGoogleServiceFromUrl, inferSlackServiceFromUrl, type GoogleService, type SlackService } from '../sources/types.ts';
 import { DOC_REFS } from '../docs/index.ts';
 
 // ============================================================
@@ -1459,6 +1464,165 @@ export function createGmailOAuthTriggerTool(sessionId: string, workspaceId: stri
   return createGoogleOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug);
 }
 
+/**
+ * Create a session-scoped source_slack_oauth_trigger tool.
+ * Handles OAuth authentication for Slack API sources.
+ */
+export function createSlackOAuthTriggerTool(sessionId: string, workspaceId: string, activeAgentSlug?: string) {
+  return tool(
+    'source_slack_oauth_trigger',
+    `Trigger Slack OAuth authentication flow for a Slack API source.
+
+Opens a browser window for the user to sign in with their Slack account and authorize access to the specified Slack workspace.
+After successful authentication, the tokens are stored and the source is marked as authenticated.
+
+**Supported services:**
+- messaging: Send messages, post in channels
+- channels: Read and manage channels
+- users: Read user profiles
+- files: Upload and manage files
+- full: Full workspace access (messaging, channels, users, files, reactions)
+
+**Prerequisites:**
+- The source must have provider 'slack'
+- Slack OAuth must be configured in the build
+
+**Returns:**
+- Success message with the authenticated workspace name
+- Error message if OAuth flow fails or is not configured`,
+    {
+      sourceSlug: z.string().describe('The slug of the Slack API source to authenticate'),
+    },
+    async (args) => {
+      try {
+        // Load the source config (checks agent folder first if activeAgentSlug set, then workspace)
+        const sourceResult = loadSourceConfigWithFallback(workspaceId, args.sourceSlug, activeAgentSlug);
+        if (!sourceResult) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Source '${args.sourceSlug}' not found. Check ~/.craft-agent/workspaces/{workspace}/sources/ for available sources.`,
+            }],
+            isError: true,
+          };
+        }
+        const source = sourceResult.config;
+        const sourceContext = { isAgentScoped: sourceResult.isAgentScoped, agentSlug: sourceResult.agentSlug };
+
+        // Verify this is a Slack source
+        if (source.provider !== 'slack') {
+          const hint = !source.provider
+            ? `Add "provider": "slack" to config.json and retry.`
+            : `This source has provider '${source.provider}'. Use source_oauth_trigger for MCP sources or source_google_oauth_trigger for Google sources.`;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Source '${args.sourceSlug}' is not configured as a Slack API source. ${hint}\n\nCurrent config: ${JSON.stringify(source, null, 2)}`,
+            }],
+            isError: true,
+          };
+        }
+
+        if (source.isAuthenticated) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Source '${args.sourceSlug}' is already authenticated.`,
+            }],
+            isError: false,
+          };
+        }
+
+        // Determine service/scopes from config
+        let service: SlackService | undefined;
+        let userScopes: string[] | undefined;
+        const api = source.api;
+
+        if (api?.slackUserScopes && api.slackUserScopes.length > 0) {
+          // Custom scopes take precedence
+          userScopes = api.slackUserScopes;
+        } else if (api?.slackService) {
+          // Use predefined service scopes
+          service = api.slackService;
+        } else {
+          // Infer from baseUrl (defaults to 'full')
+          service = inferSlackServiceFromUrl(api?.baseUrl) || 'full';
+        }
+
+        const serviceName = service ? `Slack ${service}` : 'Slack';
+
+        // Run the Slack OAuth flow (uses user_scope for user authentication)
+        const options: SlackOAuthOptions = {
+          service,
+          userScopes,
+          appType: 'electron',
+        };
+        const result: SlackOAuthResult = await startSlackOAuth(options);
+
+        if (!result.success) {
+          const callbacks = getSessionScopedToolCallbacks(sessionId);
+          callbacks?.onOAuthError?.(args.sourceSlug, result.error || 'Unknown error');
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `${serviceName} OAuth failed: ${result.error || 'Unknown error'}`,
+            }],
+            isError: true,
+          };
+        }
+
+        // Store the tokens
+        const credentialManager = getCredentialManager();
+        // Extract workspace ID from root path for credential storage
+        const wsId = basename(workspaceId);
+        await credentialManager.set(
+          {
+            type: 'source_oauth',
+            workspaceId: wsId,
+            sourceId: args.sourceSlug,
+          },
+          {
+            value: result.accessToken!,
+            refreshToken: result.refreshToken,
+            expiresAt: result.expiresAt,
+          }
+        );
+
+        // Update source status with workspace info
+        source.isAuthenticated = true;
+        source.connectionStatus = 'connected';
+        source.connectionError = undefined;
+        source.updatedAt = Date.now();
+        saveSourceConfigWithContext(workspaceId, source, sourceContext);
+
+        // Notify success callback
+        const callbacks = getSessionScopedToolCallbacks(sessionId);
+        callbacks?.onOAuthSuccess?.(args.sourceSlug);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `**${serviceName} source '${args.sourceSlug}' authenticated successfully**\n\nConnected to workspace: ${result.teamName}\n\n**Next step:** Run \`source_test({ sourceSlug: "${args.sourceSlug}" })\` to download the icon and verify the connection works.`,
+          }],
+          isError: false,
+        };
+      } catch (error) {
+        const callbacks = getSessionScopedToolCallbacks(sessionId);
+        callbacks?.onOAuthError?.(args.sourceSlug, error instanceof Error ? error.message : 'Unknown error');
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Slack OAuth failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
 // ============================================================
 // Credential Prompt Tool
 // ============================================================
@@ -1846,6 +2010,7 @@ export function getSessionScopedTools(sessionId: string, workspaceId: string, ac
         createSourceTestTool(sessionId, workspaceId, activeAgentSlug),
         createOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug),
         createGoogleOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug),
+        createSlackOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug),
         createCredentialPromptTool(sessionId, workspaceId, activeAgentSlug),
         // Agent tools
         createAgentListTool(sessionId, workspaceId),

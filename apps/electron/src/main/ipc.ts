@@ -129,10 +129,9 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     return sessionManager.getWorkspaces()
   })
 
-  // Create a new workspace at a folder path
+  // Create a new workspace at a folder path (Obsidian-style: folder IS the workspace)
   ipcMain.handle(IPC_CHANNELS.CREATE_WORKSPACE, async (_event, folderPath: string, name: string) => {
-    // Create workspace at {folderPath}/.craft-agent/
-    const rootPath = join(folderPath, '.craft-agent')
+    const rootPath = folderPath
     const workspace = addWorkspace({ name, rootPath })
     // Make it active
     setActiveWorkspace(workspace.id)
