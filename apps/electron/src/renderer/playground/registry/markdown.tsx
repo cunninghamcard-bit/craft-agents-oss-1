@@ -1,6 +1,5 @@
 import type { ComponentEntry } from './types'
-import { Markdown, CollapsibleMarkdownProvider } from '@/components/markdown'
-import { CodeBlock, InlineCode } from '@/components/markdown/CodeBlock'
+import { Markdown, CollapsibleMarkdownProvider, CodeBlock, InlineCode } from '@craft-agent/ui'
 
 const sampleMarkdown = `# Welcome to Markdown
 

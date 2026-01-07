@@ -5,7 +5,7 @@ import type { SettingsTab } from '@/tabs/types'
 import type { AuthType } from '../../../shared/types'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { Spinner } from '@craft-agent/ui'
 import { Check, Eye, EyeOff, ExternalLink, CheckCircle2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 

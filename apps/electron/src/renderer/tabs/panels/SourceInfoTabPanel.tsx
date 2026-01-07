@@ -11,7 +11,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { SourceAvatar } from '@/components/ui/source-avatar'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { Spinner } from '@craft-agent/ui'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Markdown } from '@/components/markdown'
 import { cn } from '@/lib/utils'
@@ -283,12 +283,16 @@ export default function SourceInfoTabPanel({ tab }: SourceInfoTabPanelProps) {
     if (!source) return
 
     const guidePath = `${source.folderPath}/guide.md`
-    const previewId = `source-guide:${sourceSlug}`
 
-    await window.electronAPI.openMarkdownPreview(previewId, {
-      mode: 'readWrite',
-      filePath: guidePath,
-      title: `${source.config.name} - guide.md`,
+    await window.electronAPI.openPreview({
+      mode: 'markdown',
+      sessionId: 'workspace',  // Use 'workspace' as session for non-session previews
+      previewId: `source-guide:${sourceSlug}`,
+      markdown: {
+        mode: 'readWrite',
+        filePath: guidePath,
+        title: `${source.config.name} - guide.md`,
+      },
     })
   }, [source, sourceSlug])
 

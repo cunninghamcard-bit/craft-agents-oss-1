@@ -1,6 +1,6 @@
 import { cn } from "@/lib/utils"
 import { Button, type ButtonProps } from "@/components/ui/button"
-import { Spinner } from "@/components/ui/loading-indicator"
+import { Spinner } from "@craft-agent/ui"
 
 /* =============================================================================
    ONBOARDING PRIMITIVES

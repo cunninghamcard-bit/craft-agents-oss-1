@@ -1,7 +1,7 @@
 import * as React from 'react'
 import type { ComponentEntry } from './types'
-import { TurnCard, type ActivityItem, type ResponseContent } from '@/components/chat/TurnCard'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { TurnCard, type ActivityItem, type ResponseContent, Markdown, CollapsibleMarkdownProvider } from '@craft-agent/ui'
+import { Spinner } from '@craft-agent/ui'
 import {
   AlertTriangle,
   CheckCircle2,
@@ -11,7 +11,6 @@ import {
   ExternalLink,
   Info,
 } from 'lucide-react'
-import { Markdown, CollapsibleMarkdownProvider } from '@/components/markdown'
 import { AnimatedCollapsibleContent } from '@/components/ui/collapsible'
 import { AnimatePresence, motion } from 'motion/react'
 import { cn } from '@/lib/utils'

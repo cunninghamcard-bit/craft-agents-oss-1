@@ -5,26 +5,24 @@ import { SessionManager } from './sessions'
 import { registerIpcHandlers } from './ipc'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
-import { PreviewWindowManager } from './preview-window'
-import { DiffPreviewWindowManager } from './diff-preview-window'
-import { CodePreviewWindowManager } from './code-preview-window'
 import { TerminalPreviewWindowManager } from './terminal-preview-window'
-import { MultiFileDiffWindowManager } from './multi-file-diff-window'
+import { FilePreviewWindowManager } from './file-preview-window'
+import { UnifiedPreviewWindowManager } from './unified-preview-window'
 import { loadWindowState, saveWindowState } from './window-state'
 import { getWorkspaces } from '@craft-agent/shared/config'
 import { initializeDocs } from '@craft-agent/shared/docs'
 import { handleDeepLink } from './deep-link'
 import log, { isDebugMode, mainLog, getLogFilePath } from './logger'
-import { enableDebug } from '@craft-agent/shared/utils'
+import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 
 // Initialize electron-log for renderer process support
 log.initialize()
 
-// Set CRAFT_DEBUG env var so SDK subprocess inherits debug mode
-// Also call enableDebug() since debug.ts module may already be loaded with debugEnabled=false
+// Enable debug/perf in dev mode (running from source)
 if (isDebugMode) {
   process.env.CRAFT_DEBUG = '1'
   enableDebug()
+  setPerfEnabled(true)
 }
 
 // Custom URL scheme for deeplinks (e.g., craftagents://auth-complete)
@@ -32,11 +30,9 @@ const DEEPLINK_SCHEME = 'craftagents'
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
-let previewWindowManager: PreviewWindowManager | null = null
-let diffPreviewWindowManager: DiffPreviewWindowManager | null = null
-let codePreviewWindowManager: CodePreviewWindowManager | null = null
 let terminalPreviewWindowManager: TerminalPreviewWindowManager | null = null
-let multiFileDiffWindowManager: MultiFileDiffWindowManager | null = null
+let filePreviewWindowManager: FilePreviewWindowManager | null = null
+let unifiedPreviewWindowManager: UnifiedPreviewWindowManager | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
@@ -150,28 +146,22 @@ app.whenReady().then(async () => {
     // Initialize window manager
     windowManager = new WindowManager()
 
-    // Initialize preview window manager
-    previewWindowManager = new PreviewWindowManager()
-    previewWindowManager.setWindowManager(windowManager)
-
-    // Initialize diff preview window manager
-    diffPreviewWindowManager = new DiffPreviewWindowManager()
-
-    // Initialize code preview window manager
-    codePreviewWindowManager = new CodePreviewWindowManager()
-
     // Initialize terminal preview window manager
     terminalPreviewWindowManager = new TerminalPreviewWindowManager()
 
-    // Initialize multi-file diff window manager
-    multiFileDiffWindowManager = new MultiFileDiffWindowManager()
+    // Initialize unified file preview window manager (view, diff, multi-diff)
+    filePreviewWindowManager = new FilePreviewWindowManager()
+
+    // Initialize unified preview window manager (all preview types)
+    unifiedPreviewWindowManager = new UnifiedPreviewWindowManager()
+    unifiedPreviewWindowManager.setWindowManager(windowManager)
 
     // Initialize session manager
     sessionManager = new SessionManager()
     sessionManager.setWindowManager(windowManager)
 
     // Register IPC handlers (must happen before window creation)
-    registerIpcHandlers(sessionManager, windowManager, previewWindowManager, diffPreviewWindowManager, codePreviewWindowManager, terminalPreviewWindowManager, multiFileDiffWindowManager)
+    registerIpcHandlers(sessionManager, windowManager, terminalPreviewWindowManager, filePreviewWindowManager, unifiedPreviewWindowManager)
 
     // Create initial windows (restores from saved state or opens first workspace)
     await createInitialWindows()

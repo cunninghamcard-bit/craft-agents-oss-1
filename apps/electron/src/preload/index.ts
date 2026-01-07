@@ -106,6 +106,7 @@ const api: ElectronAPI = {
     electron: process.versions.electron
   }),
   getHomeDir: () => ipcRenderer.invoke(IPC_CHANNELS.GET_HOME_DIR),
+  isDebugMode: () => ipcRenderer.invoke(IPC_CHANNELS.IS_DEBUG_MODE),
 
   // Shell operations
   openUrl: (url: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_URL, url),
@@ -197,21 +198,6 @@ const api: ElectronAPI = {
   readPreferences: () => ipcRenderer.invoke(IPC_CHANNELS.PREFERENCES_READ),
   writePreferences: (content: string) => ipcRenderer.invoke(IPC_CHANNELS.PREFERENCES_WRITE, content),
 
-  // Markdown preview window
-  openMarkdownPreview: (previewId: string, data: import('../shared/types').MarkdownPreviewData) =>
-    ipcRenderer.invoke(IPC_CHANNELS.MARKDOWN_PREVIEW_OPEN, previewId, data),
-  getMarkdownPreviewData: (previewId: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.MARKDOWN_PREVIEW_GET_DATA, previewId),
-  saveMarkdownPreview: (previewId: string, content: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.MARKDOWN_PREVIEW_SAVE, previewId, content),
-  onMarkdownFileSaved: (callback: (data: { filePath: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) => {
-      callback(data)
-    }
-    ipcRenderer.on(IPC_CHANNELS.MARKDOWN_PREVIEW_FILE_SAVED, handler)
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.MARKDOWN_PREVIEW_FILE_SAVED, handler)
-  },
-
   // Diff preview window
   openDiffPreview: (sessionId: string, diffId: string, data: import('../shared/types').DiffPreviewData) =>
     ipcRenderer.invoke(IPC_CHANNELS.DIFF_PREVIEW_OPEN, sessionId, diffId, data),
@@ -237,6 +223,29 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_FILE_DIFF_GET_DATA, sessionId, turnId),
   readFileForDiff: (filePath: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.MULTI_FILE_DIFF_READ_FILE, filePath),
+
+  // Unified file preview window (replaces code/diff/multi-file diff)
+  openFilePreview: (data: import('../shared/types').FilePreviewData) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FILE_PREVIEW_OPEN, data),
+  getFilePreviewData: (sessionId: string, previewId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FILE_PREVIEW_GET_DATA, sessionId, previewId),
+  readFileForPreview: (filePath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FILE_PREVIEW_READ_FILE, filePath),
+
+  // Unified preview window (replaces markdown/file/terminal previews)
+  openPreview: (data: import('../shared/types').PreviewData) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_OPEN, data),
+  getPreviewData: (sessionId: string, previewId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_GET_DATA, sessionId, previewId),
+  savePreview: (sessionId: string, previewId: string, content: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_SAVE, sessionId, previewId, content),
+  onPreviewFileSaved: (callback: (data: { filePath: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) => {
+      callback(data)
+    }
+    ipcRenderer.on(IPC_CHANNELS.PREVIEW_FILE_SAVED, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.PREVIEW_FILE_SAVED, handler)
+  },
 
   // Session Drafts (persisted input text)
   getDraft: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRAFTS_GET, sessionId),

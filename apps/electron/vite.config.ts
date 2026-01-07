@@ -15,22 +15,25 @@ export default defineConfig({
         main: resolve(__dirname, 'src/renderer/index.html'),
         playground: resolve(__dirname, 'src/renderer/playground.html'),
         preview: resolve(__dirname, 'src/renderer/preview.html'),
-        'diff-preview': resolve(__dirname, 'src/renderer/diff-preview.html'),
-        'code-preview': resolve(__dirname, 'src/renderer/code-preview.html'),
         'terminal-preview': resolve(__dirname, 'src/renderer/terminal-preview.html'),
-        'multi-file-diff': resolve(__dirname, 'src/renderer/multi-file-diff.html'),
+        'file-preview': resolve(__dirname, 'src/renderer/file-preview.html'),
       }
     }
   },
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src/renderer'),
-      '@config': resolve(__dirname, '../../packages/shared/src/config')
+      '@config': resolve(__dirname, '../../packages/shared/src/config'),
+      // Force all React imports to use the Electron app's React (v19)
+      // This prevents the "multiple React copies" error when importing from @craft-agent/ui
+      'react': resolve(__dirname, 'node_modules/react'),
+      'react-dom': resolve(__dirname, 'node_modules/react-dom'),
     },
     dedupe: ['react', 'react-dom']
   },
   optimizeDeps: {
-    include: ['react', 'react-dom', 'jotai']
+    include: ['react', 'react-dom', 'jotai'],
+    exclude: ['@craft-agent/ui']
   },
   server: {
     port: 5173,

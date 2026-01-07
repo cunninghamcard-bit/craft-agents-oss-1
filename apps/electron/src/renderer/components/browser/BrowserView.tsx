@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react'
 import { Input } from '@/components/ui/input'
 import { Globe, AlertCircle } from 'lucide-react'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { Spinner } from '@craft-agent/ui'
 
 interface BrowserViewProps {
   url: string | null

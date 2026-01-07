@@ -510,6 +510,7 @@ export const IPC_CHANNELS = {
   // System
   GET_VERSIONS: 'system:versions',
   GET_HOME_DIR: 'system:homeDir',
+  IS_DEBUG_MODE: 'system:isDebugMode',
 
   // Shell operations (open external URLs/files)
   OPEN_URL: 'shell:openUrl',
@@ -594,12 +595,6 @@ export const IPC_CHANNELS = {
   WORKSPACE_READ_IMAGE: 'workspace:readImage',
   WORKSPACE_WRITE_IMAGE: 'workspace:writeImage',
 
-  // Markdown preview window
-  MARKDOWN_PREVIEW_OPEN: 'markdownPreview:open',
-  MARKDOWN_PREVIEW_GET_DATA: 'markdownPreview:getData',
-  MARKDOWN_PREVIEW_SAVE: 'markdownPreview:save',
-  MARKDOWN_PREVIEW_FILE_SAVED: 'markdownPreview:fileSaved', // Broadcast: { filePath: string }
-
   // Diff preview window
   DIFF_PREVIEW_OPEN: 'diffPreview:open',
   DIFF_PREVIEW_GET_DATA: 'diffPreview:getData',
@@ -616,6 +611,18 @@ export const IPC_CHANNELS = {
   MULTI_FILE_DIFF_OPEN: 'multiFileDiff:open',
   MULTI_FILE_DIFF_GET_DATA: 'multiFileDiff:getData',
   MULTI_FILE_DIFF_READ_FILE: 'multiFileDiff:readFile',
+
+  // Unified file preview window (replaces code/diff/multi-file diff)
+  FILE_PREVIEW_OPEN: 'filePreview:open',
+  FILE_PREVIEW_GET_DATA: 'filePreview:getData',
+  FILE_PREVIEW_READ_FILE: 'filePreview:readFile',
+
+  // Unified preview window (replaces markdown/file/terminal previews)
+  PREVIEW_OPEN: 'preview:open',
+  PREVIEW_GET_DATA: 'preview:getData',
+  PREVIEW_SAVE: 'preview:save',
+  PREVIEW_FILE_SAVED: 'preview:fileSaved', // Broadcast: { filePath: string }
+  PREVIEW_READ_FILE: 'preview:readFile',
 
   // Workspace settings (per-workspace configuration)
   WORKSPACE_SETTINGS_GET: 'workspaceSettings:get',
@@ -706,6 +713,80 @@ export interface MultiFileDiffData {
   focusedChangeId?: string
 }
 
+// ============================================
+// Unified File Preview Types
+// ============================================
+
+/**
+ * File preview mode - determines which viewer to show
+ */
+export type FilePreviewMode = 'view' | 'diff' | 'multi-diff'
+
+/**
+ * View mode data - for Read/Write tool results
+ */
+export interface FilePreviewViewData {
+  filePath: string
+  content: string
+  language?: string
+  /** 'read' for Read tool, 'write' for Write tool */
+  toolType: 'read' | 'write'
+  /** File metadata from Read tool */
+  startLine?: number
+  numLines?: number
+  totalLines?: number
+  /** Error message if the operation failed */
+  error?: string
+}
+
+/**
+ * Diff mode data - for single Edit tool result
+ */
+export interface FilePreviewDiffData {
+  filePath: string
+  original: string
+  modified: string
+  language?: string
+  /** Error message if the edit failed */
+  error?: string
+}
+
+/**
+ * Multi-diff mode data - for multiple edits/writes in a turn
+ */
+export interface FilePreviewMultiDiffData {
+  turnId: string
+  changes: FileChange[]
+  /** If true (default), group changes by file. If false, show each change separately */
+  consolidated?: boolean
+  /** ID of the change to auto-focus (only used when consolidated=false) */
+  focusedChangeId?: string
+}
+
+/**
+ * Unified file preview data - supports view, diff, and multi-diff modes
+ * Uses discriminated union for type-safe mode handling
+ */
+export type FilePreviewData =
+  | {
+      mode: 'view'
+      sessionId: string
+      previewId: string
+      view: FilePreviewViewData
+    }
+  | {
+      mode: 'diff'
+      sessionId: string
+      previewId: string
+      diff: FilePreviewDiffData
+    }
+  | {
+      mode: 'multi-diff'
+      sessionId: string
+      previewId: string
+      multiDiff: FilePreviewMultiDiffData
+    }
+
 /**
  * Data for markdown preview window
  * - readOnly mode: view-only, no save button
@@ -736,6 +817,56 @@ export type MarkdownPreviewData =
       /** Optional title for the window */
       title?: string
     }
+
+// ============================================
+// Unified Preview Window Types
+// ============================================
+
+/**
+ * Unified preview data - supports all preview modes in a single window
+ * Uses discriminated union for type-safe mode handling
+ */
+export type PreviewData =
+  | {
+      /** Markdown preview - view or edit markdown content */
+      mode: 'markdown'
+      sessionId: string
+      previewId: string
+      markdown: MarkdownPreviewData
+    }
+  | {
+      /** Code view - Read/Write tool results */
+      mode: 'view'
+      sessionId: string
+      previewId: string
+      view: FilePreviewViewData
+    }
+  | {
+      /** Diff view - single Edit tool result */
+      mode: 'diff'
+      sessionId: string
+      previewId: string
+      diff: FilePreviewDiffData
+    }
+  | {
+      /** Multi-diff view - multiple edits/writes in a turn */
+      mode: 'multi-diff'
+      sessionId: string
+      previewId: string
+      multiDiff: FilePreviewMultiDiffData
+    }
+  | {
+      /** Terminal view - Bash/Grep/Glob tool output */
+      mode: 'terminal'
+      sessionId: string
+      previewId: string
+      terminal: TerminalPreviewData
+    }
+
+/**
+ * Preview mode type for discriminated union
+ */
+export type PreviewMode = PreviewData['mode']
 
 // Re-import types for ElectronAPI
 import type { Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@craft-agent/core/types';
@@ -814,6 +945,7 @@ export interface ElectronAPI {
   // System
   getVersions(): { node: string; chrome: string; electron: string }
   getHomeDir(): Promise<string>
+  isDebugMode(): Promise<boolean>
 
   // Shell operations
   openUrl(url: string): Promise<void>
@@ -874,12 +1006,6 @@ export interface ElectronAPI {
   readPreferences(): Promise<{ content: string; exists: boolean }>
   writePreferences(content: string): Promise<{ success: boolean; error?: string }>
 
-  // Markdown preview window
-  openMarkdownPreview(previewId: string, data: MarkdownPreviewData): Promise<void>
-  getMarkdownPreviewData(previewId: string): Promise<{ data: MarkdownPreviewData; content: string } | null>
-  saveMarkdownPreview(previewId: string, content: string): Promise<void>
-  onMarkdownFileSaved(callback: (data: { filePath: string }) => void): () => void
-
   // Diff preview window
   openDiffPreview(sessionId: string, diffId: string, data: DiffPreviewData): Promise<void>
   getDiffPreviewData(sessionId: string, diffId: string): Promise<DiffPreviewData | null>
@@ -896,6 +1022,17 @@ export interface ElectronAPI {
   openMultiFileDiff(sessionId: string, turnId: string, data: MultiFileDiffData): Promise<void>
   getMultiFileDiffData(sessionId: string, turnId: string): Promise<MultiFileDiffData | null>
   readFileForDiff(filePath: string): Promise<string | null>
+
+  // Unified file preview window (replaces code/diff/multi-file diff)
+  openFilePreview(data: FilePreviewData): Promise<void>
+  getFilePreviewData(sessionId: string, previewId: string): Promise<FilePreviewData | null>
+  readFileForPreview(filePath: string): Promise<string | null>
+
+  // Unified preview window (replaces markdown/file/terminal previews)
+  openPreview(data: PreviewData): Promise<void>
+  getPreviewData(sessionId: string, previewId: string): Promise<PreviewData | null>
+  savePreview(sessionId: string, previewId: string, content: string): Promise<void>
+  onPreviewFileSaved(callback: (data: { filePath: string }) => void): () => void
 
   // Session Drafts (persisted input text)
   getDraft(sessionId: string): Promise<string | null>

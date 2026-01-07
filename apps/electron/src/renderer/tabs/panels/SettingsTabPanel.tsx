@@ -36,7 +36,7 @@ import {
   Lock,
   Unlock,
 } from 'lucide-react'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { Spinner } from '@craft-agent/ui'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import type { Tab } from '../types'
 import type { AuthType, PermissionMode } from '../../../shared/types'

@@ -2,6 +2,7 @@ import { BrowserWindow, shell, nativeTheme } from 'electron'
 import { windowLog } from './logger'
 import { join } from 'path'
 import { IPC_CHANNELS, type TerminalPreviewData } from '../shared/types'
+import { getBackgroundColor } from '@config/theme'
 
 // Vite dev server URL for hot reload
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
@@ -46,8 +47,7 @@ export class TerminalPreviewWindowManager {
       return existing.window
     }
 
-    // Terminal windows use dark background
-    const backgroundColor = '#1a1a1a'
+    const backgroundColor = getBackgroundColor(nativeTheme.shouldUseDarkColors)
 
     // Truncate command for title
     const cmdPreview = data.command.length > 50

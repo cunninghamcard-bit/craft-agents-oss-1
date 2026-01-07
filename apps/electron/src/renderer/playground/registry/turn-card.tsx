@@ -1,6 +1,6 @@
 import type { ComponentEntry } from './types'
 import { useState, useEffect, type ReactNode } from 'react'
-import { TurnCard, type ActivityItem, type ResponseContent, type TodoItem } from '@/components/chat/TurnCard'
+import { TurnCard, type ActivityItem, type ResponseContent, type TodoItem } from '@craft-agent/ui'
 
 /** Wrapper with padding for playground preview */
 function PaddedWrapper({ children }: { children: ReactNode }) {

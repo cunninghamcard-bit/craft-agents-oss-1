@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { Bot, Wrench, AlertCircle, CheckCircle2, ChevronRight, Lock } from "lucide-react"
 import { McpIcon } from "@/components/icons/McpIcon"
-import { Spinner } from "@/components/ui/loading-indicator"
+import { Spinner } from "@craft-agent/ui"
 import {
   Dialog,
   DialogContent,

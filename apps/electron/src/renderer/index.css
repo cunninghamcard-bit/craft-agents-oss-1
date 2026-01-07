@@ -3,6 +3,7 @@
 
 /* Tell Tailwind where to scan for utility classes */
 @source "../**/*.{tsx,ts,jsx,js}";
+@source "../../../../packages/ui/src/**/*.{tsx,ts,jsx,js}";
 
 /* =============================================================================
    CRAFT AGENT THEME - 6 Color System
@@ -28,14 +29,15 @@
   --background: oklch(0.98 0.003 265);
   --foreground: oklch(0.185 0.01 270);
   --foreground-rgb: 38, 36, 42;             /* RGB for shadow borders */
-  --accent: oklch(0.58 0.22 293);           /* purple - brand, Auto mode */
+  --accent: oklch(0.62 0.13 293);           /* purple - brand, Auto mode */
   --accent-rgb: 104, 78, 133;               /* darkened RGB for shadow-tinted (70% of accent) */
   --info: oklch(0.75 0.16 70);              /* amber - warnings, Ask mode */
   --success: oklch(0.55 0.17 145);          /* green - connected, checkmarks */
   --destructive: oklch(0.58 0.24 28);       /* red - errors, failed */
 
   /* === MIX VARIANTS (solid interpolation toward background) === */
-  /* Use -3, -5, -10, -20, ..., -90, -95 for solid colors (e.g., separators, Explore mode) */
+  /* Use -2, -3, -5, -10, -20, ..., -90, -95 for solid colors (e.g., separators, Explore mode) */
+  --foreground-2: color-mix(in oklch, var(--foreground) 2%, var(--background));
   --foreground-3: color-mix(in oklch, var(--foreground) 3%, var(--background));
   --foreground-5: color-mix(in oklch, var(--foreground) 5%, var(--background));
   --foreground-10: color-mix(in oklch, var(--foreground) 10%, var(--background));
@@ -79,8 +81,8 @@
   --step-content-gap: 1.5rem;
   --step-actions-margin: 2rem;
 
-  /* Fonts */
-  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* Fonts - System fonts as default, Inter via data-font="inter" */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-serif: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --font-default: var(--font-sans);
@@ -99,13 +101,14 @@
   --background: oklch(0.2 0.005 270);
   --foreground: oklch(0.92 0.005 270);
   --foreground-rgb: 227, 226, 229;           /* RGB for shadow borders */
-  --accent: oklch(0.65 0.20 293);            /* brighter purple in dark */
+  --accent: oklch(0.68 0.13 293);            /* brighter purple in dark */
   --accent-rgb: 118, 92, 147;                /* darkened RGB for shadow-tinted (70% of accent) */
   --info: oklch(0.70 0.16 70);               /* amber */
   --success: oklch(0.60 0.17 145);           /* green */
   --destructive: oklch(0.70 0.19 22);        /* brighter red in dark */
 
   /* === MIX VARIANTS === */
+  --foreground-2: color-mix(in oklch, var(--foreground) 2%, var(--background));
   --foreground-3: color-mix(in oklch, var(--foreground) 3%, var(--background));
   --foreground-5: color-mix(in oklch, var(--foreground) 5%, var(--background));
   --foreground-10: color-mix(in oklch, var(--foreground) 10%, var(--background));
@@ -137,13 +140,13 @@
   --md-counters: var(--foreground-50);
 }
 
-/* System Font - Uses native system fonts for a more platform-native look
-   - macOS: SF Pro (San Francisco)
-   - Windows: Segoe UI
-   - Linux: System default sans-serif */
-html[data-font="system"] {
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+/* Inter Font - Opt-in via data-font="inter" attribute
+   Loaded from Google Fonts in index.html with optical sizing (opsz) axis */
+html[data-font="inter"] {
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --font-default: var(--font-sans);
+  font-optical-sizing: auto;
+  font-feature-settings: "cv01", "cv02", "cv03", "cv04", "case";
 }
 
 /* Theme integration for Tailwind v4 */
@@ -157,6 +160,7 @@ html[data-font="system"] {
   --color-destructive: var(--destructive);
 
   /* === MIX VARIANTS (solid interpolation) === */
+  --color-foreground-2: var(--foreground-2);
   --color-foreground-3: var(--foreground-3);
   --color-foreground-5: var(--foreground-5);
   --color-foreground-10: var(--foreground-10);

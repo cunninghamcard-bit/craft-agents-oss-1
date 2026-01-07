@@ -4,7 +4,8 @@ import { Trash2, Pencil, MoreHorizontal, ExternalLink, Flag, FlagOff, MailOpen, 
 import { toast } from "sonner"
 
 import { cn, isHexColor } from "@/lib/utils"
-import { Spinner } from "@/components/ui/loading-indicator"
+import { rendererPerf } from "@/lib/perf"
+import { Spinner } from "@craft-agent/ui"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Button } from "@/components/ui/button"
@@ -232,6 +233,8 @@ function SessionItem({
   const currentTodoState = getSessionTodoState(item)
 
   const handleClick = (e: React.MouseEvent) => {
+    // Start perf tracking for session switch
+    rendererPerf.startSessionSwitch(item.id)
     // Cmd+Click (Mac) or Ctrl+Click (Windows/Linux) opens in new tab
     const forceNewTab = e.metaKey || e.ctrlKey
     onSelect(forceNewTab)
@@ -294,7 +297,9 @@ function SessionItem({
         <button
           {...itemProps}
           className={cn(
-            "flex w-full items-start gap-2 pl-2 pr-4 py-3 text-left text-sm transition-all outline-none rounded-[8px]",
+            "flex w-full items-start gap-2 pl-2 pr-4 py-3 text-left text-sm outline-none rounded-[8px]",
+            // Fast hover transition (75ms vs default 150ms), selection is instant
+            "transition-[background-color] duration-75",
             isSelected
               ? "bg-foreground/5 hover:bg-foreground/7"
               : "hover:bg-foreground/2"
@@ -449,7 +454,7 @@ function SessionItem({
  */
 function DateHeader({ label }: { label: string }) {
   return (
-    <div className="sticky top-0 z-10 bg-background px-4 py-2">
+    <div className="sticky top-0 z-20 bg-background px-4 mr-2 py-2">
       <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
         {label}
       </span>
@@ -617,11 +622,6 @@ export function SessionList({
     return deleted
   }, [onDelete])
 
-  // Handle Delete key
-  const handleDelete = useCallback((item: Session) => {
-    handleDeleteWithToast(item.id)
-  }, [handleDeleteWithToast])
-
   // Roving tabindex for keyboard navigation
   const {
     activeIndex,
@@ -635,7 +635,6 @@ export function SessionList({
     wrap: true,
     onActiveChange: handleActiveChange,
     onEnter: handleEnter,
-    onDelete: handleDelete,
     initialIndex: selectedIndex >= 0 ? selectedIndex : 0,
     enabled: isFocused,
   })
@@ -655,11 +654,8 @@ export function SessionList({
     }
   }, [isFocused, focusActiveItem, flatItems.length, searchActive])
 
-  // Handle single-key shortcuts when focused
-  // Todo state shortcuts: T (todo), P (in-progress), V (needs-review), D (done), X (cancelled)
-  // Other shortcuts: C (toggle complete), R (rename)
-  const handleKeyDown = useCallback((e: React.KeyboardEvent, item: Session) => {
-    // Handle arrow keys for zone navigation (no modifiers required)
+  // Arrow key shortcuts for zone navigation
+  const handleKeyDown = useCallback((e: React.KeyboardEvent, _item: Session) => {
     if (e.key === 'ArrowLeft') {
       e.preventDefault()
       focusZone('sidebar')
@@ -670,40 +666,7 @@ export function SessionList({
       focusZone('chat')
       return
     }
-
-    // Only handle letter shortcuts when no modifiers
-    if (e.metaKey || e.ctrlKey || e.altKey) return
-
-    const key = e.key.toLowerCase()
-
-    // Todo state shortcuts - dynamically built from todoStates
-    const stateShortcuts: Record<string, TodoStateId> = {}
-    todoStates.forEach(state => {
-      if (state.shortcut) {
-        stateShortcuts[state.shortcut.toLowerCase()] = state.id
-      }
-    })
-
-    if (key in stateShortcuts) {
-      e.preventDefault()
-      onTodoStateChange(item.id, stateShortcuts[key])
-      return
-    }
-
-    // Other shortcuts
-    switch (key) {
-      case 'c':
-        e.preventDefault()
-        // Toggle between done and todo
-        const newState = item.todoState === 'done' || item.todoState === 'cancelled' ? 'todo' : 'done'
-        onTodoStateChange(item.id, newState)
-        break
-      case 'r':
-        e.preventDefault()
-        handleRenameClick(item.id, getSessionTitle(item))
-        break
-    }
-  }, [onTodoStateChange, focusZone, todoStates])
+  }, [focusZone])
 
   const handleRenameClick = (sessionId: string, currentName: string) => {
     setRenameSessionId(sessionId)

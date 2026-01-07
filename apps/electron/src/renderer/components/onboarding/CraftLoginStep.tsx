@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { ExternalLink, CheckCircle2, XCircle } from "lucide-react"
-import { Spinner } from "@/components/ui/loading-indicator"
+import { Spinner } from "@craft-agent/ui"
 import { StepFormLayout, BackButton, ContinueButton, type StepIconVariant } from "./primitives"
 import { CraftAppIcon } from "@/components/icons/CraftAppIcon"
 

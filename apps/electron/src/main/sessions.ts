@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { join } from 'path'
 import { rm, readFile } from 'fs/promises'
-import { CraftAgent, type AgentEvent, setPermissionMode, type PermissionMode, unregisterSessionScopedToolCallbacks } from '@craft-agent/shared/agent'
+import { CraftAgent, type AgentEvent, setPermissionMode, type PermissionMode, unregisterSessionScopedToolCallbacks, AbortReason } from '@craft-agent/shared/agent'
 import { sessionLog, isDebugMode, getLogFilePath } from './logger'
 import { createSdkMcpServer } from '@anthropic-ai/claude-agent-sdk'
 import type { WindowManager } from './window-manager'
@@ -43,7 +43,7 @@ import { FolderAgentManager } from '@craft-agent/shared/agents'
 import type { SubAgentDefinition, AgentStatus, AgentActivateOptions } from '@craft-agent/shared/agents'
 import { AgentStateManager } from '@craft-agent/shared/agents'
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, IPC_CHANNELS, generateMessageId } from '../shared/types'
-import { generateSessionTitle, formatPathsToRelative, formatToolInputPaths } from '@craft-agent/shared/utils'
+import { generateSessionTitle, formatPathsToRelative, formatToolInputPaths, perf } from '@craft-agent/shared/utils'
 import { DEFAULT_MODEL } from '@craft-agent/shared/config'
 
 /**
@@ -59,6 +59,7 @@ export const AGENT_FLAGS = {
  * Handles credential loading and server building in one step.
  */
 async function buildServersFromSources(sources: LoadedSource[]) {
+  const span = perf.span('sources.buildServers', { count: sources.length })
   const credManager = getSourceCredentialManager()
   const serverBuilder = getSourceServerBuilder()
 
@@ -70,6 +71,7 @@ async function buildServersFromSources(sources: LoadedSource[]) {
       credential: await credManager.getApiCredential(source),
     }))
   )
+  span.mark('credentials.loaded')
 
   // Build token getter for OAuth sources (Google APIs, etc.)
   const getTokenForSource = (source: LoadedSource) => {
@@ -83,7 +85,12 @@ async function buildServersFromSources(sources: LoadedSource[]) {
     return undefined
   }
 
-  return serverBuilder.buildAll(sourcesWithCreds, getTokenForSource)
+  const result = await serverBuilder.buildAll(sourcesWithCreds, getTokenForSource)
+  span.mark('servers.built')
+  span.setMetadata('mcpCount', Object.keys(result.mcpServers).length)
+  span.setMetadata('apiCount', Object.keys(result.apiServers).length)
+  span.end()
+  return result
 }
 
 interface ManagedSession {
@@ -944,6 +951,7 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
    */
   private async getOrCreateAgent(managed: ManagedSession): Promise<CraftAgent> {
     if (!managed.agent) {
+      const end = perf.start('agent.create', { sessionId: managed.id })
       const config = loadStoredConfig()
       managed.agent = new CraftAgent({
         workspace: managed.workspace,
@@ -1036,11 +1044,11 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
             message: planMessage,
           }, managed.workspace.id)
 
-          // Interrupt execution - plan presentation is a stopping point
+          // Force-abort execution - plan presentation is a stopping point
           // The user needs to review and respond before continuing
           if (managed.isProcessing && managed.agent) {
-            sessionLog.info(`Interrupting after plan submission for session ${managed.id}`)
-            managed.agent.interrupt()
+            sessionLog.info(`Force-aborting after plan submission for session ${managed.id}`)
+            managed.agent.forceAbort(AbortReason.PlanSubmitted)
             managed.isProcessing = false
             managed.abortController = undefined
 
@@ -1096,6 +1104,7 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
         setPermissionMode(managed.id, managed.permissionMode)
         sessionLog.info(`Applied permission mode '${managed.permissionMode}' to agent for session ${managed.id}`)
       }
+      end()
     }
     return managed.agent
   }
@@ -1345,13 +1354,11 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
       throw new Error(`Session ${sessionId} not found`)
     }
 
-    // If currently processing, interrupt and queue the new message
+    // If currently processing, queue the message and interrupt
+    // The SDK will send a 'complete' event which triggers onProcessingStopped
+    // onProcessingStopped will then process the queued message
     if (managed.isProcessing) {
-      sessionLog.info(`Session ${sessionId} is processing, interrupting and queueing message`)
-
-      // Interrupt current processing
-      managed.agent?.interrupt()
-      managed.abortController?.abort()
+      sessionLog.info(`Session ${sessionId} is processing, queueing message and interrupting`)
 
       // Create user message for queued state (so UI can show it)
       const queuedMessage: Message = {
@@ -1375,6 +1382,11 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
         message: queuedMessage,
         status: 'queued'
       }, managed.workspace.id)
+
+      // Force-abort via SDK's AbortController - immediately stops processing
+      // This sends SIGTERM to subprocess (5s timeout, then SIGKILL)
+      // The for-await loop will throw AbortError, caught by our handler
+      managed.agent?.forceAbort(AbortReason.Redirect)
 
       return
     }
@@ -1417,8 +1429,12 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
     // This prevents the finally block from clobbering state when a follow-up message arrives
     const myAbortController = managed.abortController
 
+    // Start perf span for entire sendMessage flow
+    const sendSpan = perf.span('session.sendMessage', { sessionId, hasAgent: !!managed.agentId })
+
     // Get or create the agent (lazy loading)
     const agent = await this.getOrCreateAgent(managed)
+    sendSpan.mark('agent.ready')
 
     // If session has an agent that hasn't been activated yet, activate via AgentStateManager
     // This is the source of truth for agent state - ensures proper extraction, auth handling, etc.
@@ -1487,12 +1503,14 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
       } else {
         sessionLog.warn(`Could not create AgentStateManager for session ${sessionId}`)
       }
+      sendSpan.mark('agent.activated')
     }
 
     // Always set all sources for context (even if none are enabled)
     const workspaceRootPath = managed.workspace.rootPath
     const allSources = loadWorkspaceSources(workspaceRootPath)
     agent.setAllSources(allSources)
+    sendSpan.mark('sources.loaded')
 
     // Apply source servers if any are enabled
     if (managed.enabledSourceSlugs?.length) {
@@ -1516,6 +1534,7 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
         agent.setSourceServers(managed.sourceMcpServers || {}, managed.sourceApiServers || {}, intendedSlugs)
         sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
       }
+      sendSpan.mark('servers.applied')
     }
 
     // Auto-setup: prepend setup context on first message if sources need auth
@@ -1544,6 +1563,7 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
       if (attachments?.length) {
         sessionLog.info('Attachments:', attachments.length)
       }
+      sendSpan.mark('chat.starting')
       const chatIterator = agent.chat(message, attachments)
       sessionLog.info('Got chat iterator, starting iteration...')
 
@@ -1558,11 +1578,8 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
             sessionLog.info('Got event:', event.type)
           }
         }
-        // Check if cancelled - break immediately (interrupted event already sent by cancelProcessing)
-        if (managed.abortController?.signal.aborted || !managed.isProcessing) {
-          sessionLog.info('Aborted, breaking out of event loop')
-          break
-        }
+
+        // Process the event first
         this.processEvent(managed, event)
 
         // Capture SDK session ID after first event (for conversation continuity)
@@ -1573,65 +1590,75 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
             sessionLog.info(`Captured SDK session ID: ${sdkId}`)
           }
         }
-      }
 
-      sessionLog.info('Chat completed')
-    } catch (error) {
-      sessionLog.error('Error in chat:', error)
-      sessionLog.error('Error message:', error instanceof Error ? error.message : String(error))
-      sessionLog.error('Error stack:', error instanceof Error ? error.stack : 'No stack')
-      this.sendEvent({
-        type: 'error',
-        sessionId,
-        error: error instanceof Error ? error.message : 'Unknown error'
-      }, managed.workspace.id)
-    } finally {
-      // Only clean up state if WE are still the active request
-      // This prevents race conditions when a follow-up message supersedes this one
-      if (managed.abortController === myAbortController) {
-        managed.isProcessing = false
-        managed.abortController = undefined
-        // Clear parent tool tracking (should be empty after normal completion, but ensures clean state)
-        managed.parentToolStack = []
-        managed.toolToParentMap.clear()
-        managed.pendingTextParent = undefined
+        // Handle complete event - SDK always sends this (even after interrupt)
+        // This is the central place where processing ends
+        if (event.type === 'complete') {
+          sessionLog.info('Chat completed via complete event')
+          sendSpan.mark('chat.complete')
+          sendSpan.end()
+          this.onProcessingStopped(sessionId, 'complete')
+          return  // Exit function, skip finally block (onProcessingStopped handles cleanup)
+        }
 
-        // Check if there are queued messages to process
-        if (managed.messageQueue.length > 0) {
-          const next = managed.messageQueue.shift()!
-          sessionLog.info(`Processing queued message for session ${sessionId}`)
-
-          // Emit user_message with 'processing' status so UI can update
-          if (next.messageId) {
-            // Find the message that was already added to managed.messages when queued
-            const existingMessage = managed.messages.find(m => m.id === next.messageId)
-            if (existingMessage) {
-              this.sendEvent({
-                type: 'user_message',
-                sessionId,
-                message: existingMessage,
-                status: 'processing'
-              }, managed.workspace.id)
-            }
-          }
-
-          // Defer to next tick to allow current query cleanup to complete
-          // This prevents race conditions with SDK session resume after interrupt
-          setImmediate(() => {
-            this.sendMessage(sessionId, next.message, next.attachments, next.storedAttachments, next.options, next.messageId)
-              .catch(err => {
-                sessionLog.error('Error processing queued message:', err)
-                this.sendEvent({ type: 'error', sessionId, error: err instanceof Error ? err.message : 'Unknown error' }, managed.workspace.id)
-                this.sendEvent({ type: 'complete', sessionId }, managed.workspace.id)
-              })
-          })
-        } else {
-          // No queued messages - send complete event
-          this.sendEvent({ type: 'complete', sessionId }, managed.workspace.id)
+        // Check if cancelled via cancelProcessing (Stop button)
+        // The SDK will still send a complete event, but we break early here
+        // since cancelProcessing already cleared the state
+        if (!managed.isProcessing) {
+          sessionLog.info('Processing flag cleared, breaking out of event loop')
+          break
         }
       }
-      // Always persist (for aborted messages)
-      this.persistSession(managed)
+
+      // Loop exited without complete event (shouldn't happen normally)
+      sessionLog.info('Chat loop exited unexpectedly')
+    } catch (error) {
+      // Check if this is an abort error (expected when interrupted)
+      const isAbortError = error instanceof Error && (
+        error.name === 'AbortError' ||
+        error.message === 'Request was aborted.' ||
+        error.message.includes('aborted')
+      )
+
+      if (isAbortError) {
+        // Extract abort reason (passed to AbortController.abort())
+        const reason = (error as DOMException).cause as AbortReason | undefined
+
+        sessionLog.info(`Chat aborted (reason: ${reason || 'unknown'})`)
+        sendSpan.mark('chat.aborted')
+        sendSpan.setMetadata('abort_reason', reason || 'unknown')
+        sendSpan.end()
+
+        // Only show "Interrupted" for user-initiated stops
+        // Plan submissions and redirects handle their own cleanup
+        if (reason === AbortReason.UserStop || reason === undefined) {
+          this.onProcessingStopped(sessionId, 'interrupted')
+        }
+      } else {
+        sessionLog.error('Error in chat:', error)
+        sessionLog.error('Error message:', error instanceof Error ? error.message : String(error))
+        sessionLog.error('Error stack:', error instanceof Error ? error.stack : 'No stack')
+        sendSpan.mark('chat.error')
+        sendSpan.setMetadata('error', error instanceof Error ? error.message : String(error))
+        sendSpan.end()
+        this.sendEvent({
+          type: 'error',
+          sessionId,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        }, managed.workspace.id)
+        // Handle error via centralized handler
+        this.onProcessingStopped(sessionId, 'error')
+      }
+    } finally {
+      // Only handle cleanup for unexpected exits (loop break without complete event)
+      // Normal completion returns early after calling onProcessingStopped
+      // Errors are handled in catch block
+      if (managed.isProcessing && managed.abortController === myAbortController) {
+        sessionLog.info('Finally block cleanup - unexpected exit')
+        sendSpan.mark('chat.unexpected_exit')
+        sendSpan.end()
+        this.onProcessingStopped(sessionId, 'interrupted')
+      }
     }
   }
 
@@ -1643,17 +1670,16 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
 
     sessionLog.info('Cancelling processing for session:', sessionId, silent ? '(silent)' : '')
 
-    // Call agent.interrupt() directly like TUI does - this signals the SDK
+    // Clear queue - user explicitly stopped, don't process queued messages
+    managed.messageQueue = []
+
+    // Force-abort via AbortController - immediately stops processing
     if (managed.agent) {
-      managed.agent.interrupt()
+      managed.agent.forceAbort(AbortReason.UserStop)
     }
 
-    // Also abort the controller as backup
-    if (managed.abortController) {
-      managed.abortController.abort()
-    }
-
-    // Set state immediately (no polling) - just like TUI's interruptedRef pattern
+    // Set state immediately - the SDK will send a complete event
+    // but since we cleared isProcessing, onProcessingStopped won't be called again
     managed.isProcessing = false
     managed.abortController = undefined
 
@@ -1666,7 +1692,7 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
     // Silent mode is used when redirecting (sending new message while processing)
     if (!silent) {
       const interruptedMessage: Message = {
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        id: generateMessageId(),
         role: 'info',
         content: 'Response interrupted',
         timestamp: Date.now(),
@@ -1678,8 +1704,93 @@ Use oauth_trigger for OAuth sources, credential_prompt for API key/bearer token 
       this.sendEvent({ type: 'interrupted', sessionId }, managed.workspace.id)
     }
 
+    // Emit complete since we're stopping and queue is cleared
+    this.sendEvent({ type: 'complete', sessionId }, managed.workspace.id)
+
     // Persist session
     this.persistSession(managed)
+  }
+
+  /**
+   * Central handler for when processing stops (any reason).
+   * Single source of truth for cleanup and queue processing.
+   *
+   * @param sessionId - The session that stopped processing
+   * @param reason - Why processing stopped ('complete' | 'interrupted' | 'error')
+   */
+  private onProcessingStopped(
+    sessionId: string,
+    reason: 'complete' | 'interrupted' | 'error'
+  ): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return
+
+    sessionLog.info(`Processing stopped for session ${sessionId}: ${reason}`)
+
+    // 1. Cleanup state
+    managed.isProcessing = false
+    managed.abortController = undefined
+    managed.parentToolStack = []
+    managed.toolToParentMap.clear()
+    managed.pendingTextParent = undefined
+
+    // 2. Check queue and process or complete
+    if (managed.messageQueue.length > 0) {
+      // Has queued messages - process next
+      this.processNextQueuedMessage(sessionId)
+    } else {
+      // No queue - emit complete to UI
+      this.sendEvent({ type: 'complete', sessionId }, managed.workspace.id)
+    }
+
+    // 3. Always persist
+    this.persistSession(managed)
+  }
+
+  /**
+   * Process the next message in the queue.
+   * Called by onProcessingStopped when queue has messages.
+   */
+  private processNextQueuedMessage(sessionId: string): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed || managed.messageQueue.length === 0) return
+
+    const next = managed.messageQueue.shift()!
+    sessionLog.info(`Processing queued message for session ${sessionId}`)
+
+    // Update UI: queued → processing
+    if (next.messageId) {
+      const existingMessage = managed.messages.find(m => m.id === next.messageId)
+      if (existingMessage) {
+        this.sendEvent({
+          type: 'user_message',
+          sessionId,
+          message: existingMessage,
+          status: 'processing'
+        }, managed.workspace.id)
+      }
+    }
+
+    // Process message (use setImmediate to allow current stack to clear)
+    setImmediate(() => {
+      this.sendMessage(
+        sessionId,
+        next.message,
+        next.attachments,
+        next.storedAttachments,
+        next.options,
+        next.messageId
+      ).catch(err => {
+        sessionLog.error('Error processing queued message:', err)
+        this.sendEvent({
+          type: 'error',
+          sessionId,
+          error: err instanceof Error ? err.message : 'Unknown error'
+        }, managed.workspace.id)
+        // Call onProcessingStopped to handle cleanup and check for more queued messages
+        this.onProcessingStopped(sessionId, 'error')
+      })
+    })
   }
 
   async killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }> {
@@ -2100,6 +2211,11 @@ To view this task's output:
         break
 
       case 'error':
+        // Skip abort errors - these are expected when force-aborting via AbortController
+        if (event.message.includes('aborted') || event.message.includes('AbortError')) {
+          sessionLog.info('Skipping abort error event (expected during interrupt)')
+          break
+        }
         // AgentEvent uses `message` not `error`
         const errorMessage: Message = {
           id: generateMessageId(),
@@ -2112,6 +2228,12 @@ To view this task's output:
         break
 
       case 'typed_error':
+        // Skip abort errors - these are expected when force-aborting via AbortController
+        const typedErrorMsg = event.error.message || event.error.title || ''
+        if (typedErrorMsg.includes('aborted') || typedErrorMsg.includes('AbortError')) {
+          sessionLog.info('Skipping typed abort error event (expected during interrupt)')
+          break
+        }
         // Typed errors have structured information - send both formats for compatibility
         sessionLog.info('typed_error:', JSON.stringify(event.error, null, 2))
         const typedErrorMessage: Message = {

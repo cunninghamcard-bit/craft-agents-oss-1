@@ -1,0 +1,11 @@
+// Base overlay component
+export { PreviewOverlay, type PreviewOverlayProps, type BadgeVariant } from './PreviewOverlay'
+
+// Helper components
+export { CopyButton, type CopyButtonProps } from './CopyButton'
+
+// Specialized overlays
+export { CodePreviewOverlay, type CodePreviewOverlayProps } from './CodePreviewOverlay'
+export { DiffPreviewOverlay, type DiffPreviewOverlayProps } from './DiffPreviewOverlay'
+export { TerminalPreviewOverlay, type TerminalPreviewOverlayProps } from './TerminalPreviewOverlay'
+export { GenericOverlay, detectLanguageFromPath, type GenericOverlayProps } from './GenericOverlay'

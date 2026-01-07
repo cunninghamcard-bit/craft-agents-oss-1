@@ -35,7 +35,6 @@ export function RenameDialog({
     if (open) {
       const timer = setTimeout(() => {
         inputRef.current?.focus()
-        inputRef.current?.select()
       }, 0)
       return () => clearTimeout(timer)
     }
@@ -49,7 +48,7 @@ export function RenameDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[400px]">
+      <DialogContent className="sm:max-w-[400px]" onOpenAutoFocus={(e) => e.preventDefault()}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>

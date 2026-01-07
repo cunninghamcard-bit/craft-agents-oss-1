@@ -9,12 +9,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
-<body style="margin: 0; background-color: #ffffff;">
+<body style="margin: 0; background-color: #faf9fb;">
   <script>
-    // Match system theme for initial background
-    if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-      document.body.style.backgroundColor = '#1e1e1e';
-    }
+    // Match system theme for initial background (must match CSS --background values)
+    document.body.style.backgroundColor = window.matchMedia('(prefers-color-scheme: dark)').matches ? '#302f33' : '#faf9fb';
   </script>
   <div id="root"></div>
   <script type="module" src="./preview-main.tsx"></script>

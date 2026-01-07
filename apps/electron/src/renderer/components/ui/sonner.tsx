@@ -6,7 +6,7 @@ import {
 } from "lucide-react"
 import { Toaster as Sonner, type ToasterProps } from "sonner"
 import { useTheme } from "@/context/ThemeContext"
-import { Spinner } from "./loading-indicator"
+import { Spinner } from "@craft-agent/ui"
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { resolvedMode } = useTheme()

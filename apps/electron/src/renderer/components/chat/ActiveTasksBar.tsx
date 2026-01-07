@@ -7,7 +7,7 @@
 
 import React from 'react'
 import { cn } from '@/lib/utils'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { Spinner } from '@craft-agent/ui'
 import { TaskActionMenu } from './TaskActionMenu'
 
 export interface BackgroundTask {

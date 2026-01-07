@@ -1,4 +1,4 @@
-import { ipcMain, nativeTheme, nativeImage, dialog, shell, BrowserWindow } from 'electron'
+import { app, ipcMain, nativeTheme, nativeImage, dialog, shell, BrowserWindow } from 'electron'
 import { readFile, realpath, mkdir, writeFile, unlink, rm } from 'fs/promises'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { normalize, isAbsolute, join, basename, dirname, resolve } from 'path'
@@ -7,15 +7,13 @@ import { randomUUID } from 'crypto'
 import { SessionManager } from './sessions'
 import { ipcLog } from './logger'
 import { WindowManager } from './window-manager'
-import { PreviewWindowManager } from './preview-window'
-import { DiffPreviewWindowManager } from './diff-preview-window'
-import { CodePreviewWindowManager } from './code-preview-window'
 import { TerminalPreviewWindowManager } from './terminal-preview-window'
-import { MultiFileDiffWindowManager } from './multi-file-diff-window'
+import { FilePreviewWindowManager } from './file-preview-window'
+import { UnifiedPreviewWindowManager } from './unified-preview-window'
 import { agentService } from './agent-service'
 import { registerOnboardingHandlers } from './onboarding'
-import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AgentActivateOptions, type AuthType, type BillingMethodInfo, type SendMessageOptions, type DiffPreviewData, type CodePreviewData, type TerminalPreviewData, type MultiFileDiffData } from '../shared/types'
-import { readFileAttachment } from '@craft-agent/shared/utils'
+import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AgentActivateOptions, type AuthType, type BillingMethodInfo, type SendMessageOptions, type TerminalPreviewData, type FilePreviewData, type PreviewData } from '../shared/types'
+import { readFileAttachment, perf } from '@craft-agent/shared/utils'
 import { getAiCreditTopUpUrl } from '@craft-agent/shared/auth'
 import { getAuthType, setAuthType, getPreferencesPath, getModel, setModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getDefaultPermissionMode, setDefaultPermissionMode, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, type Workspace } from '@craft-agent/shared/config'
 import { getSessionAttachmentsPath } from '@craft-agent/shared/sessions'
@@ -118,10 +116,13 @@ async function validateFilePath(filePath: string): Promise<string> {
   return realPath
 }
 
-export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager, previewWindowManager: PreviewWindowManager, diffPreviewWindowManager: DiffPreviewWindowManager, codePreviewWindowManager: CodePreviewWindowManager, terminalPreviewWindowManager: TerminalPreviewWindowManager, multiFileDiffWindowManager: MultiFileDiffWindowManager): void {
+export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager, terminalPreviewWindowManager: TerminalPreviewWindowManager, filePreviewWindowManager: FilePreviewWindowManager, unifiedPreviewWindowManager: UnifiedPreviewWindowManager): void {
   // Get all sessions
   ipcMain.handle(IPC_CHANNELS.GET_SESSIONS, async () => {
-    return sessionManager.getSessions()
+    const end = perf.start('ipc.getSessions')
+    const sessions = sessionManager.getSessions()
+    end()
+    return sessions
   })
 
   // Get workspaces
@@ -174,6 +175,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   // Switch workspace in current window (in-window switching)
   ipcMain.handle(IPC_CHANNELS.SWITCH_WORKSPACE, async (event, workspaceId: string) => {
+    const end = perf.start('ipc.switchWorkspace', { workspaceId })
     // Update the window's workspace mapping
     windowManager.updateWindowWorkspace(event.sender.id, workspaceId)
 
@@ -182,11 +184,15 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     if (workspace) {
       sessionManager.setupConfigWatcher(workspace.rootPath)
     }
+    end()
   })
 
   // Create a new session (with optional agent assignment)
   ipcMain.handle(IPC_CHANNELS.CREATE_SESSION, async (_event, workspaceId: string, agentId?: string, agentName?: string) => {
-    return sessionManager.createSession(workspaceId, agentId, agentName)
+    const end = perf.start('ipc.createSession', { workspaceId, agentId })
+    const session = sessionManager.createSession(workspaceId, agentId, agentName)
+    end()
+    return session
   })
 
   // Delete a session
@@ -516,6 +522,11 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   // Get user's home directory
   ipcMain.handle(IPC_CHANNELS.GET_HOME_DIR, () => {
     return homedir()
+  })
+
+  // Check if running in debug mode (from source)
+  ipcMain.handle(IPC_CHANNELS.IS_DEBUG_MODE, () => {
+    return !app.isPackaged
   })
 
   // Agent management
@@ -1012,53 +1023,6 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   })
 
   // ============================================================
-  // Markdown Preview Window
-  // ============================================================
-
-  // Open markdown preview window
-  ipcMain.handle(IPC_CHANNELS.MARKDOWN_PREVIEW_OPEN, async (_event, previewId: string, data: import('../shared/types').MarkdownPreviewData) => {
-    await previewWindowManager.openPreview(previewId, data)
-  })
-
-  // Get data for a markdown preview (called from preview window on mount)
-  ipcMain.handle(IPC_CHANNELS.MARKDOWN_PREVIEW_GET_DATA, async (_event, previewId: string) => {
-    return previewWindowManager.getData(previewId)
-  })
-
-  // Save edited content to file (only for readWrite mode)
-  ipcMain.handle(IPC_CHANNELS.MARKDOWN_PREVIEW_SAVE, async (_event, previewId: string, content: string) => {
-    await previewWindowManager.save(previewId, content)
-  })
-
-  // ============================================================
-  // Diff Preview Window
-  // ============================================================
-
-  // Open diff preview window
-  ipcMain.handle(IPC_CHANNELS.DIFF_PREVIEW_OPEN, async (_event, sessionId: string, diffId: string, data: DiffPreviewData) => {
-    diffPreviewWindowManager.openDiffPreview(sessionId, diffId, data)
-  })
-
-  // Get data for a diff preview (called from diff preview window on mount)
-  ipcMain.handle(IPC_CHANNELS.DIFF_PREVIEW_GET_DATA, async (_event, sessionId: string, diffId: string) => {
-    return diffPreviewWindowManager.getData(sessionId, diffId)
-  })
-
-  // ============================================================
-  // Code Preview Window (Read/Write tools)
-  // ============================================================
-
-  // Open code preview window
-  ipcMain.handle(IPC_CHANNELS.CODE_PREVIEW_OPEN, async (_event, sessionId: string, previewId: string, data: CodePreviewData) => {
-    codePreviewWindowManager.openCodePreview(sessionId, previewId, data)
-  })
-
-  // Get data for a code preview (called from code preview window on mount)
-  ipcMain.handle(IPC_CHANNELS.CODE_PREVIEW_GET_DATA, async (_event, sessionId: string, previewId: string) => {
-    return codePreviewWindowManager.getData(sessionId, previewId)
-  })
-
-  // ============================================================
   // Terminal Preview Window (Bash tools)
   // ============================================================
 
@@ -1073,29 +1037,60 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   })
 
   // ============================================================
-  // Multi-File Diff Window (all edits/writes in a turn)
+  // Unified File Preview Window (view, diff, multi-diff)
   // ============================================================
 
-  // Open multi-file diff window
-  ipcMain.handle(IPC_CHANNELS.MULTI_FILE_DIFF_OPEN, async (_event, sessionId: string, turnId: string, data: MultiFileDiffData) => {
-    multiFileDiffWindowManager.openMultiFileDiff(sessionId, turnId, data)
+  // Open unified file preview window
+  ipcMain.handle(IPC_CHANNELS.FILE_PREVIEW_OPEN, async (_event, data: FilePreviewData) => {
+    filePreviewWindowManager.openFilePreview(data)
   })
 
-  // Get data for a multi-file diff window (called from multi-file diff window on mount)
-  ipcMain.handle(IPC_CHANNELS.MULTI_FILE_DIFF_GET_DATA, async (_event, sessionId: string, turnId: string) => {
-    return multiFileDiffWindowManager.getData(sessionId, turnId)
+  // Get data for file preview (called from file preview window on mount)
+  ipcMain.handle(IPC_CHANNELS.FILE_PREVIEW_GET_DATA, async (_event, sessionId: string, previewId: string) => {
+    return filePreviewWindowManager.getData(sessionId, previewId)
   })
 
-  // Read a file for full-context diff view
-  ipcMain.handle(IPC_CHANNELS.MULTI_FILE_DIFF_READ_FILE, async (_event, filePath: string) => {
+  // Read a file for full-context view
+  ipcMain.handle(IPC_CHANNELS.FILE_PREVIEW_READ_FILE, async (_event, filePath: string) => {
     try {
-      // Resolve relative paths to absolute (Edit tool may use relative paths)
       const absolutePath = resolve(filePath)
       const validPath = await validateFilePath(absolutePath)
       const content = await readFile(validPath, 'utf-8')
       return content
     } catch (err) {
-      ipcLog.error('Error reading file for diff:', err)
+      ipcLog.error('Error reading file for preview:', err)
+      return null
+    }
+  })
+
+  // ============================================================
+  // Unified Preview Window (markdown, view, diff, multi-diff, terminal)
+  // ============================================================
+
+  // Open unified preview window
+  ipcMain.handle(IPC_CHANNELS.PREVIEW_OPEN, async (_event, data: PreviewData) => {
+    await unifiedPreviewWindowManager.openPreview(data)
+  })
+
+  // Get data for preview (called from preview window on mount)
+  ipcMain.handle(IPC_CHANNELS.PREVIEW_GET_DATA, async (_event, sessionId: string, previewId: string) => {
+    return unifiedPreviewWindowManager.getData(sessionId, previewId)
+  })
+
+  // Save content (for markdown readWrite mode)
+  ipcMain.handle(IPC_CHANNELS.PREVIEW_SAVE, async (_event, sessionId: string, previewId: string, content: string) => {
+    await unifiedPreviewWindowManager.save(sessionId, previewId, content)
+  })
+
+  // Read a file for preview (full file view)
+  ipcMain.handle(IPC_CHANNELS.PREVIEW_READ_FILE, async (_event, filePath: string) => {
+    try {
+      const absolutePath = resolve(filePath)
+      const validPath = await validateFilePath(absolutePath)
+      const content = await readFile(validPath, 'utf-8')
+      return content
+    } catch (err) {
+      ipcLog.error('Error reading file for preview:', err)
       return null
     }
   })

@@ -75,6 +75,19 @@ export type { AgentEvent };
 export type { LoadedSource } from '../sources/types.ts';
 export type { LoadedAgent } from '../agents/folder-types.ts';
 
+/**
+ * Reason for aborting agent execution.
+ * Used to distinguish user-initiated stops from internal aborts.
+ */
+export enum AbortReason {
+  /** User clicked stop button */
+  UserStop = 'user_stop',
+  /** Agent submitted a plan and is awaiting review */
+  PlanSubmitted = 'plan_submitted',
+  /** New message sent while processing (silent redirect) */
+  Redirect = 'redirect',
+}
+
 export interface CraftAgentConfig {
   workspace: Workspace;
   session?: Session;           // Current session (primary isolation boundary)
@@ -536,6 +549,8 @@ export type SdkMcpServerConfig =
 export class CraftAgent {
   private config: CraftAgentConfig;
   private currentQuery: Query | null = null;
+  private currentQueryAbortController: AbortController | null = null;
+  private lastAbortReason: AbortReason | null = null;
   private sessionId: string | null = null;
   private isHeadless: boolean = false;
   private pendingPermissions: Map<string, PendingPermission> = new Map();
@@ -1733,17 +1748,24 @@ export class CraftAgent {
         debug(`[CraftAgent] Starting fresh SDK session (no resume)`);
       }
 
+      // Create AbortController for this query - allows force-stopping via forceAbort()
+      this.currentQueryAbortController = new AbortController();
+      const optionsWithAbort = {
+        ...options,
+        abortController: this.currentQueryAbortController,
+      };
+
       // Create the query - use AsyncIterable for messages with binary attachments
       if (hasBinaryAttachments) {
         const sdkMessage = this.buildSDKUserMessage(userMessage, attachments);
         async function* singleMessage(): AsyncIterable<SDKUserMessage> {
           yield sdkMessage;
         }
-        this.currentQuery = query({ prompt: singleMessage(), options });
+        this.currentQuery = query({ prompt: singleMessage(), options: optionsWithAbort });
       } else {
         // Simple string prompt for text-only messages (may include text file contents)
         const prompt = this.buildTextPrompt(userMessage, attachments);
-        this.currentQuery = query({ prompt, options });
+        this.currentQuery = query({ prompt, options: optionsWithAbort });
       }
 
       // Track tool uses for mapping results and preventing duplicates
@@ -1872,7 +1894,14 @@ export class CraftAgent {
 
         // Handle user interruption
         if (sdkError instanceof AbortError) {
-          yield { type: 'status', message: 'Interrupted' };
+          const reason = this.lastAbortReason;
+          this.lastAbortReason = null;  // Clear for next time
+
+          // Only emit "Interrupted" status for user-initiated stops
+          // Plan submissions and redirects should be silent
+          if (reason === AbortReason.UserStop) {
+            yield { type: 'status', message: 'Interrupted' };
+          }
           yield { type: 'complete' };
           return;
         }
@@ -2971,11 +3000,20 @@ export class CraftAgent {
     this.pinnedAgentDefinition = null;
   }
 
-  interrupt(): void {
-    if (this.currentQuery) {
-      this.currentQuery.interrupt();
-      this.currentQuery = null;
+  /**
+   * Force-abort the current query using the SDK's AbortController.
+   * This immediately stops processing (SIGTERM/SIGKILL) without waiting for graceful shutdown.
+   * Use this when you need instant termination (e.g., queuing a new message).
+   *
+   * @param reason - Why the abort is happening (affects UI feedback)
+   */
+  forceAbort(reason: AbortReason = AbortReason.UserStop): void {
+    this.lastAbortReason = reason;
+    if (this.currentQueryAbortController) {
+      this.currentQueryAbortController.abort(reason);
+      this.currentQueryAbortController = null;
     }
+    this.currentQuery = null;
   }
 
   getModel(): string {
@@ -3209,7 +3247,7 @@ When you see <setup_required> in a message, help the user authenticate those sou
   }
 
   async close(): Promise<void> {
-    this.interrupt();
+    this.forceAbort();
   }
 
   /**
@@ -3219,7 +3257,7 @@ When you see <setup_required> in a message, help the user authenticate those sou
    */
   dispose(): void {
     // Stop any running query
-    this.interrupt();
+    this.forceAbort();
 
     // Clear pending operations
     this.pendingPermissions.clear();

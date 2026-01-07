@@ -30,7 +30,7 @@ import {
   CircleCheckFilled,
   CircleXFilled,
 } from "../icons/TodoStateIcons"
-import { Spinner } from "@/components/ui/loading-indicator"
+import { Spinner } from "@craft-agent/ui"
 import { AvatarGroup } from "@/components/ui/avatar-group"
 import { SourceAvatar } from "@/components/ui/source-avatar"
 import { AppMenu } from "../AppMenu"

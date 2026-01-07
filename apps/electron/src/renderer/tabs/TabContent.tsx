@@ -9,7 +9,7 @@
 import * as React from 'react'
 import { Suspense, lazy, useState, useEffect, Component, type ReactNode, type ErrorInfo } from 'react'
 import { AlertCircle } from 'lucide-react'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { Spinner } from '@craft-agent/ui'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useTabs } from './useTabs'

@@ -19,7 +19,8 @@ import { useOnboarding } from '@/hooks/useOnboarding'
 import { useTabs } from '@/tabs'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
-import { Spinner } from '@/components/ui/loading-indicator'
+import { initRendererPerf } from './lib/perf'
+import { Spinner } from '@craft-agent/ui'
 import { DEFAULT_MODEL } from '@config/models'
 import {
   initializeSessionsAtom,
@@ -114,6 +115,14 @@ function handleBackgroundTaskEvent(
 }
 
 export default function App() {
+  // Initialize renderer perf tracking early (debug mode = running from source)
+  // Uses useEffect with empty deps to run once on mount before any session switches
+  useEffect(() => {
+    window.electronAPI.isDebugMode().then((isDebug) => {
+      initRendererPerf(isDebug)
+    })
+  }, [])
+
   // App state: loading -> check auth -> onboarding or ready
   const [appState, setAppState] = useState<AppState>('loading')
   const [setupNeeds, setSetupNeeds] = useState<SetupNeeds | null>(null)
