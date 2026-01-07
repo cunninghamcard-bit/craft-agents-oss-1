@@ -1200,9 +1200,10 @@ This source provides a single flexible \`api_slack\` tool that accepts:
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| conversations.list | POST | List channels, DMs, and groups |
+| search.all | POST | Search channels, messages, files by name/content |
+| conversations.info | GET | Get channel details by ID (**note: GET not POST**) |
+| conversations.list | POST | List channels, DMs, and groups (paginated) |
 | conversations.history | POST | Get messages from a channel |
-| conversations.info | POST | Get channel details |
 | chat.postMessage | POST | Send a message |
 | users.list | POST | List workspace users |
 | users.info | POST | Get user details |
@@ -1238,10 +1239,13 @@ Slack API responses include:
 
 ## Guidelines
 
-- **Finding channels**: Use \`conversations.list\` to search for channels by name. Always paginate through all results using \`cursor\` - the channel you're looking for may not be in the first page.
+- **Finding channels by name**: Use \`search.all\` instead of paginating \`conversations.list\`. Much faster since \`conversations.list\` returns ~800+ tokens of metadata per channel, making pagination expensive.
+- **Two-step pattern for channel details**:
+  1. Use \`search.all\` with \`query\` param to find channels by name → get channel ID
+  2. Use \`conversations.info\` (note: **GET** not POST) with the channel ID for full details
 - **Channel IDs**: Use channel IDs (e.g., C01234567) not names for most operations
 - **Rate limits**: Tier 1 (1 req/sec), Tier 2 (20 req/min), Tier 3 (50 req/min) - varies by endpoint
-- **Pagination**: Use \`cursor\` for large result sets, check \`response_metadata.next_cursor\`
+- **Pagination**: For \`conversations.history\` and other list endpoints, use \`cursor\` and check \`response_metadata.next_cursor\`
 - **Timestamps**: Use Unix timestamps with microseconds (e.g., 1234567890.123456)
 - **Privacy**: Respect user privacy - avoid reading private channels unless explicitly requested
 

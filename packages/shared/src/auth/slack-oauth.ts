@@ -270,10 +270,17 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
     // Generate state for CSRF protection
     const state = generateState();
 
-    // Start callback server (Slack requires HTTPS for redirect URIs)
+    // Start local HTTP callback server
     const appType = options.appType || 'electron';
-    const callbackServer = await createCallbackServer({ appType, useHttps: true });
-    const redirectUri = `${callbackServer.url}/callback`;
+    const callbackServer = await createCallbackServer({ appType });
+
+    // Extract port from local callback URL
+    const localUrl = new URL(callbackServer.url);
+    const port = localUrl.port;
+
+    // Use Cloudflare Worker relay for Slack OAuth (Slack requires HTTPS)
+    // The relay redirects: https://agents.craft.do/auth/slack/callback → http://localhost:{port}/callback
+    const redirectUri = `https://agents.craft.do/auth/slack/callback?port=${port}`;
 
     // Build authorization URL
     // Use user_scope (not scope) to get a user token instead of bot token
