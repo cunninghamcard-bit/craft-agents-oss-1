@@ -15,9 +15,11 @@
 import {
   inferGoogleServiceFromUrl,
   inferSlackServiceFromUrl,
+  inferMicrosoftServiceFromUrl,
   type LoadedSource,
   type GoogleService,
   type SlackService,
+  type MicrosoftService,
 } from './types.ts';
 import type { CredentialId, StoredCredential } from '../credentials/types.ts';
 import { getCredentialManager } from '../credentials/index.ts';
@@ -34,6 +36,12 @@ import {
   type SlackOAuthResult,
   type SlackOAuthOptions,
 } from '../auth/slack-oauth.ts';
+import {
+  startMicrosoftOAuth,
+  refreshMicrosoftToken,
+  type MicrosoftOAuthResult,
+  type MicrosoftOAuthOptions,
+} from '../auth/microsoft-oauth.ts';
 import { debug } from '../utils/debug.ts';
 
 /**
@@ -234,10 +242,10 @@ export class SourceCredentialManager {
     if (source.config.type === 'mcp') {
       type = mcp?.authType === 'bearer' ? 'source_bearer' : 'source_oauth';
     } else if (source.config.type === 'api') {
-      // Google/Slack APIs: OAuth token acquisition is triggered by provider='google'/'slack',
+      // Google/Slack/Microsoft APIs: OAuth token acquisition is triggered by provider,
       // but the token is used as a Bearer token (authType='bearer' in config).
       // This separates HOW we get credentials (OAuth flow) from HOW we send them (Bearer header).
-      if (source.config.provider === 'google' || source.config.provider === 'slack') {
+      if (source.config.provider === 'google' || source.config.provider === 'slack' || source.config.provider === 'microsoft') {
         type = 'source_oauth';
       } else if (api?.authType === 'bearer') {
         type = 'source_bearer';
@@ -270,10 +278,10 @@ export class SourceCredentialManager {
     }
 
     if (source.config.type === 'api') {
-      // Google/Slack APIs: OAuth token acquisition is triggered by provider='google'/'slack',
+      // Google/Slack/Microsoft APIs: OAuth token acquisition is triggered by provider,
       // but the token is used as a Bearer token (authType='bearer' in config).
       // This separates HOW we get credentials (OAuth flow) from HOW we send them (Bearer header).
-      if (source.config.provider === 'google' || source.config.provider === 'slack') {
+      if (source.config.provider === 'google' || source.config.provider === 'slack' || source.config.provider === 'microsoft') {
         return 'agent_source_oauth';
       } else if (api?.authType === 'bearer') {
         return 'agent_source_bearer';
@@ -344,6 +352,11 @@ export class SourceCredentialManager {
     // Slack APIs use Slack OAuth
     if (source.config.provider === 'slack') {
       return this.authenticateSlack(source, cb);
+    }
+
+    // Microsoft APIs use Microsoft OAuth
+    if (source.config.provider === 'microsoft') {
+      return this.authenticateMicrosoft(source, cb);
     }
 
     // MCP OAuth flow
@@ -521,6 +534,72 @@ export class SourceCredentialManager {
   }
 
   /**
+   * Authenticate Microsoft API source via Microsoft OAuth
+   *
+   * Supports multiple Microsoft services (Outlook, OneDrive, Calendar, Teams) via:
+   * - provider: "microsoft" with microsoftService field
+   * - provider: "microsoft" with custom microsoftScopes
+   * - Inferred from baseUrl (e.g., graph.microsoft.com → outlook)
+   */
+  private async authenticateMicrosoft(
+    source: LoadedSource,
+    callbacks: OAuthCallbacks
+  ): Promise<AuthResult> {
+    try {
+      // Determine service/scopes from config
+      const api = source.config.api;
+      let service: MicrosoftService | undefined;
+      let scopes: string[] | undefined;
+
+      if (api?.microsoftScopes && api.microsoftScopes.length > 0) {
+        // Custom scopes take precedence
+        scopes = api.microsoftScopes;
+      } else if (api?.microsoftService) {
+        // Use predefined service scopes
+        service = api.microsoftService;
+      } else {
+        // Infer from baseUrl
+        service = inferMicrosoftServiceFromUrl(api?.baseUrl);
+        if (!service) {
+          return {
+            success: false,
+            error: `Cannot determine Microsoft service for source '${source.config.slug}'. Set microsoftService ('outlook', 'calendar', 'onedrive', 'teams', or 'sharepoint') in api config.`,
+          };
+        }
+      }
+
+      const serviceName = service || 'Microsoft API';
+      callbacks.onStatus(`Starting ${serviceName} OAuth flow...`);
+
+      const options: MicrosoftOAuthOptions = {
+        service,
+        scopes,
+        appType: 'electron',
+      };
+
+      const result: MicrosoftOAuthResult = await startMicrosoftOAuth(options);
+
+      if (!result.success) {
+        return { success: false, error: result.error || 'Microsoft OAuth failed' };
+      }
+
+      // Save the credentials
+      await this.save(source, {
+        value: result.accessToken!,
+        refreshToken: result.refreshToken,
+        expiresAt: result.expiresAt,
+      });
+
+      callbacks.onStatus(`${serviceName} authentication successful`);
+      return { success: true, email: result.email };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      callbacks.onError(message);
+      return { success: false, error: message };
+    }
+  }
+
+  /**
    * Refresh token for a source
    *
    * Returns the new access token, or null if refresh fails.
@@ -541,6 +620,11 @@ export class SourceCredentialManager {
     // Slack API refresh
     if (source.config.provider === 'slack') {
       return this.refreshSlack(source, cred);
+    }
+
+    // Microsoft API refresh
+    if (source.config.provider === 'microsoft') {
+      return this.refreshMicrosoft(source, cred);
     }
 
     // MCP refresh
@@ -597,6 +681,32 @@ export class SourceCredentialManager {
       return result.accessToken;
     } catch (error) {
       debug(`[SourceCredentialManager] Slack token refresh failed:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * Refresh Microsoft OAuth token
+   */
+  private async refreshMicrosoft(
+    source: LoadedSource,
+    cred: StoredCredential
+  ): Promise<string | null> {
+    try {
+      const result = await refreshMicrosoftToken(cred.refreshToken!);
+
+      // Update stored credentials (Microsoft may rotate refresh tokens)
+      await this.save(source, {
+        ...cred,
+        value: result.accessToken,
+        refreshToken: result.refreshToken || cred.refreshToken,
+        expiresAt: result.expiresAt,
+      });
+
+      debug(`[SourceCredentialManager] Refreshed Microsoft token for ${source.config.slug}`);
+      return result.accessToken;
+    } catch (error) {
+      debug(`[SourceCredentialManager] Microsoft token refresh failed:`, error);
       return null;
     }
   }

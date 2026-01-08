@@ -39,6 +39,11 @@ export type GoogleService = 'gmail' | 'calendar' | 'drive' | 'docs' | 'sheets';
 export type SlackService = 'messaging' | 'channels' | 'users' | 'files' | 'full';
 
 /**
+ * Microsoft service types for OAuth scope selection
+ */
+export type MicrosoftService = 'outlook' | 'calendar' | 'onedrive' | 'teams' | 'sharepoint';
+
+/**
  * Infer Google service from API baseUrl.
  * Returns undefined if URL doesn't match a known Google API pattern.
  *
@@ -100,11 +105,60 @@ export function inferSlackServiceFromUrl(baseUrl: string | undefined): SlackServ
 }
 
 /**
+ * Infer Microsoft service from API baseUrl.
+ * Microsoft Graph API uses graph.microsoft.com for all services.
+ * Returns 'outlook' by default if URL matches Microsoft Graph pattern.
+ */
+export function inferMicrosoftServiceFromUrl(baseUrl: string | undefined): MicrosoftService | undefined {
+  if (!baseUrl) return undefined;
+
+  let hostname: string;
+  let pathname: string;
+  try {
+    const parsed = new URL(baseUrl);
+    hostname = parsed.hostname.toLowerCase();
+    pathname = parsed.pathname.toLowerCase();
+  } catch {
+    return undefined;
+  }
+
+  // Match Microsoft Graph API hostname
+  if (hostname === 'graph.microsoft.com') {
+    // Try to infer service from path
+    if (pathname.includes('/me/messages') || pathname.includes('/me/mailfolders') || pathname.includes('/mail')) {
+      return 'outlook';
+    }
+    if (pathname.includes('/me/calendar') || pathname.includes('/me/events')) {
+      return 'calendar';
+    }
+    if (pathname.includes('/me/drive') || pathname.includes('/drives')) {
+      return 'onedrive';
+    }
+    if (pathname.includes('/teams') || pathname.includes('/chats')) {
+      return 'teams';
+    }
+    if (pathname.includes('/sites')) {
+      return 'sharepoint';
+    }
+    // Default to outlook for general Graph API access
+    return 'outlook';
+  }
+
+  // Match Outlook-specific API (legacy, but still used)
+  if (hostname === 'outlook.office.com' || hostname === 'outlook.office365.com') {
+    return 'outlook';
+  }
+
+  return undefined;
+}
+
+/**
  * Known providers for special handling (OAuth flows, icons, etc.)
  * These have well-known OAuth endpoints or special behavior.
  */
 export type KnownProvider =
   | 'google' // Google APIs (Gmail, etc.) - uses Google OAuth
+  | 'microsoft' // Microsoft APIs (Outlook, OneDrive, etc.) - uses Microsoft OAuth
   | 'linear' // Linear - standard MCP OAuth
   | 'github' // GitHub - standard MCP OAuth
   | 'notion' // Notion - standard MCP OAuth
@@ -194,6 +248,10 @@ export interface ApiSourceConfig {
   // Uses user_scope for user authentication (posts as the user, not a bot)
   slackService?: SlackService; // Predefined service for scope selection
   slackUserScopes?: string[]; // Custom user scopes (overrides slackService)
+
+  // Microsoft OAuth fields (used when provider is 'microsoft')
+  microsoftService?: MicrosoftService; // Predefined service for scope selection
+  microsoftScopes?: string[]; // Custom scopes (overrides microsoftService)
 }
 
 /**

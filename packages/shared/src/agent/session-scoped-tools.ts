@@ -65,7 +65,12 @@ import {
   type SlackOAuthOptions,
   type SlackOAuthResult,
 } from '../auth/slack-oauth.ts';
-import { inferGoogleServiceFromUrl, inferSlackServiceFromUrl, type GoogleService, type SlackService } from '../sources/types.ts';
+import {
+  startMicrosoftOAuth,
+  type MicrosoftOAuthOptions,
+  type MicrosoftOAuthResult,
+} from '../auth/microsoft-oauth.ts';
+import { inferGoogleServiceFromUrl, inferSlackServiceFromUrl, inferMicrosoftServiceFromUrl, type GoogleService, type SlackService, type MicrosoftService } from '../sources/types.ts';
 import { DOC_REFS } from '../docs/index.ts';
 
 // ============================================================
@@ -1623,6 +1628,174 @@ After successful authentication, the tokens are stored and the source is marked 
   );
 }
 
+/**
+ * Create a session-scoped source_microsoft_oauth_trigger tool.
+ * Handles OAuth authentication for Microsoft API sources (Outlook, OneDrive, Calendar, Teams, SharePoint).
+ */
+export function createMicrosoftOAuthTriggerTool(sessionId: string, workspaceId: string, activeAgentSlug?: string) {
+  return tool(
+    'source_microsoft_oauth_trigger',
+    `Trigger Microsoft OAuth authentication flow for a Microsoft API source.
+
+Opens a browser window for the user to sign in with their Microsoft account and authorize access to the specified Microsoft service.
+After successful authentication, the tokens are stored and the source is marked as authenticated.
+
+**Supported services:**
+- outlook: Read, compose, and manage emails
+- calendar: Read and manage calendar events
+- onedrive: Read and manage OneDrive files
+- teams: Read and send Teams messages
+- sharepoint: Read and manage SharePoint sites
+
+**Prerequisites:**
+- The source must have provider 'microsoft'
+- Microsoft OAuth must be configured in the build
+
+**Returns:**
+- Success message with the authenticated email address
+- Error message if OAuth flow fails or is not configured`,
+    {
+      sourceSlug: z.string().describe('The slug of the Microsoft API source to authenticate'),
+    },
+    async (args) => {
+      try {
+        // Load the source config (checks agent folder first if activeAgentSlug set, then workspace)
+        const sourceResult = loadSourceConfigWithFallback(workspaceId, args.sourceSlug, activeAgentSlug);
+        if (!sourceResult) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Source '${args.sourceSlug}' not found. Check ~/.craft-agent/workspaces/{workspace}/sources/ for available sources.`,
+            }],
+            isError: true,
+          };
+        }
+        const source = sourceResult.config;
+        const sourceContext = { isAgentScoped: sourceResult.isAgentScoped, agentSlug: sourceResult.agentSlug };
+
+        // Verify this is a Microsoft source
+        if (source.provider !== 'microsoft') {
+          const hint = !source.provider
+            ? `Add "provider": "microsoft" to config.json and retry.`
+            : `This source has provider '${source.provider}'. Use source_oauth_trigger for MCP sources, source_google_oauth_trigger for Google sources, or source_slack_oauth_trigger for Slack sources.`;
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Source '${args.sourceSlug}' is not configured as a Microsoft API source. ${hint}\n\nCurrent config: ${JSON.stringify(source, null, 2)}`,
+            }],
+            isError: true,
+          };
+        }
+
+        if (source.isAuthenticated) {
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `Source '${args.sourceSlug}' is already authenticated.`,
+            }],
+            isError: false,
+          };
+        }
+
+        // Determine service/scopes from config
+        let service: MicrosoftService | undefined;
+        let scopes: string[] | undefined;
+        const api = source.api;
+
+        if (api?.microsoftScopes && api.microsoftScopes.length > 0) {
+          // Custom scopes take precedence
+          scopes = api.microsoftScopes;
+        } else if (api?.microsoftService) {
+          // Use predefined service scopes
+          service = api.microsoftService;
+        } else {
+          // Infer from baseUrl (defaults to 'outlook' for graph.microsoft.com)
+          service = inferMicrosoftServiceFromUrl(api?.baseUrl);
+          if (!service) {
+            return {
+              content: [{
+                type: 'text' as const,
+                text: `Cannot determine Microsoft service for source '${args.sourceSlug}'. Set microsoftService ('outlook', 'calendar', 'onedrive', 'teams', or 'sharepoint') in api config, or use a recognizable baseUrl like 'https://graph.microsoft.com'.`,
+              }],
+              isError: true,
+            };
+          }
+        }
+
+        const serviceName = service || 'Microsoft API';
+
+        // Run the Microsoft OAuth flow
+        const options: MicrosoftOAuthOptions = {
+          service,
+          scopes,
+          appType: 'electron',
+        };
+        const result: MicrosoftOAuthResult = await startMicrosoftOAuth(options);
+
+        if (!result.success) {
+          const callbacks = getSessionScopedToolCallbacks(sessionId);
+          callbacks?.onOAuthError?.(args.sourceSlug, result.error || 'Unknown error');
+
+          return {
+            content: [{
+              type: 'text' as const,
+              text: `${serviceName} OAuth failed: ${result.error || 'Unknown error'}`,
+            }],
+            isError: true,
+          };
+        }
+
+        // Store the tokens
+        const credentialManager = getCredentialManager();
+        // Extract workspace ID from root path for credential storage
+        const wsId = basename(workspaceId);
+        await credentialManager.set(
+          {
+            type: 'source_oauth',
+            workspaceId: wsId,
+            sourceId: args.sourceSlug,
+          },
+          {
+            value: result.accessToken!,
+            refreshToken: result.refreshToken,
+            expiresAt: result.expiresAt,
+          }
+        );
+
+        // Update source status with email info
+        source.isAuthenticated = true;
+        source.connectionStatus = 'connected';
+        source.connectionError = undefined;
+        source.updatedAt = Date.now();
+        saveSourceConfigWithContext(workspaceId, source, sourceContext);
+
+        // Notify success callback
+        const callbacks = getSessionScopedToolCallbacks(sessionId);
+        callbacks?.onOAuthSuccess?.(args.sourceSlug);
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `**${serviceName} source '${args.sourceSlug}' authenticated successfully**\n\nConnected as: ${result.email}\n\n**Next step:** Run \`source_test({ sourceSlug: "${args.sourceSlug}" })\` to download the icon and verify the connection works.`,
+          }],
+          isError: false,
+        };
+      } catch (error) {
+        const callbacks = getSessionScopedToolCallbacks(sessionId);
+        callbacks?.onOAuthError?.(args.sourceSlug, error instanceof Error ? error.message : 'Unknown error');
+
+        return {
+          content: [{
+            type: 'text' as const,
+            text: `Microsoft OAuth failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+          }],
+          isError: true,
+        };
+      }
+    }
+  );
+}
+
 // ============================================================
 // Credential Prompt Tool
 // ============================================================
@@ -2011,6 +2184,7 @@ export function getSessionScopedTools(sessionId: string, workspaceId: string, ac
         createOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug),
         createGoogleOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug),
         createSlackOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug),
+        createMicrosoftOAuthTriggerTool(sessionId, workspaceId, activeAgentSlug),
         createCredentialPromptTool(sessionId, workspaceId, activeAgentSlug),
         // Agent tools
         createAgentListTool(sessionId, workspaceId),
