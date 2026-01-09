@@ -492,11 +492,35 @@ GitHub organizes code and collaboration around:
 
 ## Setup Hints
 
-### CRITICAL - Do NOT Search for MCP URLs
+### IMPORTANT - Check for GitHub CLI First
+
+Before creating a GitHub source, **check if the GitHub CLI (\`gh\`) is installed** by running \`which gh\` or \`gh --version\`.
+
+**If \`gh\` is installed and authenticated:**
+- The user likely already has full GitHub access through the built-in Bash tool
+- \`gh\` commands work out of the box: \`gh issue list\`, \`gh pr view\`, \`gh repo clone\`, etc.
+- Creating a separate GitHub source may be **unnecessary**
+
+**Suggest using \`gh\` CLI instead:**
+> "I noticed you have the GitHub CLI installed. You can use \`gh\` commands directly without creating a separate source. For example:
+> - \`gh issue list\` - List issues
+> - \`gh pr list\` - List pull requests
+> - \`gh repo view\` - View repository info
+> - \`gh api /repos/{owner}/{repo}/issues\` - Direct API access
+>
+> Would you still like to create a GitHub source, or is the CLI sufficient for your needs?"
+
+**Only proceed with source creation if:**
+1. \`gh\` is NOT installed, OR
+2. User explicitly wants a dedicated GitHub source despite having \`gh\`
+
+### If Creating a GitHub Source
+
+#### CRITICAL - Do NOT Search for MCP URLs
 
 The MCP URL \`https://api.githubcopilot.com/mcp/\` is **CORRECT**. Do NOT use WebSearch or WebFetch to find alternative URLs. The URL works - the issue is authentication method only.
 
-### Authentication - OAuth Will Fail (Expected)
+#### Authentication - OAuth Will Fail (Expected)
 
 GitHub's MCP server requires OAuth with a **pre-registered client app**. Craft Agent is NOT registered with GitHub, so OAuth authentication WILL fail. This is expected behavior - do NOT troubleshoot or search for solutions.
 
@@ -532,6 +556,7 @@ GitHub's MCP server requires OAuth with a **pre-registered client app**. Craft A
 \`\`\`
 
 ### Recommended Questions
+- Do you have the GitHub CLI (\`gh\`) installed? (Check first!)
 - Which repositories do you work with most?
 - Do you need access to issues, PRs, or code?
 - Personal repos or organization repos?

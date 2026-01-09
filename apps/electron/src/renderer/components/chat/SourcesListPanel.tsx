@@ -7,7 +7,7 @@
 
 import * as React from 'react'
 import { useState } from 'react'
-import { MoreHorizontal, Trash2, ExternalLink } from 'lucide-react'
+import { MoreHorizontal, Trash2, ExternalLink, Key } from 'lucide-react'
 import { SourceAvatar } from '@/components/ui/source-avatar'
 import { deriveConnectionStatus } from '@/components/ui/source-status-indicator'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -27,6 +27,7 @@ export interface SourcesListPanelProps {
   onAddSource: () => void
   onDeleteSource: (sourceName: string) => void
   onSourceClick: (source: LoadedSource) => void
+  onAuthenticateSource?: (source: LoadedSource) => void
   selectedSourceSlug?: string | null
   /** Whether local MCP servers are enabled (affects stdio source status) */
   localMcpEnabled?: boolean
@@ -38,6 +39,7 @@ export function SourcesListPanel({
   onAddSource,
   onDeleteSource,
   onSourceClick,
+  onAuthenticateSource,
   selectedSourceSlug,
   localMcpEnabled = true,
   className,
@@ -68,6 +70,7 @@ export function SourcesListPanel({
                 localMcpEnabled={localMcpEnabled}
                 onClick={() => onSourceClick(source)}
                 onDelete={() => onDeleteSource(source.config.name)}
+                onAuthenticate={onAuthenticateSource ? () => onAuthenticateSource(source) : undefined}
               />
             ))}
           </div>
@@ -84,6 +87,7 @@ interface SourceItemProps {
   localMcpEnabled: boolean
   onClick: () => void
   onDelete: () => void
+  onAuthenticate?: () => void
 }
 
 /**
@@ -119,15 +123,15 @@ function getSourceTypeBadgeClasses(type: string): string {
 }
 
 /**
- * Get status badge info for non-connected sources
- * Returns null if source is connected (no badge needed)
+ * Get status badge info for sources
+ * Returns badge configuration including label, classes, and whether it's clickable
  */
-function getStatusBadge(status: SourceConnectionStatus): { label: string; classes: string } | null {
+function getStatusBadge(status: SourceConnectionStatus): { label: string; classes: string; clickable?: boolean } | null {
   switch (status) {
     case 'connected':
-      return null // No badge for connected sources
+      return { label: 'Connected', classes: 'bg-success/10 text-success' }
     case 'needs_auth':
-      return { label: 'Needs Auth', classes: 'bg-info/10 text-info' }
+      return { label: 'Authenticate', classes: 'bg-info/10 text-info cursor-pointer hover:bg-info/20', clickable: true }
     case 'failed':
       return { label: 'Failed', classes: 'bg-destructive/10 text-destructive' }
     case 'untested':
@@ -139,7 +143,7 @@ function getStatusBadge(status: SourceConnectionStatus): { label: string; classe
   }
 }
 
-function SourceItem({ source, isSelected, isFirst, localMcpEnabled, onClick, onDelete }: SourceItemProps) {
+function SourceItem({ source, isSelected, isFirst, localMcpEnabled, onClick, onDelete, onAuthenticate }: SourceItemProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const { config } = source
 
@@ -149,6 +153,19 @@ function SourceItem({ source, isSelected, isFirst, localMcpEnabled, onClick, onD
   // Get connection status and badge info (pass localMcpEnabled for stdio sources)
   const connectionStatus = deriveConnectionStatus(source, localMcpEnabled)
   const statusBadge = getStatusBadge(connectionStatus)
+
+  // Check if source needs authentication
+  const needsAuth = connectionStatus === 'needs_auth'
+
+  // Check if source has failed
+  const hasFailed = connectionStatus === 'failed'
+
+  // Get error message for failed sources
+  const errorMessage = hasFailed ? config.connectionError : undefined
+
+  // Check if authentication is possible (MCP with OAuth or API with OAuth provider)
+  const canAuthenticate = (config.type === 'mcp' && config.mcp?.authType === 'oauth') ||
+    (config.type === 'api' && config.api?.authType && config.api.authType !== 'none')
 
   return (
     <div className="source-item" data-selected={isSelected || undefined}>
@@ -193,17 +210,39 @@ function SourceItem({ source, isSelected, isFirst, localMcpEnabled, onClick, onD
               )}>
                 {getSourceTypeLabel(config.type)}
               </span>
-              {/* Status badge (only shown for non-connected sources) */}
+              {/* Status badge */}
               {statusBadge && (
-                <span className={cn(
-                  "shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded",
-                  statusBadge.classes
-                )}>
-                  {statusBadge.label}
+                statusBadge.clickable && onAuthenticate ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onAuthenticate()
+                    }}
+                    className={cn(
+                      "shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded transition-colors",
+                      statusBadge.classes
+                    )}
+                  >
+                    {statusBadge.label}
+                  </button>
+                ) : (
+                  <span className={cn(
+                    "shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded",
+                    statusBadge.classes
+                  )}>
+                    {statusBadge.label}
+                  </span>
+                )
+              )}
+              {/* Error message for failed sources */}
+              {hasFailed && errorMessage && (
+                <span className="truncate text-destructive" title={errorMessage}>
+                  {errorMessage}
                 </span>
               )}
-              {/* Tagline/description */}
-              {subtitle && (
+              {/* Tagline/description (only show if not failed) */}
+              {!hasFailed && subtitle && (
                 <span className="truncate">
                   {subtitle}
                 </span>
@@ -231,6 +270,17 @@ function SourceItem({ source, isSelected, isFirst, localMcpEnabled, onClick, onD
                   <ExternalLink />
                   View Details
                 </StyledDropdownMenuItem>
+                {canAuthenticate && onAuthenticate && (
+                  <StyledDropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onAuthenticate()
+                    }}
+                  >
+                    <Key />
+                    {needsAuth ? 'Authenticate' : 'Re-authenticate'}
+                  </StyledDropdownMenuItem>
+                )}
                 <StyledDropdownMenuSeparator />
                 <StyledDropdownMenuItem
                   variant="destructive"
