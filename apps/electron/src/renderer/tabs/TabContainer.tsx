@@ -1,22 +1,20 @@
 /**
  * TabContainer Component
  *
- * Main container combining Header, TabBar, and TabContent.
- * Handles the overall layout of the tabbed panel system.
+ * Main container combining Header and TabContent.
+ * Handles the overall layout of the panel system.
  */
 
 import * as React from 'react'
-import { useState, useEffect, useRef } from 'react'
+import { useState } from 'react'
 import {
   ExternalLink,
   Copy,
   MoreHorizontal,
-  X,
   Pencil,
   Archive,
   Trash2,
   FileDiff,
-  AppWindow,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -31,40 +29,20 @@ import {
 } from '@/components/ui/styled-dropdown'
 import { Separator } from '@/components/ui/separator'
 import { useChatContext } from '@/context/ChatContext'
-import { useCloseTab } from '@/hooks/useCloseTab'
 import { getSessionTitle } from '@/utils/session'
-import { TabBar } from './TabBar'
 import { TabContent } from './TabContent'
 import { useTabs } from './useTabs'
-import type { Tab, FileTab, BrowserTab, ChatTab, AgentInfoTab, SourceInfoTab } from './types'
+import type { Tab, FileTab, BrowserTab, ChatTab } from './types'
 import type { FileChange } from '../../shared/types'
 
 interface TabContainerProps {
   className?: string
-  /** Initial tab for tab-content windows (standalone windows) */
-  initialTab?: Tab | null
+  isFocusedMode?: boolean
 }
 
-export function TabContainer({ className, initialTab }: TabContainerProps) {
-  const { activeTab, isTabBarVisible, updateChatTabLabel, openTab, tabs } = useTabs()
-
-  // Check if title is at min X position (tab-content windows need stoplight spacer)
-  const isTitleAtMinXOfWindow = new URLSearchParams(window.location.search).get('mode') === 'tab-content'
-
-  // Initialize with the initial tab (for tab-content windows)
-  // Only run once on mount when initialTab is provided
-  const initializedRef = useRef(false)
-  useEffect(() => {
-    if (initialTab && !initializedRef.current) {
-      initializedRef.current = true
-      // Only open if we don't already have tabs (fresh window)
-      if (tabs.length === 0) {
-        openTab(initialTab)
-      }
-    }
-  }, [initialTab, openTab, tabs.length])
+export function TabContainer({ className, isFocusedMode }: TabContainerProps) {
+  const { activeTab, updateChatTabLabel } = useTabs()
   const { sessions, onRenameSession } = useChatContext()
-  const { closeTab } = useCloseTab()
 
   // Rename dialog state
   const [renameDialogOpen, setRenameDialogOpen] = useState(false)
@@ -146,13 +124,10 @@ export function TabContainer({ className, initialTab }: TabContainerProps) {
           tab={activeTab}
           showAgentBadge={hasAgent(activeTab)}
           onOpenRename={handleOpenRename}
-          isTitleAtMinXOfWindow={isTitleAtMinXOfWindow}
+          isFocusedMode={isFocusedMode}
         />
       )}
-      {/* Separator only when tab bar is hidden */}
-      {!isTabBarVisible && <Separator />}
-      {/* Tab bar - below header, only when multiple tabs */}
-      <TabBar onClose={closeTab} />
+      <Separator />
       {/* Content */}
       <TabContent className="flex-1 overflow-hidden" />
 
@@ -175,15 +150,16 @@ interface TabHeaderProps {
   tab: Tab
   showAgentBadge?: boolean
   onOpenRename?: (sessionId: string, currentName: string) => void
-  /** When true, adds left padding for macOS stoplight buttons (70px) */
-  isTitleAtMinXOfWindow?: boolean
+  isFocusedMode?: boolean
 }
 
-function TabHeader({ title, subtitle, tab, showAgentBadge, onOpenRename, isTitleAtMinXOfWindow }: TabHeaderProps) {
+function TabHeader({ title, subtitle, tab, showAgentBadge, onOpenRename, isFocusedMode }: TabHeaderProps) {
   return (
-    <div className="flex h-[50px] shrink-0 items-center pl-5 pr-2 min-w-0 gap-3 relative z-50">
-      {/* Spacer for macOS stoplight buttons when title is at left edge */}
-      {isTitleAtMinXOfWindow && <span className="w-[70px] shrink-0" />}
+    <div className={cn(
+      "flex h-[50px] shrink-0 items-center pr-2 min-w-0 gap-3 relative z-50",
+      // In focused mode, add left padding for traffic lights (matches sidebar header)
+      isFocusedMode ? "pl-[88px]" : "pl-5"
+    )}>
       <div className="flex-1 min-w-0 flex flex-col justify-center select-none">
         <div className="flex items-center gap-2">
           <h1 className="text-sm font-semibold truncate font-sans leading-tight">{title}</h1>
@@ -207,12 +183,11 @@ interface TabHeaderActionsProps {
 
 /**
  * Render actions dropdown menu for tab
- * Contains type-specific actions + Close tab at the bottom
+ * Contains type-specific actions
  */
 function TabHeaderActions({ tab, onOpenRename }: TabHeaderActionsProps) {
-  const { closeTab } = useCloseTab()
   const { closeTab: rawCloseTab } = useTabs()
-  const { sessions, onDeleteSession, onTodoStateChange, activeWorkspaceId } = useChatContext()
+  const { sessions, onDeleteSession, onTodoStateChange } = useChatContext()
 
   // Get session for chat tab
   const session = tab.type === 'chat'
@@ -300,64 +275,13 @@ function TabHeaderActions({ tab, onOpenRename }: TabHeaderActionsProps) {
     m => m.role === 'tool' && (m.toolName === 'Edit' || m.toolName === 'Write')
   ) ?? false
 
-  const handleClose = React.useCallback(() => {
-    closeTab(tab.id)
-  }, [closeTab, tab.id])
-
-  // Handle "Move to New Window" action
-  const handleMoveToNewWindow = React.useCallback(() => {
-    if (!activeWorkspaceId) return
-
-    // Build tab params based on tab type
-    const tabParams: Record<string, string> = {}
-
-    switch (tab.type) {
-      case 'chat': {
-        const chatTab = tab as ChatTab
-        tabParams.sessionId = chatTab.sessionId
-        if (chatTab.agentId) tabParams.agentId = chatTab.agentId
-        break
-      }
-      case 'agent-info': {
-        const agentTab = tab as AgentInfoTab
-        tabParams.agentId = agentTab.agentId
-        break
-      }
-      case 'file': {
-        const fileTab = tab as FileTab
-        tabParams.path = fileTab.path
-        break
-      }
-      case 'browser': {
-        const browserTab = tab as BrowserTab
-        tabParams.url = browserTab.url
-        break
-      }
-      case 'source-info': {
-        const sourceTab = tab as SourceInfoTab
-        tabParams.sourceSlug = sourceTab.sourceSlug
-        if (sourceTab.agentSlug) tabParams.agentSlug = sourceTab.agentSlug
-        break
-      }
-      // settings, shortcuts, preferences don't need extra params
-    }
-
-    // Open in new window
-    window.electronAPI.openTabContentWindow({
-      workspaceId: activeWorkspaceId,
-      tabType: tab.type,
-      tabParams,
-    })
-
-    // Close the tab in the current window
-    rawCloseTab(tab.id)
-  }, [activeWorkspaceId, rawCloseTab, tab])
-
   // Check if there are any type-specific actions
   const hasTypeActions = tab.type === 'file' || tab.type === 'browser' || tab.type === 'chat'
 
-  // Always show menu - at minimum we have "Move to New Window"
-  // (previously only showed if closable or had type actions)
+  // Only show menu if there are actions available
+  if (!hasTypeActions) {
+    return null
+  }
 
   return (
     <DropdownMenu>
@@ -418,23 +342,6 @@ function TabHeaderActions({ tab, onOpenRename }: TabHeaderActionsProps) {
               Open in browser
             </StyledDropdownMenuItem>
           </>
-        )}
-
-        {/* Separator before window/close actions if there are type-specific actions */}
-        {hasTypeActions && <StyledDropdownMenuSeparator />}
-
-        {/* Move to new window */}
-        <StyledDropdownMenuItem onClick={handleMoveToNewWindow}>
-          <AppWindow />
-          Move to New Window
-        </StyledDropdownMenuItem>
-
-        {/* Close tab action */}
-        {tab.closable && (
-          <StyledDropdownMenuItem onClick={handleClose}>
-            <X />
-            Close tab
-          </StyledDropdownMenuItem>
         )}
       </StyledDropdownMenuContent>
     </DropdownMenu>

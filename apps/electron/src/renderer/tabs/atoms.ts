@@ -61,14 +61,6 @@ export const tabsByTypeAtom = atom((get) => {
 })
 
 /**
- * Derived atom: check if tab bar should be visible (2+ tabs)
- */
-export const isTabBarVisibleAtom = atom((get) => {
-  const state = get(tabStateAtom)
-  return state.tabs.length >= 2
-})
-
-/**
  * Action atom: open a tab (or activate existing)
  */
 export const openTabAtom = atom(null, (get, set, tab: Tab) => {
@@ -76,10 +68,10 @@ export const openTabAtom = atom(null, (get, set, tab: Tab) => {
   const existingIndex = state.tabs.findIndex((t) => t.id === tab.id)
 
   if (existingIndex >= 0) {
-    // Tab exists - just activate it
+    // View exists - just activate it
     set(tabStateAtom, { ...state, activeTabId: tab.id })
   } else {
-    // New tab - add and activate
+    // New view - add and activate
     set(tabStateAtom, {
       ...state,
       tabs: [...state.tabs, tab],

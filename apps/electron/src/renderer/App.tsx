@@ -2,8 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore } from 'jotai'
-import type { Session, Workspace, SessionEvent, Message, SubAgentMetadata, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, TodoState, NewChatActionParams, TabContentWindowParams } from '../shared/types'
-import type { Tab, TabType, ChatTab, AgentInfoTab, FileTab, BrowserTab, SourceInfoTab } from './tabs/types'
+import type { Session, Workspace, SessionEvent, Message, SubAgentMetadata, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, TodoState, NewChatActionParams } from '../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -36,125 +35,6 @@ import {
 import { getDefaultStore } from 'jotai'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'ready'
-
-/** Window mode - 'main' for full app, 'tab-content' for standalone tab windows */
-type WindowMode = 'main' | 'tab-content'
-
-/**
- * Check if this is a tab content window and get the initial tab config
- */
-function getWindowModeConfig(): { mode: WindowMode; initialTab: Tab | null } {
-  const params = new URLSearchParams(window.location.search)
-  const mode = params.get('mode')
-
-  if (mode !== 'tab-content') {
-    return { mode: 'main', initialTab: null }
-  }
-
-  const workspaceId = params.get('workspaceId') || ''
-  const tabType = (params.get('tabType') || 'settings') as TabType
-
-  // Extract tab-specific params
-  const tabParams: Record<string, string> = {}
-  params.forEach((value, key) => {
-    if (!['workspaceId', 'mode', 'tabType'].includes(key)) {
-      tabParams[key] = value
-    }
-  })
-
-  // Build the initial tab
-  const initialTab = buildInitialTab(tabType, tabParams, workspaceId)
-  return { mode: 'tab-content', initialTab }
-}
-
-/**
- * Build a Tab object from URL params for tab-content windows
- */
-function buildInitialTab(tabType: TabType, tabParams: Record<string, string>, workspaceId: string): Tab {
-  const base = {
-    label: getInitialTabLabel(tabType, tabParams),
-    closable: true,
-  }
-
-  switch (tabType) {
-    case 'chat':
-      return {
-        ...base,
-        id: `chat:${tabParams.sessionId}`,
-        type: 'chat',
-        sessionId: tabParams.sessionId || '',
-        workspaceId,
-        agentId: tabParams.agentId,
-      } as ChatTab
-
-    case 'agent-info':
-      return {
-        ...base,
-        id: `agent-info:${tabParams.agentId}`,
-        type: 'agent-info',
-        agentId: tabParams.agentId || '',
-        workspaceId,
-      } as AgentInfoTab
-
-    case 'file':
-      return {
-        ...base,
-        id: `file:${tabParams.path}`,
-        type: 'file',
-        path: tabParams.path || '',
-      } as FileTab
-
-    case 'browser':
-      return {
-        ...base,
-        id: `browser:${tabParams.url}`,
-        type: 'browser',
-        url: tabParams.url || '',
-      } as BrowserTab
-
-    case 'source-info':
-      const sourceId = tabParams.agentSlug
-        ? `source-info:${tabParams.agentSlug}:${tabParams.sourceSlug}`
-        : `source-info:${tabParams.sourceSlug}`
-      return {
-        ...base,
-        id: sourceId,
-        type: 'source-info',
-        sourceSlug: tabParams.sourceSlug || '',
-        workspaceId,
-        agentSlug: tabParams.agentSlug,
-      } as SourceInfoTab
-
-    case 'settings':
-      return { ...base, id: 'settings', type: 'settings' }
-
-    case 'shortcuts':
-      return { ...base, id: 'shortcuts', type: 'shortcuts' }
-
-    case 'preferences':
-      return { ...base, id: 'preferences', type: 'preferences' }
-
-    default:
-      return { ...base, id: 'settings', type: 'settings' }
-  }
-}
-
-/**
- * Get a human-readable label for the initial tab
- */
-function getInitialTabLabel(tabType: TabType, tabParams: Record<string, string>): string {
-  switch (tabType) {
-    case 'chat': return 'Chat'
-    case 'settings': return 'Settings'
-    case 'shortcuts': return 'Keyboard Shortcuts'
-    case 'agent-info': return tabParams.agentId || 'Agent'
-    case 'file': return tabParams.path?.split('/').pop() || 'File'
-    case 'browser': return 'Browser'
-    case 'preferences': return 'User Preferences'
-    case 'source-info': return tabParams.sourceSlug || 'Source'
-    default: return 'Tab'
-  }
-}
 
 /** Type for the Jotai store returned by useStore() */
 type JotaiStore = ReturnType<typeof getDefaultStore>
@@ -248,11 +128,6 @@ export default function App() {
     })
   }, [])
 
-  // Window mode: 'main' for full app, 'tab-content' for standalone tab windows
-  // Computed once on mount from URL params
-  const [windowModeConfig] = useState(() => getWindowModeConfig())
-  const { mode: windowMode, initialTab } = windowModeConfig
-
   // App state: loading -> check auth -> onboarding or ready
   const [appState, setAppState] = useState<AppState>('loading')
   const [setupNeeds, setSetupNeeds] = useState<SetupNeeds | null>(null)
@@ -295,7 +170,6 @@ export default function App() {
   const [windowWorkspaceId, setWindowWorkspaceId] = useState<string | null>(null)
   const [currentModel, setCurrentModel] = useState(DEFAULT_MODEL)
   const [menuNewChatTrigger, setMenuNewChatTrigger] = useState(0)
-  const [menuNewChatTabTrigger, setMenuNewChatTabTrigger] = useState(0)
   // Permission requests per session (queue to handle multiple concurrent requests)
   const [pendingPermissions, setPendingPermissions] = useState<Map<string, PermissionRequest[]>>(new Map())
   // Credential requests per session (queue to handle multiple concurrent requests)
@@ -398,6 +272,15 @@ export default function App() {
     setShowResetDialog(true)
   }, [])
 
+  // Get initial sessionId and focused mode from URL params (for "Open in New Window" feature)
+  const { initialSessionId, isFocusedMode } = useMemo(() => {
+    const params = new URLSearchParams(window.location.search)
+    return {
+      initialSessionId: params.get('sessionId'),
+      isFocusedMode: params.get('focused') === 'true',
+    }
+  }, [])
+
   // Check auth state and get window's workspace ID on mount
   useEffect(() => {
     const initialize = async () => {
@@ -469,6 +352,14 @@ export default function App() {
       setSessionOptions(optionsMap)
       // Mark sessions as loaded for splash screen
       setSessionsLoaded(true)
+
+      // If window was opened with a specific session (via "Open in New Window"), open that tab
+      if (initialSessionId && windowWorkspaceId) {
+        const session = loadedSessions.find(s => s.id === initialSessionId)
+        if (session) {
+          openChatTab(session.id, windowWorkspaceId, session.name || 'Chat', session.agentId)
+        }
+      }
     })
     // Load stored model preference
     window.electronAPI.getModel().then((storedModel) => {
@@ -484,7 +375,7 @@ export default function App() {
     })
     // Load app-level theme
     window.electronAPI.getAppTheme().then(setAppTheme)
-  }, [appState])
+  }, [appState, initialSessionId, windowWorkspaceId, openChatTab])
 
   // Load agents and workspace theme when window's workspace is set
   useEffect(() => {
@@ -697,9 +588,6 @@ export default function App() {
     const unsubNewChat = window.electronAPI.onMenuNewChat(() => {
       setMenuNewChatTrigger(n => n + 1)
     })
-    const unsubNewChatTab = window.electronAPI.onMenuNewChatTab(() => {
-      setMenuNewChatTabTrigger(n => n + 1)
-    })
     const unsubSettings = window.electronAPI.onMenuOpenSettings(() => {
       handleOpenSettings()
     })
@@ -713,7 +601,6 @@ export default function App() {
 
     return () => {
       unsubNewChat()
-      unsubNewChatTab()
       unsubSettings()
       unsubShortcuts()
       unsubHelp()
@@ -1365,9 +1252,7 @@ export default function App() {
               contextValue={chatContextValue}
               defaultLayout={[20, 32, 48]}
               menuNewChatTrigger={menuNewChatTrigger}
-              menuNewChatTabTrigger={menuNewChatTabTrigger}
-              windowMode={windowMode}
-              initialTab={initialTab}
+              isFocusedMode={isFocusedMode}
             />
             <ResetConfirmationDialog
               open={showResetDialog}

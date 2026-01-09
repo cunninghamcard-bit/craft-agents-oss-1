@@ -181,7 +181,7 @@ export function InputContainer({
       <motion.div
         ref={containerRef}
         className={cn(
-          "relative rounded-[8px] shadow-middle overflow-hidden transition-colors bg-background"
+          "relative rounded-[12px] shadow-middle overflow-hidden transition-colors bg-background"
         )}
         initial={false}
         animate={{ height: targetHeight }}

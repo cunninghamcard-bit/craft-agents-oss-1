@@ -60,7 +60,7 @@ class TabErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState>
             size="sm"
             onClick={() => this.props.onClose()}
           >
-            Close Tab
+            Close
           </Button>
         </div>
       )

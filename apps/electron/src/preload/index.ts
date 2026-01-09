@@ -29,10 +29,9 @@ const api: ElectronAPI = {
   getWindowWorkspace: () => ipcRenderer.invoke(IPC_CHANNELS.GET_WINDOW_WORKSPACE),
   getWindowMode: () => ipcRenderer.invoke(IPC_CHANNELS.GET_WINDOW_MODE),
   openWorkspace: (workspaceId: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_WORKSPACE, workspaceId),
+  openSessionInNewWindow: (workspaceId: string, sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.OPEN_SESSION_IN_NEW_WINDOW, workspaceId, sessionId),
   switchWorkspace: (workspaceId: string) => ipcRenderer.invoke(IPC_CHANNELS.SWITCH_WORKSPACE, workspaceId),
   closeWindow: () => ipcRenderer.invoke(IPC_CHANNELS.CLOSE_WINDOW),
-  openTabContentWindow: (params: { workspaceId: string; tabType: string; tabParams?: Record<string, string> }) =>
-    ipcRenderer.invoke(IPC_CHANNELS.OPEN_TAB_CONTENT_WINDOW, params),
 
   // Agent management
   getAgents: (workspaceId: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_AGENTS, workspaceId),
@@ -121,11 +120,6 @@ const api: ElectronAPI = {
     const handler = () => callback()
     ipcRenderer.on(IPC_CHANNELS.MENU_NEW_CHAT, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.MENU_NEW_CHAT, handler)
-  },
-  onMenuNewChatTab: (callback: () => void) => {
-    const handler = () => callback()
-    ipcRenderer.on(IPC_CHANNELS.MENU_NEW_CHAT_TAB, handler)
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.MENU_NEW_CHAT_TAB, handler)
   },
   onMenuOpenSettings: (callback: () => void) => {
     const handler = () => callback()

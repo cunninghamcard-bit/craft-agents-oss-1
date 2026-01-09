@@ -110,22 +110,10 @@ async function createInitialWindows(): Promise<void> {
       // Skip invalid workspaces
       if (!validWorkspaceIds.includes(saved.workspaceId)) continue
 
-      if (saved.type === 'tab-content' && saved.query) {
-        // Restore tab-content window with full query
-        const params = Object.fromEntries(new URLSearchParams(saved.query))
-        const win = windowManager.createTabContentWindow(
-          saved.workspaceId,
-          params.tabType || 'settings',
-          params
-        )
-        win.setBounds(saved.bounds)
-        restoredCount++
-      } else {
-        // Restore main window
-        const win = windowManager.createWindow(saved.workspaceId)
-        win.setBounds(saved.bounds)
-        restoredCount++
-      }
+      // Restore main window
+      const win = windowManager.createWindow(saved.workspaceId)
+      win.setBounds(saved.bounds)
+      restoredCount++
     }
 
     if (restoredCount > 0) {

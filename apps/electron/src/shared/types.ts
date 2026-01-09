@@ -488,9 +488,9 @@ export const IPC_CHANNELS = {
   GET_WINDOW_WORKSPACE: 'window:getWorkspace',
   GET_WINDOW_MODE: 'window:getMode',
   OPEN_WORKSPACE: 'window:openWorkspace',
+  OPEN_SESSION_IN_NEW_WINDOW: 'window:openSessionInNewWindow',
   SWITCH_WORKSPACE: 'window:switchWorkspace',
   CLOSE_WINDOW: 'window:close',
-  OPEN_TAB_CONTENT_WINDOW: 'window:openTabContent',
 
   // Agent management
   GET_AGENTS: 'agents:get',
@@ -547,7 +547,6 @@ export const IPC_CHANNELS = {
 
   // Menu actions (main → renderer)
   MENU_NEW_CHAT: 'menu:newChat',
-  MENU_NEW_CHAT_TAB: 'menu:newChatTab',
   MENU_OPEN_SETTINGS: 'menu:openSettings',
   MENU_KEYBOARD_SHORTCUTS: 'menu:keyboardShortcuts',
   MENU_OPEN_HELP: 'menu:openHelp',
@@ -849,9 +848,9 @@ export interface ElectronAPI {
   getWindowWorkspace(): Promise<string | null>
   getWindowMode(): Promise<string | null>
   openWorkspace(workspaceId: string): Promise<void>
+  openSessionInNewWindow(workspaceId: string, sessionId: string): Promise<void>
   switchWorkspace(workspaceId: string): Promise<void>
   closeWindow(): Promise<void>
-  openTabContentWindow(params: TabContentWindowParams): Promise<void>
 
   // Agent management
   getAgents(workspaceId: string): Promise<SubAgentMetadata[]>
@@ -908,7 +907,6 @@ export interface ElectronAPI {
 
   // Menu event listeners
   onMenuNewChat(callback: () => void): () => void
-  onMenuNewChatTab(callback: () => void): () => void
   onMenuOpenSettings(callback: () => void): () => void
   onMenuKeyboardShortcuts(callback: () => void): () => void
   onMenuOpenHelp(callback: () => void): () => void
@@ -1075,16 +1073,6 @@ export interface DeepLinkNavigation {
   actionParams?: Record<string, string>
   sidebar?: string
   sidebarParams?: Record<string, string>
-}
-
-/**
- * Parameters for opening a tab content window
- */
-export interface TabContentWindowParams {
-  workspaceId: string
-  tabType: string
-  /** Tab-specific parameters (sessionId, agentId, path, etc.) */
-  tabParams?: Record<string, string>
 }
 
 declare global {

@@ -97,11 +97,6 @@ import { SourcesListPanel } from "./SourcesListPanel"
  * 2. Update App.tsx to include in contextValue
  * 3. Use via useChatContext() hook in child components
  */
-import type { Tab } from '@/tabs/types'
-
-/** Window mode - 'main' for full app, 'tab-content' for standalone tab windows */
-type WindowMode = 'main' | 'tab-content'
-
 interface ChatProps {
   /** All data and callbacks - passed directly to ChatProvider */
   contextValue: ChatContextType
@@ -109,11 +104,8 @@ interface ChatProps {
   defaultLayout?: number[]
   defaultCollapsed?: boolean
   menuNewChatTrigger?: number
-  menuNewChatTabTrigger?: number
-  /** Window mode: 'main' (full UI) or 'tab-content' (tabs only, no sidebar) */
-  windowMode?: WindowMode
-  /** Initial tab for tab-content windows */
-  initialTab?: Tab | null
+  /** Focused mode - hides sidebars, shows only the chat content */
+  isFocusedMode?: boolean
 }
 
 /**
@@ -540,12 +532,8 @@ export function Chat({
   defaultLayout = [20, 32, 48],
   defaultCollapsed = false,
   menuNewChatTrigger,
-  menuNewChatTabTrigger,
-  windowMode = 'main',
-  initialTab,
+  isFocusedMode = false,
 }: ChatProps) {
-  // In tab-content mode, we only show the tab container (no sidebar, no session list)
-  const isTabContentMode = windowMode === 'tab-content'
   // Destructure commonly used values from context
   const {
     workspaces,
@@ -929,8 +917,6 @@ export function Chat({
       { key: 'b', cmd: true, action: () => setIsSidebarVisible(v => !v) },
       // New chat (context-aware: uses selected agent if in agent view)
       { key: 'n', cmd: true, action: () => handleNewChat(true) },
-      // New chat in new tab
-      { key: 't', cmd: true, action: () => handleNewChatInNewTab() },
       // Settings
       { key: ',', cmd: true, action: onOpenSettings },
     ],
@@ -1125,13 +1111,13 @@ export function Chat({
     }
   }, [session.selected, activeWorkspaceId])
 
-  // Sync tab activation with sidebar state (reverse direction)
-  // When user clicks a tab in the tab bar:
+  // Sync view activation with sidebar state (reverse direction)
+  // When the active view changes:
   // 1. session.selected - to highlight the session in the list
   // 2. viewMode/selectedAgentId - only if session isn't visible in current view
   // Does NOT sync when:
-  // - Tab change was initiated by sidebar (session already selected)
-  // - Opening a new tab (session already selected before tab exists)
+  // - View change was initiated by sidebar (session already selected)
+  // - Opening a new session (session already selected before view exists)
   const prevActiveTabIdRef = React.useRef<string | null>(null)
   const sessionSelectedRef = React.useRef(session.selected)
   sessionSelectedRef.current = session.selected
@@ -1156,7 +1142,7 @@ export function Chat({
         return
       }
 
-      // Tab bar click - update session selection
+      // View changed - update session selection
       // Don't change the sidebar view - user controls that
       setSession({ selected: chatTab.sessionId })
     }
@@ -1407,15 +1393,6 @@ export function Chat({
     openChatTab(newSession.id, activeWorkspace.id, 'New Chat', agentId)
   }, [activeWorkspace, chatFilter, selectedAgentId, onCreateSession, setSession, openChatTab])
 
-  // Create a new chat in a new tab (CMD+T)
-  const handleNewChatInNewTab = useCallback(async () => {
-    if (!activeWorkspace) return
-
-    const agentId = chatFilter?.kind === 'agent' ? selectedAgentId || undefined : undefined
-    const newSession = await onCreateSession(activeWorkspace.id, agentId)
-    openChatTab(newSession.id, activeWorkspace.id, 'New Chat', agentId, { forceNew: true })
-  }, [activeWorkspace, chatFilter, selectedAgentId, onCreateSession, openChatTab])
-
   // Add Source - opens a chat with the .settings builtin agent
   const handleAddSource = useCallback(async () => {
     if (!activeWorkspace || !openNewChat) return
@@ -1476,15 +1453,6 @@ export function Chat({
     menuTriggerRef.current = menuNewChatTrigger
     handleNewChat(true)
   }, [menuNewChatTrigger, handleNewChat])
-
-  // Respond to menu bar "New Chat in New Tab" trigger
-  const menuTabTriggerRef = useRef(menuNewChatTabTrigger)
-  useEffect(() => {
-    // Skip initial render
-    if (menuTabTriggerRef.current === menuNewChatTabTrigger) return
-    menuTabTriggerRef.current = menuNewChatTabTrigger
-    handleNewChatInNewTab()
-  }, [menuNewChatTabTrigger, handleNewChatInNewTab])
 
   // Handle agent context menu actions
   const handleAgentAction = useCallback(async (action: AgentAction) => {
@@ -1768,8 +1736,8 @@ export function Chat({
         */}
         <div className="titlebar-drag-region fixed top-0 left-0 right-0 h-[50px] z-40" />
 
-      {/* Sidebar Toggle Button - fixed position, animated opacity (main mode only) */}
-      {!isTabContentMode && (
+      {/* Sidebar Toggle Button - fixed position, animated opacity (hidden in focused mode) */}
+      {!isFocusedMode && (
         <motion.div
           initial={false}
           animate={{ opacity: isSidebarVisible ? 0 : 1 }}
@@ -1783,18 +1751,18 @@ export function Chat({
             onClick={() => setIsSidebarVisible(true)}
             className="h-7 w-7 titlebar-no-drag rounded-[4px] hover:bg-foreground/5"
           >
-            <PanelLeftRounded className="!h-5 !w-5 -translate-y-px" />
+            <PanelLeftRounded className="!h-5 !w-5" />
           </Button>
         </motion.div>
       )}
 
       {/* === OUTER LAYOUT: Sidebar | Main Content === */}
       <div className="h-full flex items-stretch relative">
-        {/* === SIDEBAR (Left) - main mode only ===
+        {/* === SIDEBAR (Left) === (hidden in focused mode)
             Animated width with spring physics for smooth 60-120fps transitions.
             Uses overflow-hidden to clip content during collapse animation.
             Resizable via drag handle on right edge (200-400px range). */}
-        {!isTabContentMode && (
+        {!isFocusedMode && (
         <motion.div
           initial={false}
           animate={{ width: isSidebarVisible ? sidebarWidth : 0 }}
@@ -1831,7 +1799,7 @@ export function Chat({
                   onClick={() => setIsSidebarVisible(false)}
                   className="h-7 w-7 shrink-0 rounded-[4px] hover:bg-foreground/5"
                 >
-                  <PanelLeftRounded className="!h-5 !w-5 -translate-y-px" />
+                  <PanelLeftRounded className="!h-5 !w-5" />
                 </Button>
               </div>
             </div>
@@ -2061,8 +2029,8 @@ export function Chat({
         </motion.div>
         )}
 
-        {/* Sidebar Resize Handle - main mode only */}
-        {!isTabContentMode && (
+        {/* Sidebar Resize Handle (hidden in focused mode) */}
+        {!isFocusedMode && (
         <div
           ref={resizeHandleRef}
           onMouseDown={(e) => { e.preventDefault(); setIsResizing('sidebar') }}
@@ -2090,8 +2058,8 @@ export function Chat({
         {/* === MAIN CONTENT (Right) ===
             Flex layout: Session List | Chat Display */}
         <div className="flex-1 overflow-hidden min-w-0 flex h-full pl-1.5 pr-2 pb-2 pt-1.5 gap-[3px]">
-          {/* === SESSION LIST PANEL === (main mode only) */}
-          {!isTabContentMode && (
+          {/* === SESSION LIST PANEL === (hidden in focused mode) */}
+          {!isFocusedMode && (
           <div
             className="h-full flex flex-col min-w-0 bg-background shrink-0 shadow-middle rounded-[14px] overflow-hidden"
             style={{ width: sessionListWidth }}
@@ -2298,15 +2266,19 @@ export function Chat({
                   onTodoStateChange={onTodoStateChange}
                   onRename={onRenameSession}
                   onFocusChatInput={focusChatInput}
-                  onSessionSelect={(selectedSession, { forceNewTab }) => {
+                  onSessionSelect={(selectedSession) => {
                     if (activeWorkspaceId) {
                       openChatTab(
                         selectedSession.id,
                         activeWorkspaceId,
                         getSessionTitle(selectedSession),
-                        selectedSession.agentId,
-                        { forceNew: forceNewTab }
+                        selectedSession.agentId
                       )
+                    }
+                  }}
+                  onOpenInNewWindow={(selectedSession) => {
+                    if (activeWorkspaceId) {
+                      window.electronAPI.openSessionInNewWindow(activeWorkspaceId, selectedSession.id)
                     }
                   }}
                   onNavigateToView={(view) => {
@@ -2333,8 +2305,8 @@ export function Chat({
           </div>
           )}
 
-          {/* Session List Resize Handle - main mode only */}
-          {!isTabContentMode && (
+          {/* Session List Resize Handle (hidden in focused mode) */}
+          {!isFocusedMode && (
           <div
             ref={sessionListHandleRef}
             onMouseDown={(e) => { e.preventDefault(); setIsResizing('session-list') }}
@@ -2345,13 +2317,10 @@ export function Chat({
               }
             }}
             onMouseLeave={() => { if (isResizing !== 'session-list') setSessionListHandleY(null) }}
-            className="relative w-px h-full cursor-col-resize flex justify-center shrink-0"
+            className="relative w-0 h-full cursor-col-resize flex justify-center shrink-0"
           >
-            {/* Horizontal connector at header height */}
-            <div className="absolute h-px bg-border" style={{ top: 50, left: -6, right: 0 }} />
             {/* Touch area */}
             <div className="absolute inset-y-0 -left-1.5 -right-1.5 flex justify-center cursor-col-resize">
-              <div className="w-px h-full bg-foreground-5" />
               <div
                 className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-0.5"
                 style={getResizeGradientStyle(sessionListHandleY)}
@@ -2362,7 +2331,7 @@ export function Chat({
 
           {/* === TAB CONTAINER PANEL === */}
           <div className="flex-1 overflow-hidden min-w-0 bg-background shadow-middle rounded-[14px]">
-            <TabContainer initialTab={initialTab} />
+            <TabContainer isFocusedMode={isFocusedMode} />
           </div>
         </div>
       </div>

@@ -26,7 +26,7 @@ function toQueryString(params?: Record<string, string | undefined>): string {
  */
 export const routes = {
   // ============================================
-  // Tab Routes - Open tabs in the tab bar
+  // Content Routes - Open views in the main panel
   // ============================================
   tab: {
     /** Open settings tab */

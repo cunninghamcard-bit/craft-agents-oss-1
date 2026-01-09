@@ -21,17 +21,5 @@ export type {
 export { useTabs } from './useTabs'
 
 // Components
-export { TabBar } from './TabBar'
 export { TabContent } from './TabContent'
 export { TabContainer } from './TabContainer'
-
-// Atoms (for advanced use cases)
-export {
-  tabStateAtom,
-  activeTabAtom,
-  isTabBarVisibleAtom,
-  openTabAtom,
-  closeTabAtom,
-  setActiveTabAtom,
-  validateTabsAtom,
-} from './atoms'

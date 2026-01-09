@@ -10,7 +10,6 @@ import { useCallback } from 'react'
 import {
   tabStateAtom,
   activeTabAtom,
-  isTabBarVisibleAtom,
   openTabAtom,
   closeTabAtom,
   setActiveTabAtom,
@@ -40,7 +39,6 @@ import type {
 export function useTabs() {
   const state = useAtomValue(tabStateAtom)
   const activeTab = useAtomValue(activeTabAtom)
-  const isTabBarVisible = useAtomValue(isTabBarVisibleAtom)
   const openTab = useSetAtom(openTabAtom)
   const closeTab = useSetAtom(closeTabAtom)
   const setActiveTab = useSetAtom(setActiveTabAtom)
@@ -54,11 +52,11 @@ export function useTabs() {
   const ensureMessagesLoaded = useSetAtom(ensureSessionMessagesLoadedAtom)
 
   /**
-   * Open a chat tab for a session
-   * - Default: switches existing tab to session (if one exists)
-   * - forceNew: always creates a new tab
+   * Open a chat view for a session
+   * - Default: switches to existing session (if one exists)
+   * - forceNew: always creates a new view
    *
-   * Messages are preloaded in the background (fire-and-forget) so the tab
+   * Messages are preloaded in the background (fire-and-forget) so the view
    * opens immediately. ChatTabPanel handles the loading state if messages
    * aren't ready yet.
    */
@@ -117,7 +115,7 @@ export function useTabs() {
         }
       }
 
-      // Create new tab
+      // Create new view
       const tab: ChatTab = {
         id: `chat:${sessionId}`,
         type: 'chat',
@@ -278,7 +276,7 @@ export function useTabs() {
         return
       }
 
-      // Create new tab
+      // Create new view
       const tab: SourceInfoTab = {
         id: tabId,
         type: 'source-info',
@@ -339,7 +337,6 @@ export function useTabs() {
     tabs: state.tabs,
     activeTab,
     activeTabId: state.activeTabId,
-    isTabBarVisible,
 
     // Core actions
     openTab,

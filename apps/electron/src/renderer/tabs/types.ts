@@ -23,7 +23,7 @@ export interface TabBase {
   id: string
   /** Tab type for component mapping */
   type: TabType
-  /** Display label in tab bar */
+  /** Display label in header */
   label: string
   /** Whether the tab can be closed */
   closable: boolean
@@ -124,10 +124,10 @@ export interface TabState {
 }
 
 /**
- * Options for opening a chat tab
+ * Options for opening a chat view
  */
 export interface OpenChatTabOptions {
-  /** Force opening a new tab even if session already has one */
+  /** Force opening a new view even if session already has one */
   forceNew?: boolean
   /** Pre-fill the chat input with this text (not sent automatically) */
   initialInput?: string

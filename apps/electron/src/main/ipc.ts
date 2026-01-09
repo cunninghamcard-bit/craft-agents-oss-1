@@ -168,19 +168,19 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     windowManager.focusOrCreateWindow(workspaceId)
   })
 
-  // Get mode for the calling window
-  ipcMain.handle(IPC_CHANNELS.GET_WINDOW_MODE, (event) => {
-    return windowManager.getModeForWindow(event.sender.id)
+  // Open a session in a new window
+  ipcMain.handle(IPC_CHANNELS.OPEN_SESSION_IN_NEW_WINDOW, async (_event, workspaceId: string, sessionId: string) => {
+    windowManager.createWindow(workspaceId, sessionId)
+  })
+
+  // Get mode for the calling window (always 'main' now)
+  ipcMain.handle(IPC_CHANNELS.GET_WINDOW_MODE, () => {
+    return 'main'
   })
 
   // Close the calling window
   ipcMain.handle(IPC_CHANNELS.CLOSE_WINDOW, (event) => {
     windowManager.closeWindow(event.sender.id)
-  })
-
-  // Open a tab content window (lightweight window showing only tab content)
-  ipcMain.handle(IPC_CHANNELS.OPEN_TAB_CONTENT_WINDOW, async (_event, params: { workspaceId: string; tabType: string; tabParams?: Record<string, string> }) => {
-    windowManager.createTabContentWindow(params.workspaceId, params.tabType, params.tabParams)
   })
 
   // Switch workspace in current window (in-window switching)

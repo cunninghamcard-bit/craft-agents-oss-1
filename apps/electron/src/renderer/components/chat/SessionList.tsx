@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react"
 import { formatDistanceToNow, isToday, isYesterday, format, startOfDay } from "date-fns"
-import { Trash2, Pencil, MoreHorizontal, Flag, FlagOff, MailOpen, Search, X, FolderOpen, Share2, Copy, Link2Off, AppWindow, Layers, Plus } from "lucide-react"
+import { Trash2, Pencil, MoreHorizontal, Flag, FlagOff, MailOpen, Search, X, FolderOpen, Share2, Copy, Link2Off, AppWindow } from "lucide-react"
 import { toast } from "sonner"
 
 import { cn, isHexColor } from "@/lib/utils"
@@ -192,8 +192,7 @@ interface SessionItemProps {
   onUnflag?: (sessionId: string) => void
   onMarkUnread: (sessionId: string) => void
   onDelete: (sessionId: string, skipConfirmation?: boolean) => Promise<boolean>
-  onSelect: (forceNewTab: boolean) => void
-  onOpenInNewTab: () => void
+  onSelect: () => void
   onOpenInNewWindow: () => void
   /** Current permission mode for this session (from real-time state) */
   permissionMode?: PermissionMode
@@ -222,7 +221,6 @@ function SessionItem({
   onMarkUnread,
   onDelete,
   onSelect,
-  onOpenInNewTab,
   onOpenInNewWindow,
   permissionMode,
   searchQuery,
@@ -234,12 +232,10 @@ function SessionItem({
   // Get current todo state from session properties
   const currentTodoState = getSessionTodoState(item)
 
-  const handleClick = (e: React.MouseEvent) => {
+  const handleClick = () => {
     // Start perf tracking for session switch
     rendererPerf.startSessionSwitch(item.id)
-    // Cmd+Click (Mac) or Ctrl+Click (Windows/Linux) opens in new tab
-    const forceNewTab = e.metaKey || e.ctrlKey
-    onSelect(forceNewTab)
+    onSelect()
   }
 
   const handleTodoStateSelect = (state: TodoStateId) => {
@@ -475,23 +471,11 @@ function SessionItem({
                 <Pencil />
                 Rename
               </StyledDropdownMenuItem>
+              <StyledDropdownMenuItem onClick={onOpenInNewWindow}>
+                <AppWindow />
+                Open in New Window
+              </StyledDropdownMenuItem>
               <StyledDropdownMenuSeparator />
-              <DropdownMenuSub>
-                <StyledDropdownMenuSubTrigger>
-                  <Layers />
-                  Open In...
-                </StyledDropdownMenuSubTrigger>
-                <StyledDropdownMenuSubContent>
-                  <StyledDropdownMenuItem onClick={onOpenInNewWindow}>
-                    <AppWindow />
-                    New Window
-                  </StyledDropdownMenuItem>
-                  <StyledDropdownMenuItem onClick={onOpenInNewTab}>
-                    <Plus />
-                    New Tab
-                  </StyledDropdownMenuItem>
-                </StyledDropdownMenuSubContent>
-              </DropdownMenuSub>
               <StyledDropdownMenuItem onClick={() => window.electronAPI.sessionCommand(item.id, { type: 'showInFinder' })}>
                 <FolderOpen />
                 View in Finder
@@ -533,8 +517,10 @@ interface SessionListProps {
   onRename: (sessionId: string, name: string) => void
   /** Called when Enter is pressed to focus chat input */
   onFocusChatInput?: () => void
-  /** Called when a session is selected (click or Cmd+click for new tab) */
-  onSessionSelect?: (session: Session, options: { forceNewTab: boolean }) => void
+  /** Called when a session is selected */
+  onSessionSelect?: (session: Session) => void
+  /** Called when user wants to open a session in a new window */
+  onOpenInNewWindow?: (session: Session) => void
   /** Called to navigate to a specific view (e.g., 'completed', 'inbox') */
   onNavigateToView?: (view: 'inbox' | 'completed' | 'flagged') => void
   /** Unified session options per session (real-time state) */
@@ -574,6 +560,7 @@ export function SessionList({
   onRename,
   onFocusChatInput,
   onSessionSelect,
+  onOpenInNewWindow,
   onNavigateToView,
   sessionOptions,
   searchActive,
@@ -838,24 +825,13 @@ export function SessionList({
                     onUnflag={onUnflag ? handleUnflagWithToast : undefined}
                     onMarkUnread={onMarkUnread}
                     onDelete={handleDeleteWithToast}
-                    onSelect={(forceNewTab) => {
+                    onSelect={() => {
                       // Always update selection
                       setSession({ ...session, selected: item.id })
-                      // Notify parent for tab handling
-                      onSessionSelect?.(item, { forceNewTab })
+                      // Notify parent
+                      onSessionSelect?.(item)
                     }}
-                    onOpenInNewTab={() => {
-                      // Open in new tab without changing selection
-                      onSessionSelect?.(item, { forceNewTab: true })
-                    }}
-                    onOpenInNewWindow={() => {
-                      // Open in new window via IPC
-                      window.electronAPI.openTabContentWindow({
-                        workspaceId: item.workspaceId,
-                        tabType: 'chat',
-                        tabParams: { sessionId: item.id },
-                      })
-                    }}
+                    onOpenInNewWindow={() => onOpenInNewWindow?.(item)}
                     permissionMode={sessionOptions?.get(item.id)?.permissionMode}
                     searchQuery={searchQuery}
                     todoStates={todoStates}

@@ -599,7 +599,7 @@ export function FreeFormInput({
         className={cn(
           'overflow-hidden transition-all',
           // Container styling - only when not wrapped by InputContainer
-          !unstyled && 'rounded-[8px] shadow-middle',
+          !unstyled && 'rounded-[16px] shadow-middle',
           !unstyled && 'bg-background',
           isDraggingOver && 'ring-2 ring-foreground ring-offset-2 ring-offset-background bg-foreground/5'
         )}

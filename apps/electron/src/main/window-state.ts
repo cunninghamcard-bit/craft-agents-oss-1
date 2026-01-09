@@ -11,10 +11,9 @@ export interface WindowBounds {
 }
 
 export interface SavedWindow {
-  type: 'main' | 'tab-content'
+  type: 'main'
   workspaceId: string
   bounds: WindowBounds
-  query?: string  // For tab-content: the URL query string (e.g., "tabType=chat&sessionId=xxx")
 }
 
 export interface WindowState {

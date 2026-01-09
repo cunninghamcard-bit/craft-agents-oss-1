@@ -309,7 +309,7 @@ export default React.memo(function ChatTabPanel({ tab }: ChatTabPanelProps) {
       )
     }
 
-    // Session truly doesn't exist (deleted while tab was open)
+    // Session truly doesn't exist (deleted while view was open)
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3 text-muted-foreground">
         <AlertCircle className="h-10 w-10" />
@@ -319,7 +319,7 @@ export default React.memo(function ChatTabPanel({ tab }: ChatTabPanelProps) {
           size="sm"
           onClick={() => closeTab(chatTab.id)}
         >
-          Close Tab
+          Close
         </Button>
       </div>
     )

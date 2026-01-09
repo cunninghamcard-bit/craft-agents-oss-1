@@ -42,15 +42,6 @@ const sections: ShortcutSection[] = [
     ],
   },
   {
-    title: 'Tabs',
-    shortcuts: [
-      { keys: [cmdKey, '['], description: 'Previous tab' },
-      { keys: [cmdKey, ']'], description: 'Next tab' },
-      { keys: [cmdKey, 'W'], description: 'Close tab' },
-      { keys: [cmdKey, 'Click'], description: 'Open in new tab' },
-    ],
-  },
-  {
     title: 'Navigation',
     shortcuts: [
       { keys: ['Tab'], description: 'Move to next zone' },
