@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
 import { useSetAtom, useStore } from 'jotai'
-import type { Session, Workspace, SessionEvent, Message, SubAgentMetadata, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, TodoState, NewChatActionParams } from '../shared/types'
+import type { Session, Workspace, SessionEvent, Message, SubAgentMetadata, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, TodoState, NewChatActionParams, TabContentWindowParams } from '../shared/types'
+import type { Tab, TabType, ChatTab, AgentInfoTab, FileTab, BrowserTab, SourceInfoTab } from './tabs/types'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
 import { generateMessageId } from '../shared/types'
@@ -35,6 +36,125 @@ import {
 import { getDefaultStore } from 'jotai'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'ready'
+
+/** Window mode - 'main' for full app, 'tab-content' for standalone tab windows */
+type WindowMode = 'main' | 'tab-content'
+
+/**
+ * Check if this is a tab content window and get the initial tab config
+ */
+function getWindowModeConfig(): { mode: WindowMode; initialTab: Tab | null } {
+  const params = new URLSearchParams(window.location.search)
+  const mode = params.get('mode')
+
+  if (mode !== 'tab-content') {
+    return { mode: 'main', initialTab: null }
+  }
+
+  const workspaceId = params.get('workspaceId') || ''
+  const tabType = (params.get('tabType') || 'settings') as TabType
+
+  // Extract tab-specific params
+  const tabParams: Record<string, string> = {}
+  params.forEach((value, key) => {
+    if (!['workspaceId', 'mode', 'tabType'].includes(key)) {
+      tabParams[key] = value
+    }
+  })
+
+  // Build the initial tab
+  const initialTab = buildInitialTab(tabType, tabParams, workspaceId)
+  return { mode: 'tab-content', initialTab }
+}
+
+/**
+ * Build a Tab object from URL params for tab-content windows
+ */
+function buildInitialTab(tabType: TabType, tabParams: Record<string, string>, workspaceId: string): Tab {
+  const base = {
+    label: getInitialTabLabel(tabType, tabParams),
+    closable: true,
+  }
+
+  switch (tabType) {
+    case 'chat':
+      return {
+        ...base,
+        id: `chat:${tabParams.sessionId}`,
+        type: 'chat',
+        sessionId: tabParams.sessionId || '',
+        workspaceId,
+        agentId: tabParams.agentId,
+      } as ChatTab
+
+    case 'agent-info':
+      return {
+        ...base,
+        id: `agent-info:${tabParams.agentId}`,
+        type: 'agent-info',
+        agentId: tabParams.agentId || '',
+        workspaceId,
+      } as AgentInfoTab
+
+    case 'file':
+      return {
+        ...base,
+        id: `file:${tabParams.path}`,
+        type: 'file',
+        path: tabParams.path || '',
+      } as FileTab
+
+    case 'browser':
+      return {
+        ...base,
+        id: `browser:${tabParams.url}`,
+        type: 'browser',
+        url: tabParams.url || '',
+      } as BrowserTab
+
+    case 'source-info':
+      const sourceId = tabParams.agentSlug
+        ? `source-info:${tabParams.agentSlug}:${tabParams.sourceSlug}`
+        : `source-info:${tabParams.sourceSlug}`
+      return {
+        ...base,
+        id: sourceId,
+        type: 'source-info',
+        sourceSlug: tabParams.sourceSlug || '',
+        workspaceId,
+        agentSlug: tabParams.agentSlug,
+      } as SourceInfoTab
+
+    case 'settings':
+      return { ...base, id: 'settings', type: 'settings' }
+
+    case 'shortcuts':
+      return { ...base, id: 'shortcuts', type: 'shortcuts' }
+
+    case 'preferences':
+      return { ...base, id: 'preferences', type: 'preferences' }
+
+    default:
+      return { ...base, id: 'settings', type: 'settings' }
+  }
+}
+
+/**
+ * Get a human-readable label for the initial tab
+ */
+function getInitialTabLabel(tabType: TabType, tabParams: Record<string, string>): string {
+  switch (tabType) {
+    case 'chat': return 'Chat'
+    case 'settings': return 'Settings'
+    case 'shortcuts': return 'Keyboard Shortcuts'
+    case 'agent-info': return tabParams.agentId || 'Agent'
+    case 'file': return tabParams.path?.split('/').pop() || 'File'
+    case 'browser': return 'Browser'
+    case 'preferences': return 'User Preferences'
+    case 'source-info': return tabParams.sourceSlug || 'Source'
+    default: return 'Tab'
+  }
+}
 
 /** Type for the Jotai store returned by useStore() */
 type JotaiStore = ReturnType<typeof getDefaultStore>
@@ -128,6 +248,11 @@ export default function App() {
     })
   }, [])
 
+  // Window mode: 'main' for full app, 'tab-content' for standalone tab windows
+  // Computed once on mount from URL params
+  const [windowModeConfig] = useState(() => getWindowModeConfig())
+  const { mode: windowMode, initialTab } = windowModeConfig
+
   // App state: loading -> check auth -> onboarding or ready
   const [appState, setAppState] = useState<AppState>('loading')
   const [setupNeeds, setSetupNeeds] = useState<SetupNeeds | null>(null)
@@ -193,6 +318,9 @@ export default function App() {
   const [sessionsLoaded, setSessionsLoaded] = useState(false)
   const [splashExiting, setSplashExiting] = useState(false)
   const [splashHidden, setSplashHidden] = useState(false)
+
+  // Notifications enabled state (from app settings)
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true)
 
   // Compute if app is fully ready (all data loaded)
   const isFullyReady = appState === 'ready' && sessionsLoaded && !isLoadingAgents
@@ -313,13 +441,15 @@ export default function App() {
     workspaceId: windowWorkspaceId,
     sessions,
     onNavigateToSession: handleNavigateToSession,
+    enabled: notificationsEnabled,
   })
 
-  // Load workspaces, sessions, model, and drafts when app is ready
+  // Load workspaces, sessions, model, notifications setting, and drafts when app is ready
   useEffect(() => {
     if (appState !== 'ready') return
 
     window.electronAPI.getWorkspaces().then(setWorkspaces)
+    window.electronAPI.getNotificationsEnabled().then(setNotificationsEnabled)
     window.electronAPI.getSessions().then((loadedSessions) => {
       setSessions(loadedSessions)
       // Initialize per-session atoms for isolated streaming updates
@@ -1236,6 +1366,8 @@ export default function App() {
               defaultLayout={[20, 32, 48]}
               menuNewChatTrigger={menuNewChatTrigger}
               menuNewChatTabTrigger={menuNewChatTabTrigger}
+              windowMode={windowMode}
+              initialTab={initialTab}
             />
             <ResetConfirmationDialog
               open={showResetDialog}

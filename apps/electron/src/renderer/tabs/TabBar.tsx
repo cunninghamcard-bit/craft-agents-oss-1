@@ -8,17 +8,25 @@
  * Features:
  * - Spinner indicator for tabs with active processing
  * - Unread badge for tabs with new messages
+ * - Right-click context menu with "Move to New Window" option
  */
 
 import * as React from 'react'
-import { X } from 'lucide-react'
+import { X, AppWindow } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useTabs } from './useTabs'
-import type { ChatTab, Tab } from './types'
+import type { ChatTab, Tab, AgentInfoTab, FileTab, BrowserTab, SourceInfoTab } from './types'
 import { FadingText } from '@/components/ui/fading-text'
 import { useChatContext } from '@/context/ChatContext'
 import { getSessionTitle, hasUnreadMessages, countUnreadMessages } from '@/utils/session'
 import { Spinner } from '@craft-agent/ui'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  StyledContextMenuContent,
+  StyledContextMenuItem,
+  StyledContextMenuSeparator,
+} from '@/components/ui/styled-context-menu'
 
 const MIN_TAB_WIDTH = 120
 const MAX_TAB_WIDTH = 200
@@ -35,7 +43,56 @@ interface TabBarProps {
 
 export function TabBar({ className, onClose }: TabBarProps) {
   const { tabs, activeTabId, setActiveTab, closeTab, isTabBarVisible } = useTabs()
-  const { sessions } = useChatContext()
+  const { sessions, activeWorkspaceId } = useChatContext()
+
+  // Handle "Move to New Window" action
+  const handleMoveToNewWindow = React.useCallback((tab: Tab) => {
+    if (!activeWorkspaceId) return
+
+    // Build tab params based on tab type
+    const tabParams: Record<string, string> = {}
+
+    switch (tab.type) {
+      case 'chat': {
+        const chatTab = tab as ChatTab
+        tabParams.sessionId = chatTab.sessionId
+        if (chatTab.agentId) tabParams.agentId = chatTab.agentId
+        break
+      }
+      case 'agent-info': {
+        const agentTab = tab as AgentInfoTab
+        tabParams.agentId = agentTab.agentId
+        break
+      }
+      case 'file': {
+        const fileTab = tab as FileTab
+        tabParams.path = fileTab.path
+        break
+      }
+      case 'browser': {
+        const browserTab = tab as BrowserTab
+        tabParams.url = browserTab.url
+        break
+      }
+      case 'source-info': {
+        const sourceTab = tab as SourceInfoTab
+        tabParams.sourceSlug = sourceTab.sourceSlug
+        if (sourceTab.agentSlug) tabParams.agentSlug = sourceTab.agentSlug
+        break
+      }
+      // settings, shortcuts, preferences don't need extra params
+    }
+
+    // Open in new window
+    window.electronAPI.openTabContentWindow({
+      workspaceId: activeWorkspaceId,
+      tabType: tab.type,
+      tabParams,
+    })
+
+    // Close the tab in the current window
+    closeTab(tab.id)
+  }, [activeWorkspaceId, closeTab])
 
   // Get tab label - for chat tabs, look up session title dynamically
   const getTabLabel = React.useCallback((tab: Tab): string => {
@@ -132,6 +189,7 @@ export function TabBar({ className, onClose }: TabBarProps) {
               isHovered={hoveredIndex === index}
               onActivate={() => setActiveTab(tab.id)}
               onClose={() => handleClose(tab.id)}
+              onMoveToNewWindow={() => handleMoveToNewWindow(tab)}
               onMouseEnter={() => setHoveredIndex(index)}
               onMouseLeave={() => setHoveredIndex(null)}
               width={needsScroll ? MIN_TAB_WIDTH : undefined}
@@ -154,6 +212,7 @@ interface TabItemProps {
   isHovered: boolean
   onActivate: () => void
   onClose: () => void
+  onMoveToNewWindow: () => void
   onMouseEnter: () => void
   onMouseLeave: () => void
   width?: number
@@ -163,7 +222,7 @@ interface TabItemProps {
   unreadCount?: number
 }
 
-function TabItem({ tab, label, isActive, isLast, hideSeparator, isHovered, onActivate, onClose, onMouseEnter, onMouseLeave, width, isProcessing, unreadCount }: TabItemProps) {
+function TabItem({ tab, label, isActive, isLast, hideSeparator, isHovered, onActivate, onClose, onMoveToNewWindow, onMouseEnter, onMouseLeave, width, isProcessing, unreadCount }: TabItemProps) {
   // Show spinner when processing (even on active tab), but not when hovered
   const showSpinner = !isHovered && isProcessing
   // Show unread badge only when tab is not active, not hovered, not processing, and has unread messages
@@ -172,71 +231,90 @@ function TabItem({ tab, label, isActive, isLast, hideSeparator, isHovered, onAct
   const showCloseButton = isHovered && tab.closable
 
   return (
-    <button
-      data-tab-id={tab.id}
-      onMouseDown={onActivate}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-      className={cn(
-        'relative flex items-center gap-1 px-2 text-[12px] font-medium select-none outline-none',
-        'focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring rounded-full',
-        !width && 'flex-1 min-w-0',
-        isActive
-          ? 'bg-background text-foreground border border-foreground/10'
-          : 'text-muted-foreground hover:text-foreground/80 hover:bg-background/50 border border-transparent'
-      )}
-      style={width ? { width: `${width}px`, minWidth: `${width}px` } : undefined}
-    >
-      {/* Left slot: Fixed width container for Close/Spinner/Badge */}
-      {tab.closable && (
-        <span className="w-5 h-5 -ml-1 flex items-center justify-center shrink-0">
-          {showCloseButton ? (
-            <span
-              role="button"
-              tabIndex={-1}
-              onClick={(e) => {
-                e.stopPropagation()
-                onClose()
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  onClose()
-                }
-              }}
-              className="p-0.5 rounded-full hover:bg-foreground/7"
-            >
-              <X className="h-3 w-3" />
-            </span>
-          ) : showSpinner ? (
-            <Spinner className="text-[8px] text-accent" />
-          ) : showUnreadBadge ? (
-            <span className="flex items-center justify-center w-2 h-2 rounded-full bg-accent text-[6px] font-semibold text-accent-foreground">
-              {unreadCount > 9 ? '+' : unreadCount}
-            </span>
-          ) : null}
-        </span>
-      )}
-      {/* Tab label - centered */}
-      <FadingText className="flex-1 text-center min-w-0">{label}</FadingText>
-      {/* Dirty indicator */}
-      {tab.dirty && !showSpinner && !showUnreadBadge && (
-        <span className="h-1.5 w-1.5 rounded-full bg-foreground/50 shrink-0" />
-      )}
-      {/* Spacer to balance left slot for centering */}
-      {tab.closable && !showSpinner && !showUnreadBadge && (
-        <span className="w-5 shrink-0" />
-      )}
-      {/* Separator line (after tab, except last) */}
-      {!isLast && (
-        <span
+    <ContextMenu>
+      <ContextMenuTrigger asChild>
+        <button
+          data-tab-id={tab.id}
+          onMouseDown={onActivate}
+          onMouseEnter={onMouseEnter}
+          onMouseLeave={onMouseLeave}
           className={cn(
-            'absolute right-0 top-1/2 -translate-y-1/2 w-px h-3',
-            hideSeparator ? 'bg-transparent' : 'bg-foreground/10'
+            'relative flex items-center gap-1 px-2 text-[12px] font-medium select-none outline-none',
+            'focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring rounded-full',
+            !width && 'flex-1 min-w-0',
+            isActive
+              ? 'bg-background text-foreground border border-foreground/10'
+              : 'text-muted-foreground hover:text-foreground/80 hover:bg-background/50 border border-transparent'
           )}
-        />
-      )}
-    </button>
+          style={width ? { width: `${width}px`, minWidth: `${width}px` } : undefined}
+        >
+          {/* Left slot: Fixed width container for Close/Spinner/Badge */}
+          {tab.closable && (
+            <span className="w-5 h-5 -ml-1 flex items-center justify-center shrink-0">
+              {showCloseButton ? (
+                <span
+                  role="button"
+                  tabIndex={-1}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onClose()
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      onClose()
+                    }
+                  }}
+                  className="p-0.5 rounded-full hover:bg-foreground/7"
+                >
+                  <X className="h-3 w-3" />
+                </span>
+              ) : showSpinner ? (
+                <Spinner className="text-[8px] text-accent" />
+              ) : showUnreadBadge ? (
+                <span className="flex items-center justify-center w-2 h-2 rounded-full bg-accent text-[6px] font-semibold text-accent-foreground">
+                  {unreadCount > 9 ? '+' : unreadCount}
+                </span>
+              ) : null}
+            </span>
+          )}
+          {/* Tab label - centered */}
+          <FadingText className="flex-1 text-center min-w-0">{label}</FadingText>
+          {/* Dirty indicator */}
+          {tab.dirty && !showSpinner && !showUnreadBadge && (
+            <span className="h-1.5 w-1.5 rounded-full bg-foreground/50 shrink-0" />
+          )}
+          {/* Spacer to balance left slot for centering */}
+          {tab.closable && (
+            <span className="w-5 shrink-0" />
+          )}
+          {/* Separator line (after tab, except last) */}
+          {!isLast && (
+            <span
+              className={cn(
+                'absolute right-0 top-1/2 -translate-y-1/2 w-px h-3',
+                hideSeparator ? 'bg-transparent' : 'bg-foreground/10'
+              )}
+            />
+          )}
+        </button>
+      </ContextMenuTrigger>
+      <StyledContextMenuContent>
+        <StyledContextMenuItem onClick={onMoveToNewWindow}>
+          <AppWindow className="h-4 w-4" />
+          Move to New Window
+        </StyledContextMenuItem>
+        {tab.closable && (
+          <>
+            <StyledContextMenuSeparator />
+            <StyledContextMenuItem onClick={onClose}>
+              <X className="h-4 w-4" />
+              Close Tab
+            </StyledContextMenuItem>
+          </>
+        )}
+      </StyledContextMenuContent>
+    </ContextMenu>
   )
 }

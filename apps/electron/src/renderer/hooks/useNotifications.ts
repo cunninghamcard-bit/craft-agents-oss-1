@@ -9,7 +9,69 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { Session } from '../../shared/types'
-import { hasUnreadMessages, countUnreadMessages } from '@/utils/session'
+import { hasUnreadMessages } from '@/utils/session'
+
+/**
+ * Draw a badge onto an icon image using Canvas
+ * Returns a data URL of the image with badge overlay
+ */
+function drawBadgeOnIcon(iconDataUrl: string, count: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      // Create canvas at icon size
+      const canvas = document.createElement('canvas')
+      const size = Math.max(img.width, img.height, 256) // Ensure at least 256px for quality
+      canvas.width = size
+      canvas.height = size
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        reject(new Error('Could not get canvas context'))
+        return
+      }
+
+      // Draw the base icon centered
+      const offsetX = (size - img.width) / 2
+      const offsetY = (size - img.height) / 2
+      ctx.drawImage(img, offsetX, offsetY, img.width, img.height)
+
+      // Badge parameters
+      const badgeRadius = size * 0.19  // Badge size relative to icon (increased for 22px on screen)
+      // Position: 8px up and 8px to the right (relative to icon size)
+      const offsetPx = (8 / 256) * size  // 8px at 256px icon size
+      const badgeX = size - badgeRadius - (size * 0.05) + offsetPx  // Moved right
+      const badgeY = badgeRadius + (size * 0.05) - offsetPx  // Moved up
+      const text = count > 99 ? '99+' : count.toString()
+
+      // Draw red badge circle with larger shadow (50% more blur)
+      ctx.shadowColor = 'rgba(0, 0, 0, 0.4)'
+      ctx.shadowBlur = size * 0.06
+      ctx.shadowOffsetY = size * 0.015
+
+      ctx.beginPath()
+      ctx.arc(badgeX, badgeY, badgeRadius, 0, Math.PI * 2)
+      ctx.fillStyle = '#FF3B30'  // iOS/macOS red
+      ctx.fill()
+
+      // Reset shadow for text
+      ctx.shadowColor = 'transparent'
+      ctx.shadowBlur = 0
+      ctx.shadowOffsetY = 0
+
+      // Draw white text (regular weight)
+      const fontSize = count > 99 ? badgeRadius * 0.65 : badgeRadius * 0.95
+      ctx.font = `400 ${fontSize}px -apple-system, BlinkMacSystemFont, sans-serif`
+      ctx.fillStyle = '#FFFFFF'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.fillText(text, badgeX, badgeY)
+
+      resolve(canvas.toDataURL('image/png'))
+    }
+    img.onerror = () => reject(new Error('Failed to load icon image'))
+    img.src = iconDataUrl
+  })
+}
 
 interface UseNotificationsOptions {
   /** Current workspace ID */
@@ -18,6 +80,8 @@ interface UseNotificationsOptions {
   sessions: Session[]
   /** Callback to navigate to a session when notification is clicked */
   onNavigateToSession?: (sessionId: string) => void
+  /** Whether notifications are enabled (from app settings) */
+  enabled?: boolean
 }
 
 interface UseNotificationsResult {
@@ -33,6 +97,7 @@ export function useNotifications({
   workspaceId,
   sessions,
   onNavigateToSession,
+  enabled = true,
 }: UseNotificationsOptions): UseNotificationsResult {
   const [isWindowFocused, setIsWindowFocused] = useState(true)
   const onNavigateToSessionRef = useRef(onNavigateToSession)
@@ -50,11 +115,7 @@ export function useNotifications({
     // Subscribe to focus changes
     const cleanup = window.electronAPI.onWindowFocusChange((isFocused) => {
       setIsWindowFocused(isFocused)
-
-      // Clear badge when window gains focus
-      if (isFocused) {
-        window.electronAPI.clearBadgeCount()
-      }
+      // Badge count is always shown based on unread count, not cleared on focus
     })
 
     return cleanup
@@ -70,24 +131,47 @@ export function useNotifications({
     return cleanup
   }, [])
 
-  // Update badge count when sessions change or focus changes
+  // Subscribe to badge draw requests from main process
+  // This uses Canvas API (only available in renderer) to draw badge on icon
+  useEffect(() => {
+    const cleanup = window.electronAPI.onBadgeDraw(async (data) => {
+      console.log('[Notifications] Badge draw request:', data.count)
+      try {
+        const badgedIconDataUrl = await drawBadgeOnIcon(data.iconDataUrl, data.count)
+        await window.electronAPI.setDockIconWithBadge(badgedIconDataUrl)
+        console.log('[Notifications] Badge icon set successfully')
+      } catch (error) {
+        console.error('[Notifications] Failed to draw badge:', error)
+      }
+    })
+
+    return cleanup
+  }, [])
+
+  // Update badge count when sessions change
   const updateBadgeCount = useCallback(() => {
-    // Only show badge when window is not focused
-    if (isWindowFocused) {
-      window.electronAPI.clearBadgeCount()
+    // Only show badge if notifications are enabled
+    if (!enabled) {
+      console.log('[Notifications] Badge disabled, clearing')
+      window.electronAPI.updateBadgeCount(0)
       return
     }
 
-    // Count total unread messages across all sessions
-    const totalUnread = sessions.reduce((count, session) => {
-      if (hasUnreadMessages(session)) {
-        return count + countUnreadMessages(session)
-      }
-      return count
-    }, 0)
+    // Count sessions that have unread messages
+    const unreadSessions = sessions.filter(hasUnreadMessages)
+    const totalUnread = unreadSessions.length
 
+    // Debug: log sessions with messages vs unread
+    const sessionsWithMessages = sessions.filter(s => s.messages && s.messages.length > 0)
+    console.log('[Notifications] Badge update:', {
+      totalSessions: sessions.length,
+      sessionsWithMessages: sessionsWithMessages.length,
+      unreadCount: totalUnread,
+    })
+
+    // Badge always shows unread count (regardless of focus)
     window.electronAPI.updateBadgeCount(totalUnread)
-  }, [sessions, isWindowFocused])
+  }, [sessions, enabled])
 
   // Auto-update badge when sessions or focus changes
   useEffect(() => {
@@ -96,6 +180,8 @@ export function useNotifications({
 
   // Show notification for a session
   const showSessionNotification = useCallback((session: Session, messagePreview?: string) => {
+    // Don't show notification if disabled in settings
+    if (!enabled) return
     // Don't show notification if window is focused
     if (isWindowFocused) return
     // Don't show if no workspace
@@ -111,7 +197,7 @@ export function useNotifications({
     }
 
     window.electronAPI.showNotification(title, body, workspaceId, session.id)
-  }, [isWindowFocused, workspaceId])
+  }, [enabled, isWindowFocused, workspaceId])
 
   return {
     isWindowFocused,

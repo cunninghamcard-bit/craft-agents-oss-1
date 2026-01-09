@@ -7,11 +7,16 @@
  * - Clicking notification navigates to the relevant session
  */
 
-import { Notification, app, BrowserWindow } from 'electron'
+import { Notification, app, BrowserWindow, nativeImage } from 'electron'
+import { join } from 'path'
+import { readFileSync } from 'fs'
 import { mainLog } from './logger'
 import type { WindowManager } from './window-manager'
 
 let windowManager: WindowManager | null = null
+let baseIconPath: string | null = null
+let baseIconDataUrl: string | null = null
+let currentBadgeCount: number = 0
 
 /**
  * Initialize the notification service with window manager reference
@@ -91,27 +96,78 @@ function handleNotificationClick(workspaceId: string, sessionId: string): void {
 }
 
 /**
+ * Initialize the base icon for badge overlay
+ * Call this during app startup
+ */
+export function initBadgeIcon(iconPath: string): void {
+  try {
+    baseIconPath = iconPath
+    // Read and cache the icon as base64 data URL
+    const iconBuffer = readFileSync(iconPath)
+    baseIconDataUrl = `data:image/png;base64,${iconBuffer.toString('base64')}`
+    mainLog.info('Badge icon initialized:', iconPath)
+  } catch (error) {
+    mainLog.error('Failed to initialize badge icon:', error)
+  }
+}
+
+/**
  * Update the app dock badge count (macOS only)
+ *
+ * Uses a canvas-based approach to draw the badge directly onto the dock icon.
+ * This works in both dev and production builds, unlike app.dock.setBadge().
  *
  * @param count - Number to show on badge (0 to clear)
  */
 export function updateBadgeCount(count: number): void {
   if (process.platform !== 'darwin') {
-    // Badge count is only supported on macOS
-    // On Windows, we could use setOverlayIcon, but that requires an icon
+    // Badge is only supported on macOS
+    return
+  }
+
+  // Skip if count hasn't changed
+  if (count === currentBadgeCount) {
     return
   }
 
   try {
+    currentBadgeCount = count
+
     if (count > 0) {
-      app.setBadgeCount(count)
+      // Draw badge onto icon using the renderer process
+      // We'll send this to the renderer which has Canvas API
+      const windows = BrowserWindow.getAllWindows()
+      if (windows.length > 0 && baseIconDataUrl) {
+        windows[0].webContents.send('badge:draw', { count, iconDataUrl: baseIconDataUrl })
+      }
     } else {
-      // Clear the badge
-      app.setBadgeCount(0)
+      // Reset to original icon (no badge)
+      if (baseIconPath) {
+        const originalIcon = nativeImage.createFromPath(baseIconPath)
+        app.dock.setIcon(originalIcon)
+      }
     }
     mainLog.info('Badge count updated:', count)
   } catch (error) {
     mainLog.error('Failed to update badge count:', error)
+  }
+}
+
+/**
+ * Set the dock icon with a pre-rendered badge image
+ * Called from IPC when renderer has drawn the badge
+ */
+export function setDockIconWithBadge(dataUrl: string): void {
+  if (process.platform !== 'darwin') {
+    return
+  }
+
+  try {
+    const icon = nativeImage.createFromDataURL(dataUrl)
+    app.dock.setIcon(icon)
+    mainLog.info('Dock icon updated with badge')
+  } catch (error) {
+    mainLog.error('Failed to set dock icon with badge:', error)
   }
 }
 
