@@ -12,14 +12,65 @@ if [ -f "$ROOT_DIR/.env" ]; then
     set +a
 fi
 
+# Parse arguments
+ARCH="arm64"
+UPLOAD=false
+UPLOAD_LATEST=false
+UPLOAD_SCRIPT=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        arm64|x64)
+            ARCH="$1"
+            shift
+            ;;
+        --upload)
+            UPLOAD=true
+            shift
+            ;;
+        --latest)
+            UPLOAD_LATEST=true
+            shift
+            ;;
+        --script)
+            UPLOAD_SCRIPT=true
+            shift
+            ;;
+        -h|--help)
+            echo "Usage: build-dmg.sh [arm64|x64] [--upload] [--latest] [--script]"
+            echo ""
+            echo "Arguments:"
+            echo "  arm64|x64    Target architecture (default: arm64)"
+            echo "  --upload     Upload DMG to S3 after building"
+            echo "  --latest     Also update electron/latest (requires --upload)"
+            echo "  --script     Also upload install-app.sh (requires --upload)"
+            echo ""
+            echo "Environment variables (from .env or environment):"
+            echo "  APPLE_SIGNING_IDENTITY    - Code signing identity"
+            echo "  APPLE_ID                  - Apple ID for notarization"
+            echo "  APPLE_TEAM_ID             - Apple Team ID"
+            echo "  APPLE_APP_SPECIFIC_PASSWORD - App-specific password"
+            echo "  S3_VERSIONS_BUCKET_*      - S3 credentials (for --upload)"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Run with --help for usage"
+            exit 1
+            ;;
+    esac
+done
+
 # Configuration
-ARCH="${1:-arm64}"  # arm64 or x64
 BUN_VERSION="bun-v1.3.5"  # Pinned version for reproducible builds
 
 # Code signing configuration (from .env)
 SIGN_APP="${APPLE_SIGNING_IDENTITY:-}"
 
 echo "=== Building Craft Agent DMG (${ARCH}) ==="
+if [ "$UPLOAD" = true ]; then
+    echo "Will upload to S3 after build"
+fi
 
 # 1. Clean previous build artifacts
 echo "Cleaning previous builds..."
@@ -212,3 +263,35 @@ echo ""
 echo "=== Build Complete ==="
 echo "DMG: $ELECTRON_DIR/release/${DMG_NAME}"
 echo "Size: $(du -h "$ELECTRON_DIR/release/${DMG_NAME}" | cut -f1)"
+
+# 12. Upload to S3 (if --upload flag is set)
+if [ "$UPLOAD" = true ]; then
+    echo ""
+    echo "=== Uploading to S3 ==="
+
+    # Check for S3 credentials
+    if [ -z "$S3_VERSIONS_BUCKET_ENDPOINT" ] || [ -z "$S3_VERSIONS_BUCKET_ACCESS_KEY_ID" ] || [ -z "$S3_VERSIONS_BUCKET_SECRET_ACCESS_KEY" ]; then
+        echo "ERROR: Missing S3 credentials. Set these environment variables:"
+        echo "  S3_VERSIONS_BUCKET_ENDPOINT"
+        echo "  S3_VERSIONS_BUCKET_ACCESS_KEY_ID"
+        echo "  S3_VERSIONS_BUCKET_SECRET_ACCESS_KEY"
+        echo ""
+        echo "You can add them to .env or export them directly."
+        exit 1
+    fi
+
+    # Build upload flags
+    UPLOAD_FLAGS="--electron"
+    if [ "$UPLOAD_LATEST" = true ]; then
+        UPLOAD_FLAGS="$UPLOAD_FLAGS --latest"
+    fi
+    if [ "$UPLOAD_SCRIPT" = true ]; then
+        UPLOAD_FLAGS="$UPLOAD_FLAGS --script"
+    fi
+
+    cd "$ROOT_DIR"
+    bun run scripts/upload.ts $UPLOAD_FLAGS
+
+    echo ""
+    echo "=== Upload Complete ==="
+fi
