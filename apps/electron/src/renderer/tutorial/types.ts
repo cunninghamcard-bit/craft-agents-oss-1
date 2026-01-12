@@ -12,8 +12,14 @@ export type TooltipPosition = 'top' | 'bottom' | 'left' | 'right' | 'center'
 
 /**
  * Event that completes a tutorial step
+ * - click: User clicks the target element
+ * - appear: Step auto-advances when target element appears in DOM
+ * - focus: User focuses the target element
+ * - hover: User hovers over target element
+ * - input_match: Step auto-advances when input matches expected text
+ * - custom: Manual advancement via API
  */
-export type CompletionEvent = 'click' | 'focus' | 'hover' | 'custom'
+export type CompletionEvent = 'click' | 'appear' | 'focus' | 'hover' | 'input_match' | 'custom'
 
 /**
  * Tutorial step definition - the core building block
@@ -39,6 +45,16 @@ export interface TutorialStep {
   spotlightRadius?: number
   /** Delay before showing this step in ms */
   delay?: number
+  /** Disable send action in chat input during this step */
+  disableSend?: boolean
+  /** Expected input text for 'input_match' completion (case-insensitive contains match) */
+  expectedInput?: string
+  /** Delay in ms after input matches before auto-advancing (default: 2000) */
+  inputMatchDelay?: number
+  /** Delay in ms after element appears before auto-advancing for 'appear' events (default: 1500) */
+  appearDelay?: number
+  /** Show a button in the tooltip to manually advance (e.g., "Got it"). If set, disables spotlight click advancement */
+  nextButton?: string
   /** Optional callback when step completes */
   onComplete?: () => void | Promise<void>
 }

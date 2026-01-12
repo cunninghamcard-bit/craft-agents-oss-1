@@ -85,6 +85,8 @@ export interface FreeFormInputProps {
   onWorkingDirectoryChange?: (path: string) => void
   /** Session ID for scoping events like approve-plan */
   sessionId?: string
+  /** Disable send action (for tutorial guidance) */
+  disableSend?: boolean
 }
 
 /**
@@ -122,6 +124,7 @@ export function FreeFormInput({
   workingDirectory,
   onWorkingDirectoryChange,
   sessionId,
+  disableSend = false,
 }: FreeFormInputProps) {
   // Performance optimization: Always use internal state for typing to avoid parent re-renders
   // Sync FROM parent on mount/change (for restoring drafts)
@@ -504,6 +507,9 @@ export function FreeFormInput({
     const hasContent = input.trim() || attachments.length > 0
     if (!hasContent || disabled) return false
 
+    // Tutorial may disable sending to guide user through specific steps
+    if (disableSend) return false
+
     onSubmit(input.trim(), attachments.length > 0 ? attachments : undefined)
     setInput('')
     setAttachments([])
@@ -518,7 +524,7 @@ export function FreeFormInput({
     })
 
     return true
-  }, [input, attachments, disabled, onInputChange, onSubmit])
+  }, [input, attachments, disabled, disableSend, onInputChange, onSubmit])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -1000,6 +1006,7 @@ export function FreeFormInput({
               size="icon"
               className="h-7 w-7 rounded-full shrink-0"
               disabled={!hasContent || disabled}
+              data-tutorial="send-button"
             >
               <ArrowUp className="h-4 w-4" />
             </Button>

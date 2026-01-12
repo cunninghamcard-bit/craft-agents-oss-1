@@ -19,8 +19,6 @@ import {
   useRef,
   type ReactNode,
 } from 'react'
-import { useAtomValue } from 'jotai'
-import { sourcesAtom } from '@/atoms/sources'
 import * as storage from '@/lib/local-storage'
 import type {
   TutorialState,
@@ -57,6 +55,8 @@ interface TutorialProviderProps {
   children: ReactNode
   /** Current workspace ID - triggers re-evaluation when changed */
   workspaceId?: string | null
+  /** Number of sources in the workspace (for auto-trigger conditions) */
+  sourcesCount?: number
   /** Disable auto-triggering (for testing) */
   disableAutoTrigger?: boolean
 }
@@ -64,10 +64,9 @@ interface TutorialProviderProps {
 export function TutorialProvider({
   children,
   workspaceId,
+  sourcesCount = 0,
   disableAutoTrigger = false,
 }: TutorialProviderProps) {
-  // Read sources for trigger conditions
-  const sources = useAtomValue(sourcesAtom)
 
   // Tutorial state
   const [state, setState] = useState<TutorialState>(defaultState)
@@ -90,7 +89,7 @@ export function TutorialProvider({
 
   // Get current tutorial and step from state
   const currentTutorial = state.activeTutorialId
-    ? getTutorial(state.activeTutorialId)
+    ? getTutorial(state.activeTutorialId) ?? null
     : null
   const currentStep = currentTutorial?.steps[state.currentStepIndex] ?? null
 
@@ -108,81 +107,6 @@ export function TutorialProvider({
       prevWorkspaceIdRef.current = workspaceId
     }
   }, [workspaceId, state.status])
-
-  /**
-   * Update target rect when step changes or during running state
-   */
-  useEffect(() => {
-    // Only track position when running
-    if (state.status !== 'running' || !currentStep) {
-      setState((s) => ({ ...s, targetRect: null }))
-      return
-    }
-
-    const updateTargetRect = () => {
-      const target = document.querySelector(currentStep.target)
-      if (target) {
-        const rect = target.getBoundingClientRect()
-        setState((s) => ({ ...s, targetRect: rect }))
-      } else {
-        // Target not found - could be not rendered yet
-        setState((s) => ({ ...s, targetRect: null }))
-      }
-    }
-
-    // Apply step delay if specified
-    const delay = currentStep.delay ?? 0
-    const delayTimer = setTimeout(() => {
-      updateTargetRect()
-
-      // Observe for size/position changes
-      const target = document.querySelector(currentStep.target)
-      if (target) {
-        const observer = new ResizeObserver(updateTargetRect)
-        observer.observe(target)
-        observerRef.current = observer
-      }
-    }, delay)
-
-    // Also update on scroll/resize
-    window.addEventListener('scroll', updateTargetRect, true)
-    window.addEventListener('resize', updateTargetRect)
-
-    return () => {
-      clearTimeout(delayTimer)
-      observerRef.current?.disconnect()
-      window.removeEventListener('scroll', updateTargetRect, true)
-      window.removeEventListener('resize', updateTargetRect)
-    }
-  }, [currentStep, state.status])
-
-  /**
-   * Auto-trigger tutorials based on conditions
-   * Re-evaluates when sources change or workspace changes
-   */
-  useEffect(() => {
-    if (disableAutoTrigger) return
-    // Don't trigger if already in a tutorial or prompting
-    if (state.status !== 'idle') return
-    // Need a valid workspace
-    if (!workspaceId) return
-
-    // Check source creation tutorial trigger
-    const isSourceCreationCompleted = progress.completedTutorials.includes('source-creation')
-    const isSourceCreationSkipped = progress.skippedTutorials.includes('source-creation')
-
-    if (sources.length === 0 && !isSourceCreationCompleted && !isSourceCreationSkipped) {
-      // Delay prompt slightly to let UI settle after workspace load
-      const timer = setTimeout(() => {
-        setState((s) => ({
-          ...s,
-          activeTutorialId: 'source-creation',
-          status: 'prompting',
-        }))
-      }, 1000)
-      return () => clearTimeout(timer)
-    }
-  }, [sources.length, progress, state.status, disableAutoTrigger, workspaceId])
 
   /**
    * Start a tutorial by ID
@@ -238,6 +162,236 @@ export function TutorialProvider({
     currentStep?.onComplete?.()
     nextStep()
   }, [currentStep, nextStep])
+
+  // Track if we've already triggered auto-advance for 'appear' and 'input_match' steps
+  const appearTriggeredRef = useRef(false)
+  const inputMatchTriggeredRef = useRef(false)
+  const inputMatchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  /**
+   * Watch for input changes to validate 'input_match' completion events
+   */
+  useEffect(() => {
+    // Only watch for input_match steps
+    if (state.status !== 'running' || !currentStep) return
+    if (currentStep.completionEvent !== 'input_match') return
+    if (!currentStep.expectedInput) return
+
+    // Reset the triggered ref when step changes
+    inputMatchTriggeredRef.current = false
+    if (inputMatchTimerRef.current) {
+      clearTimeout(inputMatchTimerRef.current)
+      inputMatchTimerRef.current = null
+    }
+
+    const handleInput = () => {
+      if (inputMatchTriggeredRef.current) return
+
+      const target = document.querySelector(currentStep.target) as HTMLTextAreaElement | HTMLInputElement | null
+      if (!target) return
+
+      const inputValue = target.value.toLowerCase().trim()
+      const expectedValue = currentStep.expectedInput!.toLowerCase().trim()
+
+      // Check if input contains the expected text
+      if (inputValue.includes(expectedValue)) {
+        inputMatchTriggeredRef.current = true
+        const delay = currentStep.inputMatchDelay ?? 2000
+
+        console.log('[Tutorial] Input matches expected text, advancing in', delay, 'ms')
+        inputMatchTimerRef.current = setTimeout(() => {
+          console.log('[Tutorial] Input match delay complete, advancing step')
+          completeStep()
+        }, delay)
+      }
+    }
+
+    // Find the target element and add input listener
+    const target = document.querySelector(currentStep.target) as HTMLTextAreaElement | HTMLInputElement | null
+    if (target) {
+      target.addEventListener('input', handleInput)
+      // Also check immediately in case input already has content
+      handleInput()
+    }
+
+    // Use MutationObserver if target doesn't exist yet
+    let mutationObserver: MutationObserver | null = null
+    if (!target) {
+      mutationObserver = new MutationObserver(() => {
+        const newTarget = document.querySelector(currentStep.target) as HTMLTextAreaElement | HTMLInputElement | null
+        if (newTarget) {
+          newTarget.addEventListener('input', handleInput)
+          handleInput()
+          mutationObserver?.disconnect()
+        }
+      })
+      mutationObserver.observe(document.body, { childList: true, subtree: true })
+    }
+
+    return () => {
+      if (inputMatchTimerRef.current) {
+        clearTimeout(inputMatchTimerRef.current)
+        inputMatchTimerRef.current = null
+      }
+      target?.removeEventListener('input', handleInput)
+      mutationObserver?.disconnect()
+    }
+  }, [currentStep, state.status, completeStep])
+
+  /**
+   * Update target rect when step changes or during running state
+   */
+  useEffect(() => {
+    // Only track position when running
+    if (state.status !== 'running' || !currentStep) {
+      setState((s) => ({ ...s, targetRect: null }))
+      appearTriggeredRef.current = false
+      return
+    }
+
+    // Reset appear trigger when step changes
+    appearTriggeredRef.current = false
+    console.log('[Tutorial] Step started:', currentStep.id, 'looking for:', currentStep.target)
+
+    // Track if we've already scrolled to target for this step
+    let hasScrolledToTarget = false
+
+    const updateTargetRect = () => {
+      const target = document.querySelector(currentStep.target) as HTMLElement | null
+      if (target) {
+        // Scroll target into view if this is the first time we found it
+        // Use smooth scrolling and center the element in view
+        if (!hasScrolledToTarget) {
+          hasScrolledToTarget = true
+          target.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' })
+          console.log('[Tutorial] Scrolled target into view:', currentStep.target)
+          // Wait a bit for scroll to complete before getting rect
+          setTimeout(() => {
+            const rect = target.getBoundingClientRect()
+            setState((s) => ({ ...s, targetRect: rect }))
+          }, 300)
+        } else {
+          const rect = target.getBoundingClientRect()
+          setState((s) => ({ ...s, targetRect: rect }))
+        }
+
+        // Auto-advance for 'appear' completion events (unless nextButton is set)
+        if (currentStep.completionEvent === 'appear' && !appearTriggeredRef.current) {
+          appearTriggeredRef.current = true
+          // If nextButton is set, don't auto-advance - wait for button click
+          if (currentStep.nextButton) {
+            console.log('[Tutorial] Element appeared:', currentStep.target, '- waiting for button click')
+          } else {
+            const appearDelay = currentStep.appearDelay ?? 1500
+            console.log('[Tutorial] Element appeared:', currentStep.target, '- advancing in', appearDelay, 'ms')
+            setTimeout(() => {
+              console.log('[Tutorial] Element appeared, auto-advancing step')
+              completeStep()
+            }, appearDelay)
+          }
+        }
+      } else {
+        // Target not found - could be not rendered yet
+        setState((s) => ({ ...s, targetRect: null }))
+      }
+    }
+
+    // Apply step delay if specified
+    const delay = currentStep.delay ?? 0
+    const delayTimer = setTimeout(() => {
+      updateTargetRect()
+
+      // Observe for size/position changes
+      const target = document.querySelector(currentStep.target)
+      if (target) {
+        const observer = new ResizeObserver(updateTargetRect)
+        observer.observe(target)
+        observerRef.current = observer
+      }
+
+      // Use MutationObserver to detect when target appears in DOM
+      // This is important for steps that wait for dynamic elements
+      let pollInterval: ReturnType<typeof setInterval> | null = null
+
+      if (!target) {
+        console.log('[Tutorial] Target not found, setting up MutationObserver and polling for:', currentStep.target)
+
+        const mutationObserver = new MutationObserver(() => {
+          const newTarget = document.querySelector(currentStep.target)
+          if (newTarget) {
+            console.log('[Tutorial] MutationObserver found target:', currentStep.target)
+            updateTargetRect()
+            mutationObserver.disconnect()
+            if (pollInterval) clearInterval(pollInterval)
+          }
+        })
+        mutationObserver.observe(document.body, {
+          childList: true,
+          subtree: true,
+        })
+
+        // Fallback polling every 500ms in case MutationObserver misses the element
+        pollInterval = setInterval(() => {
+          const newTarget = document.querySelector(currentStep.target)
+          if (newTarget) {
+            console.log('[Tutorial] Polling found target:', currentStep.target)
+            updateTargetRect()
+            mutationObserver.disconnect()
+            if (pollInterval) clearInterval(pollInterval)
+          }
+        }, 500)
+
+        // Store for cleanup
+        const existingObserver = observerRef.current
+        observerRef.current = {
+          disconnect: () => {
+            existingObserver?.disconnect()
+            mutationObserver.disconnect()
+            if (pollInterval) clearInterval(pollInterval)
+          },
+        } as ResizeObserver
+      }
+    }, delay)
+
+    // Also update on scroll/resize
+    window.addEventListener('scroll', updateTargetRect, true)
+    window.addEventListener('resize', updateTargetRect)
+
+    return () => {
+      clearTimeout(delayTimer)
+      observerRef.current?.disconnect()
+      window.removeEventListener('scroll', updateTargetRect, true)
+      window.removeEventListener('resize', updateTargetRect)
+    }
+  }, [currentStep, state.status, completeStep])
+
+  /**
+   * Auto-trigger tutorials based on conditions
+   * Re-evaluates when sourcesCount changes or workspace changes
+   */
+  useEffect(() => {
+    if (disableAutoTrigger) return
+    // Don't trigger if already in a tutorial or prompting
+    if (state.status !== 'idle') return
+    // Need a valid workspace
+    if (!workspaceId) return
+
+    // Check source creation tutorial trigger
+    const isSourceCreationCompleted = progress.completedTutorials.includes('source-creation')
+    const isSourceCreationSkipped = progress.skippedTutorials.includes('source-creation')
+
+    if (sourcesCount === 0 && !isSourceCreationCompleted && !isSourceCreationSkipped) {
+      // Delay prompt slightly to let UI settle after workspace load
+      const timer = setTimeout(() => {
+        setState((s) => ({
+          ...s,
+          activeTutorialId: 'source-creation',
+          status: 'prompting',
+        }))
+      }, 1000)
+      return () => clearTimeout(timer)
+    }
+  }, [sourcesCount, progress, state.status, disableAutoTrigger, workspaceId])
 
   /**
    * Skip/dismiss current tutorial
@@ -323,14 +477,32 @@ export function TutorialProvider({
 }
 
 /**
+ * Default context value for when hook is used outside provider
+ * (e.g., in playground or other isolated contexts)
+ */
+const defaultContextValue: TutorialContextValue = {
+  state: { activeTutorialId: null, currentStepIndex: 0, status: 'idle', targetRect: null },
+  currentStep: null,
+  currentTutorial: null,
+  startTutorial: () => {},
+  nextStep: () => {},
+  completeStep: () => {},
+  skipTutorial: () => {},
+  promptTutorial: () => {},
+  dismissPrompt: () => {},
+  isTutorialCompleted: () => false,
+  isTutorialSkipped: () => false,
+  resetTutorial: () => {},
+}
+
+/**
  * Hook to access tutorial context
+ * Returns safe defaults if used outside TutorialProvider
  */
 export function useTutorial(): TutorialContextValue {
   const context = useContext(TutorialContext)
-  if (!context) {
-    throw new Error('useTutorial must be used within TutorialProvider')
-  }
-  return context
+  // Return safe default if no provider (e.g., playground, isolated components)
+  return context ?? defaultContextValue
 }
 
 /**

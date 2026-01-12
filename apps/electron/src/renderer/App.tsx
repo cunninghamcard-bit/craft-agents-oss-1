@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useTheme } from '@/hooks/useTheme'
 import type { ThemeOverrides } from '@config/theme'
-import { useSetAtom, useStore } from 'jotai'
+import { useSetAtom, useStore, useAtomValue } from 'jotai'
 import type { Session, Workspace, SessionEvent, Message, FileAttachment, StoredAttachment, PermissionRequest, CredentialRequest, CredentialResponse, SetupNeeds, TodoState, NewChatActionParams } from '../shared/types'
 import type { SessionOptions, SessionOptionUpdates } from './hooks/useSessionOptions'
 import { defaultSessionOptions, mergeSessionOptions } from './hooks/useSessionOptions'
@@ -41,6 +41,7 @@ import {
   extractSessionMeta,
   type SessionMeta,
 } from '@/atoms/sessions'
+import { sourcesAtom } from '@/atoms/sources'
 import { getDefaultStore } from 'jotai'
 
 // Register tutorials at module load
@@ -198,6 +199,9 @@ export default function App() {
 
   // Notifications enabled state (from app settings)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
+
+  // Sources for tutorial trigger condition
+  const sources = useAtomValue(sourcesAtom)
 
   // Compute if app is fully ready (all data loaded)
   const isFullyReady = appState === 'ready' && sessionsLoaded
@@ -1174,7 +1178,7 @@ export default function App() {
           onInputChange={handleInputChange}
           isReady={appState === 'ready'}
         >
-          <TutorialProvider workspaceId={windowWorkspaceId}>
+          <TutorialProvider workspaceId={windowWorkspaceId} sourcesCount={sources.length}>
             {/* Splash screen overlay - fades out when fully ready */}
             {showSplash && (
               <SplashScreen

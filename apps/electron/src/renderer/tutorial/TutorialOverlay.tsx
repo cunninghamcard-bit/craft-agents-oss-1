@@ -12,7 +12,7 @@
  * - Visual feedback (green success animation) on step completion
  */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { motion, AnimatePresence } from 'motion/react'
 import { Check, Sparkles } from 'lucide-react'
 import { useTutorial } from './TutorialContext'
@@ -31,6 +31,7 @@ const springTransition = {
 
 /**
  * Calculate tooltip position styles based on target rect and desired position
+ * Ensures tooltip stays within viewport bounds
  */
 function getTooltipStyles(
   targetRect: DOMRect,
@@ -39,6 +40,8 @@ function getTooltipStyles(
 ): React.CSSProperties {
   const gap = 16 // Space between spotlight and tooltip
   const tooltipWidth = 280
+  const tooltipHeight = 160 // Approximate max height
+  const viewportPadding = 16 // Minimum distance from viewport edges
 
   // Calculate spotlight bounds
   const spotlightLeft = targetRect.left - padding
@@ -48,27 +51,85 @@ function getTooltipStyles(
   const spotlightCenterX = spotlightLeft + (spotlightRight - spotlightLeft) / 2
   const spotlightCenterY = spotlightTop + (spotlightBottom - spotlightTop) / 2
 
+  // Clamp horizontal position to viewport
+  const clampX = (x: number) => Math.min(
+    Math.max(viewportPadding, x),
+    window.innerWidth - tooltipWidth - viewportPadding
+  )
+
+  // Clamp vertical position to viewport
+  const clampY = (y: number) => Math.min(
+    Math.max(viewportPadding, y),
+    window.innerHeight - tooltipHeight - viewportPadding
+  )
+
   switch (position) {
-    case 'top':
-      return {
-        left: Math.max(16, spotlightCenterX - tooltipWidth / 2),
-        bottom: window.innerHeight - spotlightTop + gap,
+    case 'top': {
+      const desiredLeft = spotlightCenterX - tooltipWidth / 2
+      const desiredBottom = window.innerHeight - spotlightTop + gap
+      // Check if tooltip would overflow top of viewport
+      const topPosition = spotlightTop - gap - tooltipHeight
+      if (topPosition < viewportPadding) {
+        // Flip to bottom if not enough space on top
+        return {
+          left: clampX(desiredLeft),
+          top: clampY(spotlightBottom + gap),
+        }
       }
-    case 'bottom':
       return {
-        left: Math.max(16, spotlightCenterX - tooltipWidth / 2),
-        top: spotlightBottom + gap,
+        left: clampX(desiredLeft),
+        bottom: Math.max(viewportPadding, desiredBottom),
       }
-    case 'left':
+    }
+    case 'bottom': {
+      const desiredLeft = spotlightCenterX - tooltipWidth / 2
+      const desiredTop = spotlightBottom + gap
+      // Check if tooltip would overflow bottom of viewport
+      if (desiredTop + tooltipHeight > window.innerHeight - viewportPadding) {
+        // Flip to top if not enough space on bottom
+        return {
+          left: clampX(desiredLeft),
+          bottom: Math.max(viewportPadding, window.innerHeight - spotlightTop + gap),
+        }
+      }
       return {
-        right: window.innerWidth - spotlightLeft + gap,
-        top: spotlightCenterY - 60,
+        left: clampX(desiredLeft),
+        top: clampY(desiredTop),
       }
-    case 'right':
+    }
+    case 'left': {
+      const desiredRight = window.innerWidth - spotlightLeft + gap
+      const desiredTop = spotlightCenterY - 60
+      // Check if tooltip would overflow left of viewport
+      const leftPosition = spotlightLeft - gap - tooltipWidth
+      if (leftPosition < viewportPadding) {
+        // Flip to right if not enough space on left
+        return {
+          left: clampX(spotlightRight + gap),
+          top: clampY(desiredTop),
+        }
+      }
       return {
-        left: spotlightRight + gap,
-        top: spotlightCenterY - 60,
+        right: Math.max(viewportPadding, desiredRight),
+        top: clampY(desiredTop),
       }
+    }
+    case 'right': {
+      const desiredLeft = spotlightRight + gap
+      const desiredTop = spotlightCenterY - 60
+      // Check if tooltip would overflow right of viewport
+      if (desiredLeft + tooltipWidth > window.innerWidth - viewportPadding) {
+        // Flip to left if not enough space on right
+        return {
+          right: Math.max(viewportPadding, window.innerWidth - spotlightLeft + gap),
+          top: clampY(desiredTop),
+        }
+      }
+      return {
+        left: clampX(desiredLeft),
+        top: clampY(desiredTop),
+      }
+    }
     case 'center':
     default:
       return {
@@ -234,61 +295,175 @@ export function TutorialOverlay() {
     radius: number
   } | null>(null)
 
-  /**
-   * Handle click on spotlight area
-   * - Shows success animation FIRST
-   * - Completes the step after animation
-   * - Then triggers the underlying element's click (which may navigate away)
-   */
-  const handleSpotlightClick = useCallback(() => {
-    if (!currentStep || !state.targetRect || showSuccess) return
+  // Track if we're in the middle of handling a click to prevent double triggers
+  const isHandlingClickRef = useRef(false)
+  const animationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-    const padding = currentStep.spotlightPadding ?? 8
-    const radius = currentStep.spotlightRadius ?? 8
+  // Store current values in refs for stable click handler
+  // This prevents the click listener from being recreated on every targetRect change
+  const currentStepRef = useRef(currentStep)
+  const targetRectRef = useRef(state.targetRect)
+  const showSuccessRef = useRef(showSuccess)
+  const completeStepRef = useRef(completeStep)
+
+  // Keep refs in sync
+  useEffect(() => {
+    currentStepRef.current = currentStep
+    targetRectRef.current = state.targetRect
+    showSuccessRef.current = showSuccess
+    completeStepRef.current = completeStep
+  })
+
+  // Reset animation state when step changes
+  useEffect(() => {
+    setShowSuccess(false)
+    setSuccessPosition(null)
+    isHandlingClickRef.current = false
+    if (animationTimeoutRef.current) {
+      clearTimeout(animationTimeoutRef.current)
+      animationTimeoutRef.current = null
+    }
+  }, [currentStep?.id])
+
+  /**
+   * Trigger step completion with animation
+   * Called when target element is clicked (for 'click' completion events)
+   *
+   * IMPORTANT: Uses refs to access current values, making this callback stable
+   * and preventing the click listener from being recreated on every render.
+   *
+   * Uses requestAnimationFrame to delay animation until after the click event
+   * has fully propagated. This ensures cmdk/Radix UI components process the
+   * click before we change React state.
+   */
+  const triggerStepCompletion = useCallback(() => {
+    const step = currentStepRef.current
+    const rect = targetRectRef.current
+
+    if (!step || !rect) return
+    if (showSuccessRef.current || isHandlingClickRef.current) return // Prevent double triggers
+
+    isHandlingClickRef.current = true
+    console.log('[Tutorial] Target clicked for step:', step.id)
+
+    const padding = step.spotlightPadding ?? 8
+    const radius = step.spotlightRadius ?? 8
+
+    // Store position for success animation
+    const animationPosition = {
+      x: rect.left - padding,
+      y: rect.top - padding,
+      width: rect.width + padding * 2,
+      height: rect.height + padding * 2,
+      radius,
+    }
+
+    // Delay animation to let the click event fully propagate first
+    // This ensures cmdk/Radix UI components process the click before we change React state
+    requestAnimationFrame(() => {
+      // Show success animation
+      setSuccessPosition(animationPosition)
+      setShowSuccess(true)
+
+      // After animation duration, complete step
+      const ANIMATION_DURATION = 400
+      animationTimeoutRef.current = setTimeout(() => {
+        console.log('[Tutorial] Animation complete - advancing step:', step.id)
+        completeStepRef.current()
+        isHandlingClickRef.current = false
+        animationTimeoutRef.current = null
+      }, ANIMATION_DURATION)
+    })
+  }, []) // Empty deps - uses refs for all values
+
+  /**
+   * Listen for clicks anywhere on the document and check if they match our target
+   *
+   * This approach is more robust than attaching listeners to specific elements because:
+   * - Works with React's synthetic event system
+   * - Catches clicks on dynamically rendered elements (portals, dropdowns)
+   * - Doesn't require the element to exist when we set up the listener
+   *
+   * Note: triggerStepCompletion is stable (empty deps) so this effect only re-runs
+   * when step or status changes, not on every targetRect update.
+   */
+  useEffect(() => {
+    if (state.status !== 'running' || !currentStep) return
+    if (currentStep.completionEvent !== 'click') return
+    if (currentStep.nextButton) return // nextButton steps don't use click detection
+
+    const handleDocumentClick = (event: MouseEvent) => {
+      const target = event.target as HTMLElement
+      if (!target) return
+
+      // Check if the clicked element or any of its ancestors matches our selector
+      const matchingElement = target.closest(currentStep.target)
+      if (matchingElement) {
+        console.log('[Tutorial] Detected click on target:', currentStep.target, 'element:', matchingElement)
+        triggerStepCompletion()
+      }
+    }
+
+    // Use capture phase to catch the event before it might be stopped
+    document.addEventListener('click', handleDocumentClick, { capture: true })
+    console.log('[Tutorial] Document click listener attached for:', currentStep.target)
+
+    return () => {
+      document.removeEventListener('click', handleDocumentClick, { capture: true })
+    }
+  }, [currentStep, state.status, triggerStepCompletion])
+
+  /**
+   * Handle click on the "next" button in tooltip
+   * Just advances the step without clicking the target
+   * Uses refs for stability (same pattern as triggerStepCompletion)
+   */
+  const handleNextButtonClick = useCallback(() => {
+    const step = currentStepRef.current
+    const rect = targetRectRef.current
+
+    if (!step || !rect) return
+    if (showSuccessRef.current || isHandlingClickRef.current) return
+
+    isHandlingClickRef.current = true
+    console.log('[Tutorial] Next button clicked for step:', step.id)
+
+    const padding = step.spotlightPadding ?? 8
+    const radius = step.spotlightRadius ?? 8
 
     // Store position for success animation
     setSuccessPosition({
-      x: state.targetRect.left - padding,
-      y: state.targetRect.top - padding,
-      width: state.targetRect.width + padding * 2,
-      height: state.targetRect.height + padding * 2,
+      x: rect.left - padding,
+      y: rect.top - padding,
+      width: rect.width + padding * 2,
+      height: rect.height + padding * 2,
       radius,
     })
 
-    // Store target selector to click after animation
-    const targetSelector = currentStep.target
-
-    // Show success animation first
+    // Show success animation
     setShowSuccess(true)
 
-    // After animation duration, complete step and trigger click
-    const ANIMATION_DURATION = 500
-    setTimeout(() => {
-      console.log('[Tutorial] Animation complete - advancing step and triggering click')
-
-      // Complete the step (advances tutorial state)
-      completeStep()
-
-      // Find and click the underlying element
-      const target = document.querySelector(targetSelector) as HTMLElement
-      if (target) {
-        target.click()
-        // Also focus if it's an input/textarea
-        if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-          target.focus()
-        }
-      }
+    // After animation duration, complete step
+    const ANIMATION_DURATION = 400
+    animationTimeoutRef.current = setTimeout(() => {
+      console.log('[Tutorial] Next button animation complete - advancing step:', step.id)
+      completeStepRef.current()
+      isHandlingClickRef.current = false
+      animationTimeoutRef.current = null
     }, ANIMATION_DURATION)
-  }, [currentStep, state.targetRect, completeStep, showSuccess])
+  }, []) // Empty deps - uses refs for all values
 
   /**
-   * Called when success animation completes
-   * Note: Step progression now happens in handleSpotlightClick, not here
+   * Called when success animation completes visually
+   * Step progression already happened via setTimeout, this just cleans up visual state
    */
   const handleSuccessComplete = useCallback(() => {
-    setShowSuccess(false)
-    setSuccessPosition(null)
-  }, [])
+    // Only reset if we're still showing success (might have been reset by step change)
+    if (showSuccessRef.current) {
+      setShowSuccess(false)
+      setSuccessPosition(null)
+    }
+  }, []) // Empty deps - uses ref
 
   // Only render when running and we have a target
   if (state.status !== 'running' || !currentStep || !state.targetRect) {
@@ -309,11 +484,11 @@ export function TutorialOverlay() {
   const tooltipStyles = getTooltipStyles(targetRect, currentStep.position, padding)
 
   return (
-    <AnimatePresence>
-      <div className="fixed inset-0 z-[9998] pointer-events-none">
-        {/* Backdrop with spotlight cutout using SVG mask */}
+    <AnimatePresence mode="wait">
+      <div key={currentStep.id} className="fixed inset-0 z-[9998] pointer-events-none">
+        {/* Backdrop with spotlight cutout - visual only, no click blocking */}
         <motion.svg
-          className="absolute inset-0 w-full h-full pointer-events-auto"
+          className="absolute inset-0 w-full h-full"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -388,9 +563,19 @@ export function TutorialOverlay() {
 
               {/* Content */}
               <h3 className="font-semibold text-sm mb-1.5">{currentStep.title}</h3>
-              <p className="text-sm text-foreground/70 mb-4 leading-relaxed">
+              <p className="text-sm text-foreground/70 mb-3 leading-relaxed whitespace-pre-line">
                 {currentStep.description}
               </p>
+
+              {/* Next button (when configured) */}
+              {currentStep.nextButton && (
+                <button
+                  onClick={handleNextButtonClick}
+                  className="w-full mb-3 px-3 py-2 text-sm font-medium rounded-md bg-accent text-accent-foreground hover:bg-accent/90 transition-colors"
+                >
+                  {currentStep.nextButton}
+                </button>
+              )}
 
               {/* Footer */}
               <div className="flex items-center justify-between">
@@ -420,10 +605,10 @@ export function TutorialOverlay() {
           </motion.div>
         )}
 
-        {/* Clickable spotlight area - executes action and advances tutorial */}
+        {/* Spotlight area - pointer-events: none so clicks pass through to actual elements */}
         {!showSuccess && (
           <motion.div
-            className="absolute pointer-events-auto cursor-pointer"
+            className="absolute pointer-events-none"
             style={{
               left: spotlightX,
               top: spotlightY,
@@ -431,7 +616,6 @@ export function TutorialOverlay() {
               height: spotlightHeight,
               borderRadius: radius,
             }}
-            onClick={handleSpotlightClick}
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
