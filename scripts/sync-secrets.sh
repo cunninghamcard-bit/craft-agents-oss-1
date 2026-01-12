@@ -30,7 +30,8 @@ fi
 echo "Syncing secrets from 1Password to $ENV_FILE..."
 
 # Use op inject to resolve references and create .env
-op inject -i "$OP_ENV_FILE" -o "$ENV_FILE"
+# -f flag skips confirmation prompt for non-interactive contexts
+op inject -f -i "$OP_ENV_FILE" -o "$ENV_FILE"
 
 echo "Done! Secrets synced to $ENV_FILE"
 echo ""

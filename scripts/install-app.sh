@@ -42,19 +42,29 @@ if command -v jq >/dev/null 2>&1; then
 fi
 
 # Download function that works with both curl and wget
+# Usage: download_file <url> [output_file] [show_progress]
 download_file() {
     local url="$1"
     local output="$2"
+    local show_progress="${3:-false}"
 
     if [ "$DOWNLOADER" = "curl" ]; then
         if [ -n "$output" ]; then
-            curl -fsSL -o "$output" "$url"
+            if [ "$show_progress" = "true" ]; then
+                curl -fL --progress-bar -o "$output" "$url"
+            else
+                curl -fsSL -o "$output" "$url"
+            fi
         else
             curl -fsSL "$url"
         fi
     elif [ "$DOWNLOADER" = "wget" ]; then
         if [ -n "$output" ]; then
-            wget -q -O "$output" "$url"
+            if [ "$show_progress" = "true" ]; then
+                wget --show-progress -q -O "$output" "$url"
+            else
+                wget -q -O "$output" "$url"
+            fi
         else
             wget -q -O - "$url"
         fi
@@ -156,10 +166,12 @@ dmg_url="$VERSIONS_URL/$version/$filename"
 dmg_path="$DOWNLOAD_DIR/$filename"
 
 info "Downloading $filename..."
-if ! download_file "$dmg_url" "$dmg_path"; then
+echo ""
+if ! download_file "$dmg_url" "$dmg_path" true; then
     rm -f "$dmg_path"
     error "Download failed"
 fi
+echo ""
 
 # Verify checksum
 info "Verifying checksum..."
@@ -172,26 +184,38 @@ fi
 
 success "Checksum verified!"
 
-# Check for existing installation
-if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
-    echo ""
-    warn "Craft Agent is already installed at $INSTALL_DIR/$APP_NAME"
-    printf "%b" "  Do you want to replace it? [y/N] "
-    read -r response
-    if [[ ! "$response" =~ ^[Yy]$ ]]; then
-        rm -f "$dmg_path"
-        echo ""
-        info "Installation cancelled."
-        exit 0
+# Quit the app if it's running (use bundle ID for reliability)
+APP_BUNDLE_ID="com.lukilabs.craft-agent"
+if pgrep -x "Craft Agent" >/dev/null 2>&1; then
+    info "Quitting Craft Agent..."
+    osascript -e "tell application id \"$APP_BUNDLE_ID\" to quit" 2>/dev/null || true
+    # Wait for app to quit (max 5 seconds) - POSIX compatible loop
+    i=0
+    while [ $i -lt 10 ]; do
+        if ! pgrep -x "Craft Agent" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.5
+        i=$((i + 1))
+    done
+    # Force kill if still running
+    if pgrep -x "Craft Agent" >/dev/null 2>&1; then
+        warn "App didn't quit gracefully. Force quitting (unsaved data may be lost)..."
+        pkill -9 -x "Craft Agent" 2>/dev/null || true
+        # Wait longer for macOS to release file handles
+        sleep 3
     fi
-    echo ""
-    info "Removing existing installation..."
+fi
+
+# Remove existing installation if present
+if [ -d "$INSTALL_DIR/$APP_NAME" ]; then
+    info "Removing previous installation..."
     rm -rf "$INSTALL_DIR/$APP_NAME"
 fi
 
 # Mount DMG
 info "Mounting disk image..."
-mount_point=$(hdiutil attach "$dmg_path" -nobrowse -quiet -mountrandom /tmp | tail -1 | awk '{print $NF}')
+mount_point=$(hdiutil attach "$dmg_path" -nobrowse -mountrandom /tmp 2>/dev/null | tail -1 | awk '{print $NF}')
 
 if [ -z "$mount_point" ] || [ ! -d "$mount_point" ]; then
     rm -f "$dmg_path"
@@ -209,7 +233,7 @@ fi
 
 # Copy app to /Applications
 info "Installing to $INSTALL_DIR..."
-cp -R "$app_source" "$INSTALL_DIR/"
+cp -R "$app_source" "$INSTALL_DIR/$APP_NAME"
 
 # Unmount DMG
 info "Cleaning up..."

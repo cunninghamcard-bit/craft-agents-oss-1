@@ -13,14 +13,25 @@ files:
   - "!dist/renderer/src/**"
   - "!**/*.map"
   - package.json
-  # Exclude node_modules - everything is bundled by esbuild/vite
+  # Include SDK for subprocess execution
+  - node_modules/@anthropic-ai/claude-agent-sdk/**/*
+  # Exclude SDK ripgrep binaries for other platforms (keep only current platform)
+  - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-linux"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-linux"
+  - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-win32"
+  # Include interceptor for cache TTL
+  - packages/shared/src/cache-ttl-interceptor.ts
+  # Include bundled Bun runtime
+  - vendor/bun/**/*
+  # Exclude everything else from node_modules
   - "!node_modules/**/*"
+  - node_modules/@anthropic-ai/**/*
 
 extraMetadata:
   main: dist/main.cjs
 
-asar: true
-compression: maximum
+# Disable ASAR to avoid decompression overhead and click delays
+asar: false
 
 mac:
   category: public.app-category.productivity
@@ -40,6 +51,8 @@ mac:
   #   teamId: ${APPLE_TEAM_ID}
 
 dmg:
+  # Use predictable naming: Craft-Agent-arm64.dmg, Craft-Agent-x64.dmg
+  artifactName: "Craft-Agent-${arch}.dmg"
   contents:
     - x: 130
       y: 220

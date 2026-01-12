@@ -378,7 +378,7 @@ Each source folder contains:
 
   // For API sources:
   "api": {
-    "baseUrl": "https://api.example.com",
+    "baseUrl": "https://api.example.com/",  // MUST have trailing slash
     "authType": "bearer" | "header" | "query" | "basic" | "none",
     "headerName": "X-API-Key",      // For header auth
     "queryParam": "api_key",         // For query auth
@@ -512,12 +512,12 @@ REST APIs become flexible tools that Claude can call.
   "type": "api",
   "provider": "exa",
   "api": {
-    "baseUrl": "https://api.exa.ai",
+    "baseUrl": "https://api.exa.ai/",
     "authType": "header",
     "headerName": "x-api-key",
     "testEndpoint": {
       "method": "POST",
-      "path": "/search",
+      "path": "search",
       "body": { "query": "test", "numResults": 1 }
     }
   }
@@ -530,11 +530,11 @@ REST APIs become flexible tools that Claude can call.
   "type": "api",
   "provider": "openai",
   "api": {
-    "baseUrl": "https://api.openai.com/v1",
+    "baseUrl": "https://api.openai.com/v1/",
     "authType": "bearer",
     "testEndpoint": {
       "method": "GET",
-      "path": "/models"
+      "path": "models"
     }
   }
 }
@@ -546,12 +546,12 @@ REST APIs become flexible tools that Claude can call.
   "type": "api",
   "provider": "weather",
   "api": {
-    "baseUrl": "https://api.weather.com",
+    "baseUrl": "https://api.weather.com/",
     "authType": "query",
     "queryParam": "apikey",
     "testEndpoint": {
       "method": "GET",
-      "path": "/v1/current"
+      "path": "v1/current"
     }
   }
 }
@@ -563,11 +563,11 @@ REST APIs become flexible tools that Claude can call.
   "type": "api",
   "provider": "jira",
   "api": {
-    "baseUrl": "https://your-domain.atlassian.net/rest/api/3",
+    "baseUrl": "https://your-domain.atlassian.net/rest/api/3/",
     "authType": "basic",
     "testEndpoint": {
       "method": "GET",
-      "path": "/myself"
+      "path": "myself"
     }
   }
 }
@@ -581,11 +581,15 @@ The \`testEndpoint\` specifies which endpoint to call when validating credential
 {
   "testEndpoint": {
     "method": "GET",           // "GET" or "POST"
-    "path": "/v1/me",          // Path relative to baseUrl
+    "path": "v1/me",           // Path relative to baseUrl (NO leading slash)
     "body": { ... }            // Optional: request body for POST
   }
 }
 \`\`\`
+
+**IMPORTANT URL formatting:**
+- \`baseUrl\` MUST have a trailing slash: \`https://api.example.com/v1/\`
+- \`testEndpoint.path\` must NOT have a leading slash: \`users/me\`
 
 **Choose an endpoint that:**
 - Requires authentication (to verify credentials work)
@@ -593,9 +597,9 @@ The \`testEndpoint\` specifies which endpoint to call when validating credential
 - Returns quickly (health/status endpoints are ideal)
 
 **Common patterns:**
-- \`/me\`, \`/user\`, \`/profile\` - User info endpoints
-- \`/v1/status\`, \`/health\` - Status endpoints that require auth
-- \`/models\`, \`/projects\` - List endpoints with minimal data
+- \`me\`, \`user\`, \`profile\` - User info endpoints
+- \`v1/status\`, \`health\` - Status endpoints that require auth
+- \`models\`, \`projects\` - List endpoints with minimal data
 
 **Public APIs (authType: 'none')** don't require testEndpoint - we test by hitting the base URL.
 

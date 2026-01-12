@@ -486,7 +486,7 @@ export class SessionManager {
 
   async initialize(): Promise<void> {
     // Set path to Claude Code executable (cli.js from SDK)
-    // In packaged app: use app.getAppPath() (points to app.asar or app folder)
+    // In packaged app: use app.getAppPath() (points to app folder, ASAR is disabled)
     // In development: use process.cwd()
     const basePath = app.isPackaged ? app.getAppPath() : process.cwd()
 
@@ -851,10 +851,10 @@ export class SessionManager {
       const wsId = managed.workspace.rootPath.split('/').pop() || managed.workspace.id
 
       if (request.mode === 'basic') {
-        const encoded = Buffer.from(`${response.username}:${response.password}`).toString('base64')
+        // Store value as JSON string {username, password} - credential-manager.ts parses it for basic auth
         await credManager.set(
           { type: 'source_basic', workspaceId: wsId, sourceId: request.sourceSlug },
-          { value: encoded }
+          { value: JSON.stringify({ username: response.username, password: response.password }) }
         )
       } else if (request.mode === 'bearer') {
         await credManager.set(

@@ -18,13 +18,6 @@ require_path() {
     fi
 }
 
-# Helper function for codesigning
-codesign_item() {
-    local item="$1"
-    echo "  Signing: $item"
-    codesign --force --options runtime --timestamp --sign "$SIGN_APP" "$item"
-}
-
 # Sync secrets from 1Password if CLI is available
 if command -v op &> /dev/null; then
     echo "1Password CLI detected, syncing secrets..."
@@ -87,10 +80,7 @@ done
 # Configuration
 BUN_VERSION="bun-v1.3.5"  # Pinned version for reproducible builds
 
-# Code signing configuration (from .env)
-SIGN_APP="${APPLE_SIGNING_IDENTITY:-}"
-
-echo "=== Building Craft Agent DMG (${ARCH}) ==="
+echo "=== Building Craft Agent DMG (${ARCH}) using electron-builder ==="
 if [ "$UPLOAD" = true ]; then
     echo "Will upload to S3 after build"
 fi
@@ -133,7 +123,7 @@ chmod +x "$ELECTRON_DIR/vendor/bun/bun"
 
 # 4. Copy SDK from root node_modules (monorepo hoisting)
 # Note: The SDK is hoisted to root node_modules by the package manager.
-# We copy it here because electron-packager only sees apps/electron/.
+# We copy it here because electron-builder only sees apps/electron/.
 SDK_SOURCE="$ROOT_DIR/node_modules/@anthropic-ai/claude-agent-sdk"
 require_path "$SDK_SOURCE" "SDK" "Run 'bun install' from the repository root first."
 echo "Copying SDK..."
@@ -152,115 +142,50 @@ echo "Building Electron app..."
 cd "$ROOT_DIR"
 bun run electron:build
 
-# 7. Package with electron-packager (no ASAR for subprocess compatibility)
-echo "Packaging app..."
+# 7. Package with electron-builder
+echo "Packaging app with electron-builder..."
 cd "$ELECTRON_DIR"
-npx electron-packager . "Craft Agent" \
-    --platform=darwin \
-    --arch="$ARCH" \
-    --out=release \
-    --overwrite \
-    --icon=resources/icon.icns \
-    --app-bundle-id=com.lukilabs.craft-agent \
-    --no-prune \
-    --ignore="node_modules/@types" \
-    --ignore="node_modules/typescript" \
-    --ignore="node_modules/eslint" \
-    --ignore="node_modules/@eslint" \
-    --ignore="node_modules/prettier" \
-    --ignore="node_modules/@typescript-eslint" \
-    --ignore="node_modules/vite" \
-    --ignore="node_modules/@vitejs" \
-    --ignore="node_modules/esbuild" \
-    --ignore="node_modules/tailwindcss" \
-    --ignore="node_modules/postcss" \
-    --ignore="node_modules/autoprefixer" \
-    --ignore="\.map$" \
-    --ignore="node_modules/.*\.ts$" \
-    --ignore="node_modules/.*\.tsx$" \
-    --ignore="\.md$" \
-    --ignore="LICENSE" \
-    --ignore="CHANGELOG" \
-    --ignore="README" \
-    --ignore="__tests__" \
-    --ignore="test" \
-    --ignore="tests" \
-    --ignore="\.test\." \
-    --ignore="\.spec\." \
-    --no-asar
 
-# 8. Code sign the app
-APP_PATH="release/Craft Agent-darwin-${ARCH}/Craft Agent.app"
-if [ -n "$SIGN_APP" ]; then
-    echo "Signing app with Developer ID..."
+# Set up environment for electron-builder
+export CSC_IDENTITY_AUTO_DISCOVERY=true
 
-    # Sign all nested binaries first (deepest first)
-    echo "Signing nested binaries (.node, .dylib, rg)..."
-    find "$APP_PATH" -type f \( -name "*.node" -o -name "*.dylib" -o -name "rg" \) | while read -r binary; do
-        codesign_item "$binary"
-    done
+# Build electron-builder arguments
+BUILDER_ARGS="--mac --${ARCH}"
 
-    # Sign executables in framework Helpers and Resources
-    echo "Signing framework executables..."
-    for exe in "$APP_PATH/Contents/Frameworks/Electron Framework.framework/Versions/A/Helpers/chrome_crashpad_handler" \
-               "$APP_PATH/Contents/Frameworks/Squirrel.framework/Versions/A/Resources/ShipIt"; do
-        [ -f "$exe" ] && codesign_item "$exe"
-    done
-
-    # Sign frameworks and helper apps
-    echo "Signing frameworks..."
-    find "$APP_PATH/Contents/Frameworks" -type d -name "*.framework" | while read -r item; do
-        codesign_item "$item"
-    done
-
-    echo "Signing helper apps..."
-    find "$APP_PATH/Contents/Frameworks" -type d -name "*.app" | while read -r item; do
-        codesign_item "$item"
-    done
-
-    # Sign the main app
-    echo "Signing main app..."
-    codesign_item "$APP_PATH"
-else
-    echo "Ad-hoc signing app (no APPLE_SIGNING_IDENTITY set)..."
-    codesign --force --deep --sign - "$APP_PATH"
+# Add code signing if identity is available
+if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+    # Strip "Developer ID Application: " prefix if present (electron-builder adds it automatically)
+    CSC_NAME_CLEAN="${APPLE_SIGNING_IDENTITY#Developer ID Application: }"
+    echo "Using signing identity: $CSC_NAME_CLEAN"
+    export CSC_NAME="$CSC_NAME_CLEAN"
 fi
-echo "Verifying signature..."
-codesign --verify --verbose "$APP_PATH"
 
-# 9. Create DMG
-echo "Creating DMG..."
+# Add notarization if all credentials are available
+if [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+    echo "Notarization enabled"
+    export APPLE_ID="$APPLE_ID"
+    export APPLE_TEAM_ID="$APPLE_TEAM_ID"
+    export APPLE_APP_SPECIFIC_PASSWORD="$APPLE_APP_SPECIFIC_PASSWORD"
+
+    # Enable notarization in electron-builder by setting env vars
+    # The electron-builder.yml has notarize section commented out,
+    # but we can enable it via environment
+    export NOTARIZE=true
+fi
+
+# Run electron-builder
+npx electron-builder $BUILDER_ARGS
+
+# 8. Verify the DMG was built
+# electron-builder.yml uses artifactName to output: Craft-Agent-${arch}.dmg
 DMG_NAME="Craft-Agent-${ARCH}.dmg"
-hdiutil create \
-    -volname "Craft Agent" \
-    -srcfolder "release/Craft Agent-darwin-${ARCH}/Craft Agent.app" \
-    -ov \
-    -format UDZO \
-    "release/${DMG_NAME}"
+DMG_PATH="$ELECTRON_DIR/release/$DMG_NAME"
 
-# 10. Sign the DMG
-if [ -n "$SIGN_APP" ]; then
-    echo "Signing DMG..."
-    codesign --force --sign "$SIGN_APP" "release/${DMG_NAME}"
-fi
-
-# 11. Notarize (if credentials are available)
-if [ -n "$SIGN_APP" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
-    echo "Submitting for notarization..."
-    if xcrun notarytool submit "release/${DMG_NAME}" \
-        --apple-id "$APPLE_ID" \
-        --team-id "$APPLE_TEAM_ID" \
-        --password "$APPLE_APP_SPECIFIC_PASSWORD" \
-        --wait; then
-        echo "Stapling notarization ticket..."
-        xcrun stapler staple "release/${DMG_NAME}"
-    else
-        echo "ERROR: Notarization failed. Check the log with:"
-        echo "  xcrun notarytool log <submission-id> --apple-id \"$APPLE_ID\" --team-id \"$APPLE_TEAM_ID\" --password \"$APPLE_APP_SPECIFIC_PASSWORD\""
-        exit 1
-    fi
-else
-    echo "Skipping notarization (credentials not configured in .env)"
+if [ ! -f "$DMG_PATH" ]; then
+    echo "ERROR: Expected DMG not found at $DMG_PATH"
+    echo "Contents of release directory:"
+    ls -la "$ELECTRON_DIR/release/"
+    exit 1
 fi
 
 echo ""
@@ -268,7 +193,14 @@ echo "=== Build Complete ==="
 echo "DMG: $ELECTRON_DIR/release/${DMG_NAME}"
 echo "Size: $(du -h "$ELECTRON_DIR/release/${DMG_NAME}" | cut -f1)"
 
-# 12. Upload to S3 (if --upload flag is set)
+# 9. Create manifest.json for upload script
+# Read version from package.json
+ELECTRON_VERSION=$(cat "$ELECTRON_DIR/package.json" | grep '"version"' | head -1 | sed 's/.*"version": *"\([^"]*\)".*/\1/')
+echo "Creating manifest.json (version: $ELECTRON_VERSION)..."
+mkdir -p "$ROOT_DIR/.build/upload"
+echo "{\"version\": \"$ELECTRON_VERSION\"}" > "$ROOT_DIR/.build/upload/manifest.json"
+
+# 10. Upload to S3 (if --upload flag is set)
 if [ "$UPLOAD" = true ]; then
     echo ""
     echo "=== Uploading to S3 ==="
