@@ -56,28 +56,152 @@ export async function getElectronManifest(version: string): Promise<VersionManif
 }
 
 /**
- * Compare two semver version strings
- * Returns true if `latest` is newer than `current`
+ * Parsed semver version with major, minor, patch, and prerelease components
  */
-export function isNewerVersion(current: string, latest: string): boolean {
-  const parseVersion = (v: string): number[] => {
-    return v.split('.').map(n => parseInt(n, 10) || 0);
-  };
+interface ParsedVersion {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease: string[];
+  build: string[];
+}
 
-  const currentParts = parseVersion(current);
-  const latestParts = parseVersion(latest);
+/**
+ * Parse a semver version string into its components
+ * Handles:
+ * - Standard versions: 1.0.0, 0.2.8
+ * - Prerelease versions: 1.0.0-alpha.1, 1.0.0-beta, 1.0.0-rc.1
+ * - Build metadata: 1.0.0+build.123 (ignored for comparison)
+ * - v prefix: v1.0.0
+ */
+function parseVersion(version: string): ParsedVersion | null {
+  // Remove leading 'v' if present
+  const v = version.startsWith('v') ? version.slice(1) : version;
 
-  // Pad shorter array with zeros
-  const maxLen = Math.max(currentParts.length, latestParts.length);
-  while (currentParts.length < maxLen) currentParts.push(0);
-  while (latestParts.length < maxLen) latestParts.push(0);
+  // Split off build metadata (+ suffix)
+  const buildSplitIndex = v.indexOf('+');
+  const versionWithoutBuild = buildSplitIndex >= 0 ? v.slice(0, buildSplitIndex) : v;
+  const buildString = buildSplitIndex >= 0 ? v.slice(buildSplitIndex + 1) : '';
+  const build = buildString ? buildString.split('.') : [];
 
-  for (let i = 0; i < maxLen; i++) {
-    if (latestParts[i] > currentParts[i]) return true;
-    if (latestParts[i] < currentParts[i]) return false;
+  // Split off prerelease (- suffix)
+  const prereleaseSplitIndex = versionWithoutBuild.indexOf('-');
+  const coreVersion = prereleaseSplitIndex >= 0 ? versionWithoutBuild.slice(0, prereleaseSplitIndex) : versionWithoutBuild;
+  const prereleaseString = prereleaseSplitIndex >= 0 ? versionWithoutBuild.slice(prereleaseSplitIndex + 1) : '';
+  const prerelease = prereleaseString ? prereleaseString.split('.') : [];
+
+  // Parse core version (major.minor.patch)
+  const coreParts = coreVersion.split('.');
+  if (coreParts.length === 0 || coreParts.length > 3) {
+    return null;
   }
 
-  return false; // Equal versions
+  const majorStr = coreParts[0];
+  const minorStr = coreParts[1];
+  const patchStr = coreParts[2];
+
+  if (!majorStr) {
+    return null;
+  }
+
+  const major = parseInt(majorStr, 10);
+  const minor = minorStr ? parseInt(minorStr, 10) : 0;
+  const patch = patchStr ? parseInt(patchStr, 10) : 0;
+
+  // Validate numeric parts
+  if (isNaN(major) || isNaN(minor) || isNaN(patch)) {
+    return null;
+  }
+
+  return { major, minor, patch, prerelease, build };
+}
+
+/**
+ * Compare two prerelease identifier arrays according to semver spec
+ * Returns: negative if a < b, positive if a > b, 0 if equal
+ *
+ * Rules (from semver.org):
+ * 1. A version with prerelease has LOWER precedence than release (1.0.0-alpha < 1.0.0)
+ * 2. Numeric identifiers are compared as integers
+ * 3. Alphanumeric identifiers are compared lexically in ASCII sort order
+ * 4. Numeric identifiers always have lower precedence than non-numeric
+ * 5. A larger set of pre-release fields has higher precedence (1.0.0-alpha < 1.0.0-alpha.1)
+ */
+function comparePrerelease(a: string[], b: string[]): number {
+  // No prerelease = higher precedence (release version)
+  if (a.length === 0 && b.length === 0) return 0;
+  if (a.length === 0) return 1;  // a is release, b is prerelease
+  if (b.length === 0) return -1; // a is prerelease, b is release
+
+  // Compare each identifier
+  const maxLen = Math.max(a.length, b.length);
+  for (let i = 0; i < maxLen; i++) {
+    // Missing identifier = lower precedence
+    if (i >= a.length) return -1;
+    if (i >= b.length) return 1;
+
+    const aId = a[i]!;
+    const bId = b[i]!;
+
+    // Check if identifiers are numeric
+    const aNum = /^\d+$/.test(aId) ? parseInt(aId, 10) : NaN;
+    const bNum = /^\d+$/.test(bId) ? parseInt(bId, 10) : NaN;
+
+    const aIsNum = !isNaN(aNum);
+    const bIsNum = !isNaN(bNum);
+
+    if (aIsNum && bIsNum) {
+      // Both numeric: compare as integers
+      if (aNum !== bNum) return aNum - bNum;
+    } else if (aIsNum) {
+      // Numeric has lower precedence than non-numeric
+      return -1;
+    } else if (bIsNum) {
+      return 1;
+    } else {
+      // Both non-numeric: compare lexically
+      if (aId < bId) return -1;
+      if (aId > bId) return 1;
+    }
+  }
+
+  return 0;
+}
+
+/**
+ * Compare two semver version strings
+ * Returns true if `latest` is newer than `current`
+ *
+ * Supports:
+ * - Standard versions: 1.0.0, 0.2.8
+ * - Prerelease versions: 1.0.0-alpha.1, 1.0.0-beta, 1.0.0-rc.1
+ * - Build metadata: 1.0.0+build.123 (ignored for comparison)
+ * - v prefix: v1.0.0
+ */
+export function isNewerVersion(current: string, latest: string): boolean {
+  const currentParsed = parseVersion(current);
+  const latestParsed = parseVersion(latest);
+
+  // If we can't parse either version, fall back to string comparison
+  if (!currentParsed || !latestParsed) {
+    debug(`[electron-manifest] Could not parse versions: current=${current}, latest=${latest}`);
+    return latest > current;
+  }
+
+  // Compare major.minor.patch
+  if (latestParsed.major !== currentParsed.major) {
+    return latestParsed.major > currentParsed.major;
+  }
+  if (latestParsed.minor !== currentParsed.minor) {
+    return latestParsed.minor > currentParsed.minor;
+  }
+  if (latestParsed.patch !== currentParsed.patch) {
+    return latestParsed.patch > currentParsed.patch;
+  }
+
+  // Same major.minor.patch - compare prerelease
+  const prereleaseComparison = comparePrerelease(latestParsed.prerelease, currentParsed.prerelease);
+  return prereleaseComparison > 0;
 }
 
 /**

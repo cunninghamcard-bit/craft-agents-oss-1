@@ -3,15 +3,15 @@
  *
  * Handles checking for updates, downloading, and triggering installation.
  * Uses the custom manifest system at https://agents.craft.do/electron/
+ *
+ * Currently only supports macOS. Windows and Linux support planned for future.
  */
 
-import { app, BrowserWindow } from 'electron'
+import { app } from 'electron'
 import { createWriteStream, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
-import { pipeline } from 'stream/promises'
-import { Readable } from 'stream'
 import { mainLog } from './logger'
 import {
   getElectronLatestVersion,
@@ -20,6 +20,7 @@ import {
   getPlatformKey,
   getAppVersion,
 } from '@craft-agent/shared/version'
+import type { VersionManifest, BinaryInfo } from '@craft-agent/shared/version/manifest'
 import type { UpdateInfo } from '../shared/types'
 import type { WindowManager } from './window-manager'
 
@@ -36,19 +37,15 @@ let updateInfo: UpdateInfo = {
 let windowManager: WindowManager | null = null
 let downloadedInstallerPath: string | null = null
 
-/**
- * Get the installer file extension for the current platform
- */
-function getInstallerExtension(): string {
-  switch (process.platform) {
-    case 'win32':
-      return '.exe'
-    case 'linux':
-      return '.AppImage'
-    default:
-      return '.dmg'
-  }
-}
+// Cache the manifest to avoid refetching during download
+let cachedManifest: VersionManifest | null = null
+let cachedBinaryInfo: BinaryInfo | null = null
+
+// Mutex locks to prevent concurrent operations
+// Using promises for deduplication - concurrent callers get the same result
+let checkPromise: Promise<UpdateInfo> | null = null
+let downloadPromise: Promise<void> | null = null
+let isInstalling = false
 
 /**
  * Set the window manager for broadcasting updates
@@ -95,9 +92,35 @@ function broadcastDownloadProgress(progress: number): void {
 /**
  * Check for available updates
  * Returns UpdateInfo with available=true if a newer version exists
+ *
+ * Uses promise deduplication - concurrent callers get the same result
  */
 export async function checkForUpdates(): Promise<UpdateInfo> {
+  // Return existing promise if check already in progress (deduplication)
+  if (checkPromise) {
+    mainLog.info('[auto-update] Check already in progress, returning existing promise')
+    return checkPromise
+  }
+
+  checkPromise = doCheckForUpdates()
+  try {
+    return await checkPromise
+  } finally {
+    checkPromise = null
+  }
+}
+
+/**
+ * Internal implementation of update check
+ */
+async function doCheckForUpdates(): Promise<UpdateInfo> {
   mainLog.info('[auto-update] Checking for updates...')
+
+  // Only support macOS for now
+  if (process.platform !== 'darwin') {
+    mainLog.info('[auto-update] Auto-update only supported on macOS')
+    return updateInfo
+  }
 
   const currentVersion = getAppVersion()
   updateInfo.currentVersion = currentVersion
@@ -122,12 +145,15 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
 
     mainLog.info(`[auto-update] Update available: ${currentVersion} → ${latestVersion}`)
 
-    // Fetch manifest for download URL
+    // Fetch manifest for download URL and cache it
     const manifest = await getElectronManifest(latestVersion)
     if (!manifest) {
       mainLog.error('[auto-update] Could not fetch manifest')
       return updateInfo
     }
+
+    // Cache the manifest for later use during download
+    cachedManifest = manifest
 
     // Get download URL for current platform
     const platformKey = getPlatformKey()
@@ -137,6 +163,9 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
       mainLog.error(`[auto-update] No binary found for platform: ${platformKey}`)
       return updateInfo
     }
+
+    // Cache binary info for checksum verification during download
+    cachedBinaryInfo = binary
 
     updateInfo.available = true
     updateInfo.downloadUrl = binary.url
@@ -160,18 +189,46 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
 
 /**
  * Download the update DMG
+ *
+ * Uses promise deduplication - concurrent callers get the same result
  */
 export async function downloadUpdate(): Promise<void> {
+  // Return existing promise if download already in progress (deduplication)
+  if (downloadPromise) {
+    mainLog.info('[auto-update] Download already in progress, returning existing promise')
+    return downloadPromise
+  }
+
+  // Already downloaded
+  if (updateInfo.downloadState === 'ready') {
+    mainLog.info('[auto-update] Download already complete')
+    return
+  }
+
   if (!updateInfo.available || !updateInfo.downloadUrl || !updateInfo.latestVersion) {
     mainLog.warn('[auto-update] No update to download')
     return
   }
 
-  if (updateInfo.downloadState === 'downloading' || updateInfo.downloadState === 'ready') {
-    mainLog.info('[auto-update] Download already in progress or complete')
+  // Use cached binary info from checkForUpdates()
+  // This prevents TOCTOU race where manifest could change between check and download
+  if (!cachedBinaryInfo) {
+    mainLog.error('[auto-update] No cached binary info - must call checkForUpdates first')
     return
   }
 
+  downloadPromise = doDownloadUpdate()
+  try {
+    return await downloadPromise
+  } finally {
+    downloadPromise = null
+  }
+}
+
+/**
+ * Internal implementation of download
+ */
+async function doDownloadUpdate(): Promise<void> {
   mainLog.info(`[auto-update] Downloading update from: ${updateInfo.downloadUrl}`)
 
   updateInfo.downloadState = 'downloading'
@@ -179,24 +236,14 @@ export async function downloadUpdate(): Promise<void> {
   broadcastUpdateInfo()
 
   try {
-    // Fetch manifest for checksum verification
-    const manifest = await getElectronManifest(updateInfo.latestVersion)
-    const platformKey = getPlatformKey()
-    const binary = manifest?.binaries[platformKey]
-
-    if (!binary) {
-      throw new Error(`No binary info for platform: ${platformKey}`)
-    }
-
     // Create temp directory for download
     const tempDir = join(app.getPath('temp'), 'craft-agent-updates')
     if (!existsSync(tempDir)) {
       mkdirSync(tempDir, { recursive: true })
     }
 
-    // Download file with platform-specific extension
-    const ext = getInstallerExtension()
-    const installerPath = join(tempDir, `Craft-Agent-${updateInfo.latestVersion}${ext}`)
+    // Download file
+    const installerPath = join(tempDir, `Craft-Agent-${updateInfo.latestVersion}.dmg`)
 
     // Remove existing file if present
     if (existsSync(installerPath)) {
@@ -248,11 +295,11 @@ export async function downloadUpdate(): Promise<void> {
       writeStream.on('error', reject)
     })
 
-    // Verify checksum
+    // Verify checksum using cached binary info
     const downloadedChecksum = hash.digest('hex')
-    if (downloadedChecksum !== binary.sha256) {
+    if (downloadedChecksum !== cachedBinaryInfo.sha256) {
       unlinkSync(installerPath)
-      throw new Error(`Checksum mismatch: expected ${binary.sha256}, got ${downloadedChecksum}`)
+      throw new Error(`Checksum mismatch: expected ${cachedBinaryInfo.sha256}, got ${downloadedChecksum}`)
     }
 
     mainLog.info('[auto-update] Download complete and verified')
@@ -272,33 +319,38 @@ export async function downloadUpdate(): Promise<void> {
 
 /**
  * Install the downloaded update and restart the app
- * Handles platform-specific installation methods
+ * Currently only supports macOS
+ *
+ * Uses a flag to prevent concurrent installations
  */
 export async function installUpdate(): Promise<void> {
+  // Prevent concurrent installations
+  if (isInstalling) {
+    mainLog.info('[auto-update] Installation already in progress')
+    return
+  }
+
   if (updateInfo.downloadState !== 'ready' || !downloadedInstallerPath) {
     throw new Error('No update ready to install')
   }
 
-  mainLog.info(`[auto-update] Starting installation on ${process.platform}...`)
+  // Only support macOS for now
+  if (process.platform !== 'darwin') {
+    throw new Error('Auto-update installation only supported on macOS. Please download and install manually.')
+  }
+
+  isInstalling = true
+  mainLog.info('[auto-update] Starting macOS installation...')
 
   updateInfo.downloadState = 'installing'
   broadcastUpdateInfo()
 
   try {
-    switch (process.platform) {
-      case 'darwin':
-        await installMacOS()
-        break
-      case 'win32':
-        await installWindows()
-        break
-      case 'linux':
-        await installLinux()
-        break
-      default:
-        throw new Error(`Unsupported platform: ${process.platform}`)
-    }
+    await installMacOS()
+    // Note: if installMacOS succeeds, app.quit() is called and we never reach here
   } catch (error) {
+    // Reset flag so user can retry
+    isInstalling = false
     mainLog.error('[auto-update] Installation failed:', error)
     updateInfo.downloadState = 'error'
     updateInfo.error = error instanceof Error ? error.message : 'Installation failed'
@@ -309,6 +361,11 @@ export async function installUpdate(): Promise<void> {
 
 /**
  * macOS: Use self-update.sh script to mount DMG and copy to /Applications
+ * The script handles:
+ * - Atomic swap (backup old app, install new app atomically)
+ * - Rollback on failure
+ * - Code signature verification
+ * - Clean environment for launch
  */
 async function installMacOS(): Promise<void> {
   if (!downloadedInstallerPath) throw new Error('No installer path')
@@ -340,65 +397,16 @@ async function installMacOS(): Promise<void> {
 }
 
 /**
- * Windows: Run NSIS installer silently with /S flag
- */
-async function installWindows(): Promise<void> {
-  if (!downloadedInstallerPath) throw new Error('No installer path')
-
-  // Get the install directory (parent of the exe)
-  const exePath = app.getPath('exe')
-  const installDir = join(exePath, '..')
-
-  // Spawn NSIS installer silently
-  // /S = silent, /D= = install directory
-  const child = spawn(downloadedInstallerPath, ['/S', `/D=${installDir}`], {
-    detached: true,
-    stdio: 'ignore',
-  })
-
-  child.unref()
-  mainLog.info('[auto-update] Quitting app for Windows update...')
-  app.quit()
-}
-
-/**
- * Linux: Replace AppImage in place and relaunch
- */
-async function installLinux(): Promise<void> {
-  if (!downloadedInstallerPath) throw new Error('No installer path')
-
-  // Get current AppImage path from environment or exe path
-  const currentPath = process.env.APPIMAGE || app.getPath('exe')
-
-  // Create a temporary script to perform the update after app quits
-  const scriptContent = `#!/bin/bash
-sleep 2
-cp "${downloadedInstallerPath}" "${currentPath}"
-chmod +x "${currentPath}"
-rm -f "${downloadedInstallerPath}"
-"${currentPath}" &
-`
-
-  const scriptPath = join(app.getPath('temp'), 'craft-agent-update.sh')
-  const { writeFileSync, chmodSync } = await import('fs')
-  writeFileSync(scriptPath, scriptContent)
-  chmodSync(scriptPath, '755')
-
-  const child = spawn('bash', [scriptPath], {
-    detached: true,
-    stdio: 'ignore',
-  })
-
-  child.unref()
-  mainLog.info('[auto-update] Quitting app for Linux update...')
-  app.quit()
-}
-
-/**
  * Schedule update check after app startup
  * Delays check by a few seconds to not slow down startup
  */
 export function scheduleUpdateCheck(delayMs = 5000): void {
+  // Only schedule on macOS
+  if (process.platform !== 'darwin') {
+    mainLog.info('[auto-update] Skipping update check - not on macOS')
+    return
+  }
+
   mainLog.info(`[auto-update] Scheduling update check in ${delayMs}ms`)
 
   setTimeout(() => {
