@@ -16,14 +16,8 @@ interface UpdateBannerProps {
   updateAvailable: boolean
   /** Latest version available */
   latestVersion: string | null
-  /** Current installed version */
-  currentVersion: string
-  /** Whether download is in progress */
-  isDownloading: boolean
   /** Whether update is ready to install */
   isReadyToInstall: boolean
-  /** Download progress (0-100) */
-  downloadProgress: number
   /** Callback to install the update */
   onInstall: () => void
   /** Callback to dismiss the banner */

@@ -12,12 +12,30 @@ import type { VersionManifest } from './manifest';
 
 const ELECTRON_VERSIONS_URL = 'https://agents.craft.do/electron';
 
+/** Default timeout for network requests (10 seconds) */
+const FETCH_TIMEOUT_MS = 10000;
+
+/**
+ * Fetch with timeout to prevent hanging on slow/unresponsive servers
+ */
+async function fetchWithTimeout(url: string, timeoutMs = FETCH_TIMEOUT_MS): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Fetch the latest Electron app version from the server
  */
 export async function getElectronLatestVersion(): Promise<string | null> {
   try {
-    const response = await fetch(`${ELECTRON_VERSIONS_URL}/latest`);
+    const response = await fetchWithTimeout(`${ELECTRON_VERSIONS_URL}/latest`);
     if (!response.ok) {
       debug(`[electron-manifest] Failed to fetch latest version: ${response.status}`);
       return null;
@@ -30,7 +48,11 @@ export async function getElectronLatestVersion(): Promise<string | null> {
     }
     return version;
   } catch (error) {
-    debug(`[electron-manifest] Failed to get latest version: ${error}`);
+    if (error instanceof Error && error.name === 'AbortError') {
+      debug('[electron-manifest] Fetch latest version timed out');
+    } else {
+      debug(`[electron-manifest] Failed to get latest version: ${error}`);
+    }
     return null;
   }
 }
@@ -42,7 +64,7 @@ export async function getElectronManifest(version: string): Promise<VersionManif
   try {
     const url = `${ELECTRON_VERSIONS_URL}/${version}/manifest.json`;
     debug(`[electron-manifest] Getting manifest for version: ${url}`);
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) {
       debug(`[electron-manifest] Failed to fetch manifest: ${response.status}`);
       return null;
@@ -50,7 +72,11 @@ export async function getElectronManifest(version: string): Promise<VersionManif
     const data = await response.json();
     return data as VersionManifest;
   } catch (error) {
-    debug(`[electron-manifest] Failed to get manifest: ${error}`);
+    if (error instanceof Error && error.name === 'AbortError') {
+      debug('[electron-manifest] Fetch manifest timed out');
+    } else {
+      debug(`[electron-manifest] Failed to get manifest: ${error}`);
+    }
     return null;
   }
 }
@@ -182,10 +208,11 @@ export function isNewerVersion(current: string, latest: string): boolean {
   const currentParsed = parseVersion(current);
   const latestParsed = parseVersion(latest);
 
-  // If we can't parse either version, fall back to string comparison
+  // If we can't parse either version, return false (don't update)
+  // This is safer than guessing - string comparison like "0.9.0" > "0.10.0" would be wrong
   if (!currentParsed || !latestParsed) {
-    debug(`[electron-manifest] Could not parse versions: current=${current}, latest=${latest}`);
-    return latest > current;
+    debug(`[electron-manifest] Could not parse versions: current=${current}, latest=${latest}. Skipping update.`);
+    return false;
   }
 
   // Compare major.minor.patch

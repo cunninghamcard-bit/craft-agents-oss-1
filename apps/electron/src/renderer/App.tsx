@@ -1199,10 +1199,7 @@ export default function App() {
               <UpdateBanner
                 updateAvailable={updateChecker.updateAvailable}
                 latestVersion={updateChecker.updateInfo?.latestVersion ?? null}
-                currentVersion={updateChecker.updateInfo?.currentVersion ?? ''}
-                isDownloading={updateChecker.isDownloading}
                 isReadyToInstall={updateChecker.isReadyToInstall}
-                downloadProgress={updateChecker.downloadProgress}
                 onInstall={updateChecker.installUpdate}
                 onDismiss={updateChecker.dismissUpdate}
                 isDismissed={updateChecker.isDismissed}

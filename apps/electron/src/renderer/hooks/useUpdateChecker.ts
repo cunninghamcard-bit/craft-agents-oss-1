@@ -36,6 +36,13 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null)
   const [isDismissed, setIsDismissed] = useState(false)
   const hasShownToastRef = useRef(false)
+  // Use ref to avoid stale closure in callback
+  const isDismissedRef = useRef(isDismissed)
+
+  // Keep ref in sync with state
+  useEffect(() => {
+    isDismissedRef.current = isDismissed
+  }, [isDismissed])
 
   // Subscribe to update availability broadcasts
   useEffect(() => {
@@ -49,7 +56,8 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
       setUpdateInfo(info)
 
       // Show toast on first detection (if not already shown and update is available)
-      if (info.available && !hasShownToastRef.current && !isDismissed) {
+      // Use ref to get current dismissed state (avoid stale closure)
+      if (info.available && !hasShownToastRef.current && !isDismissedRef.current) {
         hasShownToastRef.current = true
         toast.info(`Update available: v${info.latestVersion}`, {
           description: 'A new version is being downloaded in the background.',
@@ -67,7 +75,7 @@ export function useUpdateChecker(): UseUpdateCheckerResult {
       cleanupAvailable()
       cleanupProgress()
     }
-  }, [isDismissed])
+  }, []) // No dependency on isDismissed - we use the ref instead
 
   // Check for updates manually
   const checkForUpdates = useCallback(async () => {

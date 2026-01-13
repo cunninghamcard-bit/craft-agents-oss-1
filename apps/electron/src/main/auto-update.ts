@@ -63,14 +63,18 @@ export function getUpdateInfo(): UpdateInfo {
 
 /**
  * Broadcast update info to all renderer windows
+ * Takes a snapshot of the current state to avoid race conditions
  */
 function broadcastUpdateInfo(): void {
   if (!windowManager) return
 
+  // Create snapshot to avoid race conditions if state changes during broadcast
+  const snapshot = { ...updateInfo }
+
   const windows = windowManager.getAllWindows()
   for (const { window } of windows) {
     if (!window.isDestroyed()) {
-      window.webContents.send('update:available', updateInfo)
+      window.webContents.send('update:available', snapshot)
     }
   }
 }
@@ -90,19 +94,30 @@ function broadcastDownloadProgress(progress: number): void {
 }
 
 /**
+ * Options for checkForUpdates
+ */
+interface CheckOptions {
+  /** If true, automatically start download when update is found (default: true for scheduled checks) */
+  autoDownload?: boolean
+}
+
+/**
  * Check for available updates
  * Returns UpdateInfo with available=true if a newer version exists
  *
  * Uses promise deduplication - concurrent callers get the same result
+ *
+ * @param options.autoDownload - If true, auto-start download (default: true)
  */
-export async function checkForUpdates(): Promise<UpdateInfo> {
+export async function checkForUpdates(options: CheckOptions = {}): Promise<UpdateInfo> {
   // Return existing promise if check already in progress (deduplication)
   if (checkPromise) {
     mainLog.info('[auto-update] Check already in progress, returning existing promise')
     return checkPromise
   }
 
-  checkPromise = doCheckForUpdates()
+  const { autoDownload = true } = options
+  checkPromise = doCheckForUpdates(autoDownload)
   try {
     return await checkPromise
   } finally {
@@ -113,7 +128,7 @@ export async function checkForUpdates(): Promise<UpdateInfo> {
 /**
  * Internal implementation of update check
  */
-async function doCheckForUpdates(): Promise<UpdateInfo> {
+async function doCheckForUpdates(autoDownload: boolean): Promise<UpdateInfo> {
   mainLog.info('[auto-update] Checking for updates...')
 
   // Only support macOS for now
@@ -123,7 +138,7 @@ async function doCheckForUpdates(): Promise<UpdateInfo> {
   }
 
   const currentVersion = getAppVersion()
-  updateInfo.currentVersion = currentVersion
+  updateInfo = { ...updateInfo, currentVersion }
 
   try {
     // Fetch latest version from server
@@ -134,12 +149,12 @@ async function doCheckForUpdates(): Promise<UpdateInfo> {
       return updateInfo
     }
 
-    updateInfo.latestVersion = latestVersion
+    updateInfo = { ...updateInfo, latestVersion }
 
     // Check if newer version is available
     if (!isNewerVersion(currentVersion, latestVersion)) {
       mainLog.info(`[auto-update] Already up to date (${currentVersion})`)
-      updateInfo.available = false
+      updateInfo = { ...updateInfo, available: false }
       return updateInfo
     }
 
@@ -167,18 +182,26 @@ async function doCheckForUpdates(): Promise<UpdateInfo> {
     // Cache binary info for checksum verification during download
     cachedBinaryInfo = binary
 
-    updateInfo.available = true
-    updateInfo.downloadUrl = binary.url
-    updateInfo.downloadState = 'idle'
-    updateInfo.downloadProgress = 0
-
-    // Start auto-download in background
-    downloadUpdate().catch(err => {
-      mainLog.error('[auto-update] Auto-download failed:', err)
-    })
+    // Update state atomically
+    updateInfo = {
+      ...updateInfo,
+      available: true,
+      downloadUrl: binary.url,
+      downloadState: 'idle',
+      downloadProgress: 0,
+    }
 
     // Broadcast to all windows
     broadcastUpdateInfo()
+
+    // Start auto-download in background only if requested
+    // Manual "Check Now" from settings uses autoDownload=false so users on metered
+    // connections aren't surprised by a large download
+    if (autoDownload) {
+      downloadUpdate().catch(err => {
+        mainLog.error('[auto-update] Auto-download failed:', err)
+      })
+    }
 
     return updateInfo
   } catch (error) {
@@ -191,6 +214,8 @@ async function doCheckForUpdates(): Promise<UpdateInfo> {
  * Download the update DMG
  *
  * Uses promise deduplication - concurrent callers get the same result
+ *
+ * @throws Error if called before checkForUpdates() or if no update is available
  */
 export async function downloadUpdate(): Promise<void> {
   // Return existing promise if download already in progress (deduplication)
@@ -206,15 +231,20 @@ export async function downloadUpdate(): Promise<void> {
   }
 
   if (!updateInfo.available || !updateInfo.downloadUrl || !updateInfo.latestVersion) {
+    const error = new Error('No update available to download. Call checkForUpdates() first.')
     mainLog.warn('[auto-update] No update to download')
-    return
+    throw error
   }
 
   // Use cached binary info from checkForUpdates()
   // This prevents TOCTOU race where manifest could change between check and download
   if (!cachedBinaryInfo) {
-    mainLog.error('[auto-update] No cached binary info - must call checkForUpdates first')
-    return
+    const error = new Error('No cached binary info - must call checkForUpdates() first')
+    mainLog.error('[auto-update]', error.message)
+    // Update state to reflect error
+    updateInfo = { ...updateInfo, downloadState: 'error', error: error.message }
+    broadcastUpdateInfo()
+    throw error
   }
 
   downloadPromise = doDownloadUpdate()
@@ -229,10 +259,18 @@ export async function downloadUpdate(): Promise<void> {
  * Internal implementation of download
  */
 async function doDownloadUpdate(): Promise<void> {
-  mainLog.info(`[auto-update] Downloading update from: ${updateInfo.downloadUrl}`)
+  // These were validated in downloadUpdate() but TypeScript doesn't track across functions
+  const downloadUrl = updateInfo.downloadUrl
+  const latestVersion = updateInfo.latestVersion
+  const binaryInfo = cachedBinaryInfo
 
-  updateInfo.downloadState = 'downloading'
-  updateInfo.downloadProgress = 0
+  if (!downloadUrl || !latestVersion || !binaryInfo) {
+    throw new Error('Missing required update info - call checkForUpdates first')
+  }
+
+  mainLog.info(`[auto-update] Downloading update from: ${downloadUrl}`)
+
+  updateInfo = { ...updateInfo, downloadState: 'downloading', downloadProgress: 0 }
   broadcastUpdateInfo()
 
   try {
@@ -243,14 +281,14 @@ async function doDownloadUpdate(): Promise<void> {
     }
 
     // Download file
-    const installerPath = join(tempDir, `Craft-Agent-${updateInfo.latestVersion}.dmg`)
+    const installerPath = join(tempDir, `Craft-Agent-${latestVersion}.dmg`)
 
     // Remove existing file if present
     if (existsSync(installerPath)) {
       unlinkSync(installerPath)
     }
 
-    const response = await fetch(updateInfo.downloadUrl)
+    const response = await fetch(downloadUrl)
     if (!response.ok || !response.body) {
       throw new Error(`Download failed: ${response.status}`)
     }
@@ -258,14 +296,18 @@ async function doDownloadUpdate(): Promise<void> {
     const contentLength = parseInt(response.headers.get('content-length') || '0', 10)
     let downloadedBytes = 0
 
+    // Track progress for deduplication
+    let lastBroadcastProgress = 0
+
     // Create transform stream to track progress
     const progressStream = new TransformStream({
       transform(chunk, controller) {
         downloadedBytes += chunk.byteLength
         if (contentLength > 0) {
           const progress = Math.round((downloadedBytes / contentLength) * 100)
-          if (progress !== updateInfo.downloadProgress) {
-            updateInfo.downloadProgress = progress
+          if (progress !== lastBroadcastProgress) {
+            lastBroadcastProgress = progress
+            updateInfo = { ...updateInfo, downloadProgress: progress }
             broadcastDownloadProgress(progress)
           }
         }
@@ -297,21 +339,23 @@ async function doDownloadUpdate(): Promise<void> {
 
     // Verify checksum using cached binary info
     const downloadedChecksum = hash.digest('hex')
-    if (downloadedChecksum !== cachedBinaryInfo.sha256) {
+    if (downloadedChecksum !== binaryInfo.sha256) {
       unlinkSync(installerPath)
-      throw new Error(`Checksum mismatch: expected ${cachedBinaryInfo.sha256}, got ${downloadedChecksum}`)
+      throw new Error(`Checksum mismatch: expected ${binaryInfo.sha256}, got ${downloadedChecksum}`)
     }
 
     mainLog.info('[auto-update] Download complete and verified')
 
     downloadedInstallerPath = installerPath
-    updateInfo.downloadState = 'ready'
-    updateInfo.downloadProgress = 100
+    updateInfo = { ...updateInfo, downloadState: 'ready', downloadProgress: 100 }
     broadcastUpdateInfo()
   } catch (error) {
     mainLog.error('[auto-update] Download failed:', error)
-    updateInfo.downloadState = 'error'
-    updateInfo.error = error instanceof Error ? error.message : 'Download failed'
+    updateInfo = {
+      ...updateInfo,
+      downloadState: 'error',
+      error: error instanceof Error ? error.message : 'Download failed',
+    }
     broadcastUpdateInfo()
     throw error
   }
@@ -342,7 +386,7 @@ export async function installUpdate(): Promise<void> {
   isInstalling = true
   mainLog.info('[auto-update] Starting macOS installation...')
 
-  updateInfo.downloadState = 'installing'
+  updateInfo = { ...updateInfo, downloadState: 'installing' }
   broadcastUpdateInfo()
 
   try {
@@ -352,8 +396,11 @@ export async function installUpdate(): Promise<void> {
     // Reset flag so user can retry
     isInstalling = false
     mainLog.error('[auto-update] Installation failed:', error)
-    updateInfo.downloadState = 'error'
-    updateInfo.error = error instanceof Error ? error.message : 'Installation failed'
+    updateInfo = {
+      ...updateInfo,
+      downloadState: 'error',
+      error: error instanceof Error ? error.message : 'Installation failed',
+    }
     broadcastUpdateInfo()
     throw error
   }

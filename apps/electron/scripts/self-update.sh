@@ -58,17 +58,38 @@ log "Starting self-update"
 log "DMG path: $DMG_PATH"
 log "App path: $APP_PATH"
 
-# Show progress dialog (auto-dismisses after 30 seconds via "giving up after")
-# The dialog is owned by System Events so we can't close it programmatically,
-# but it will auto-dismiss when the timeout expires or user clicks away
-osascript -e 'tell application "System Events" to display dialog "Updating Craft Agent…
+# Show notification to indicate update is in progress
+# Using notification instead of dialog because:
+# 1. Dialog owned by System Events can't be closed programmatically
+# 2. Notification is non-blocking and auto-dismisses
+# 3. No orphan windows if update completes quickly
+osascript -e 'display notification "Installing update, please wait..." with title "Craft Agent" subtitle "The app will restart automatically"' 2>/dev/null || true
+log "Showed update notification"
 
-Please wait while the update is installed." with title "Craft Agent" buttons {} giving up after 30 with icon file "Applications:Craft Agent.app:Contents:Resources:icon.icns"' 2>/dev/null &
-DIALOG_PID=$!
-log "Started progress dialog (PID: $DIALOG_PID)"
+# Validate DMG path - must be non-empty, exist, and be a safe path
+# Security: prevent command injection via malicious environment variables
+if [ -z "$DMG_PATH" ]; then
+    log "ERROR: DMG path is empty"
+    osascript -e 'display notification "Update failed: installer not found." with title "Craft Agent"' 2>/dev/null || true
+    exit 1
+fi
 
-# Validate DMG path
-if [ -z "$DMG_PATH" ] || [ ! -f "$DMG_PATH" ]; then
+# Validate path doesn't contain dangerous characters (prevent injection)
+# Allow only alphanumeric, slash, dot, dash, underscore, and space
+if ! echo "$DMG_PATH" | grep -qE '^[a-zA-Z0-9/._ -]+$'; then
+    log "ERROR: DMG path contains invalid characters: $DMG_PATH"
+    osascript -e 'display notification "Update failed: invalid installer path." with title "Craft Agent"' 2>/dev/null || true
+    exit 1
+fi
+
+# Validate path is absolute
+if [ "${DMG_PATH:0:1}" != "/" ]; then
+    log "ERROR: DMG path must be absolute: $DMG_PATH"
+    osascript -e 'display notification "Update failed: invalid installer path." with title "Craft Agent"' 2>/dev/null || true
+    exit 1
+fi
+
+if [ ! -f "$DMG_PATH" ]; then
     log "ERROR: DMG file not found: $DMG_PATH"
     osascript -e 'display notification "Update failed: installer not found." with title "Craft Agent"' 2>/dev/null || true
     exit 1
