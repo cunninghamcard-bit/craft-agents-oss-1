@@ -151,6 +151,7 @@ export const sourceCreationTutorial: TutorialDefinition = {
       spotlightPadding: 8,
       spotlightRadius: 8,
       delay: 500, // Short delay, rely on MutationObserver to find the element when it appears
+      waitForElement: true, // Wait indefinitely - depends on agent response
     },
     // Post-OAuth steps: Explore source and use it in a chat
     {

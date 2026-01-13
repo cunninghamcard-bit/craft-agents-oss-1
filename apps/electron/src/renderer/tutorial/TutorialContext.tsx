@@ -377,9 +377,11 @@ export function TutorialProvider({
       if (!target) {
         console.log('[Tutorial] Target not found, setting up MutationObserver and polling for:', currentStep.target)
 
-        // For 'appear' steps, wait indefinitely - they depend on external events (permissions, OAuth, etc.)
+        // Wait indefinitely for:
+        // - 'appear' steps (they depend on external events like permissions, OAuth, etc.)
+        // - Steps with waitForElement flag (explicitly marked to wait for agent responses)
         // For other steps (click, etc.), use a timeout as fallback for broken selectors
-        const shouldTimeout = currentStep.completionEvent !== 'appear'
+        const shouldTimeout = currentStep.completionEvent !== 'appear' && !currentStep.waitForElement
         const ELEMENT_TIMEOUT = 10000
         let elementFound = false
         let elementTimeoutId: ReturnType<typeof setTimeout> | null = null

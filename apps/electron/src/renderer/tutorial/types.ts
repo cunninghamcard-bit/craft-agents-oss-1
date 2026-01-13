@@ -55,6 +55,8 @@ export interface TutorialStep {
   appearDelay?: number
   /** Show a button in the tooltip to manually advance (e.g., "Got it"). If set, disables spotlight click advancement */
   nextButton?: string
+  /** Wait indefinitely for target element (no timeout). Use for steps that depend on external events like agent responses. */
+  waitForElement?: boolean
   /** Optional callback when step completes */
   onComplete?: () => void | Promise<void>
 }
