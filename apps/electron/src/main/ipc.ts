@@ -1256,13 +1256,16 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   // Get all skills for a workspace
   ipcMain.handle(IPC_CHANNELS.SKILLS_GET, async (_event, workspaceId: string) => {
+    ipcLog.info(`SKILLS_GET: Loading skills for workspace: ${workspaceId}`)
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       ipcLog.error(`SKILLS_GET: Workspace not found: ${workspaceId}`)
       return []
     }
     const { loadWorkspaceSkills } = await import('@craft-agent/shared/skills')
-    return loadWorkspaceSkills(workspace.rootPath)
+    const skills = loadWorkspaceSkills(workspace.rootPath)
+    ipcLog.info(`SKILLS_GET: Loaded ${skills.length} skills from ${workspace.rootPath}`)
+    return skills
   })
 
   // Get files in a skill directory

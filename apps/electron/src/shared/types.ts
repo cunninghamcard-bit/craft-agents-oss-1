@@ -344,6 +344,8 @@ export type SessionEvent =
 export interface SendMessageOptions {
   /** Enable ultrathink mode for extended reasoning */
   ultrathinkEnabled?: boolean
+  /** Skill slugs to activate for this message (from @mentions) */
+  skillSlugs?: string[]
 }
 
 // =============================================================================

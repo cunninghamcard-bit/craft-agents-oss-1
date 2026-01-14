@@ -21,6 +21,11 @@ import {
   DEFAULT_SLASH_COMMANDS,
   type SlashCommandId,
 } from '@/components/ui/slash-command-menu'
+import {
+  InlineSkillMention,
+  useInlineSkillMention,
+} from '@/components/ui/skill-mention-menu'
+import { parseSkillMentions } from '@/lib/skill-mentions'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   DropdownMenu,
@@ -31,7 +36,7 @@ import { cn } from '@/lib/utils'
 import { AttachmentPreview } from '../AttachmentPreview'
 import { MODELS, getModelShortName } from '@config/models'
 import { SourceAvatar } from '@/components/ui/source-avatar'
-import type { FileAttachment, LoadedSource } from '../../../../shared/types'
+import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import { PERMISSION_MODE_ORDER } from '@craft-agent/shared/agent/modes'
 
@@ -43,8 +48,8 @@ export interface FreeFormInputProps {
   disabled?: boolean
   /** Whether the session is currently processing */
   isProcessing?: boolean
-  /** Callback when message is submitted */
-  onSubmit: (message: string, attachments?: FileAttachment[]) => void
+  /** Callback when message is submitted (skillSlugs from @mentions) */
+  onSubmit: (message: string, attachments?: FileAttachment[], skillSlugs?: string[]) => void
   /** Callback to stop processing. Pass silent=true to skip "Response interrupted" message */
   onStop?: (silent?: boolean) => void
   /** External ref for the textarea */
@@ -78,6 +83,11 @@ export interface FreeFormInputProps {
   enabledSourceSlugs?: string[]
   /** Callback when source selection changes */
   onSourcesChange?: (slugs: string[]) => void
+  // Skill selection (for @mentions)
+  /** Available skills for @mention autocomplete */
+  skills?: LoadedSkill[]
+  /** Workspace ID for loading skill icons */
+  workspaceId?: string
   /** Current working directory path */
   workingDirectory?: string
   /** Callback when working directory changes */
@@ -120,6 +130,8 @@ export function FreeFormInput({
   sources = [],
   enabledSourceSlugs = [],
   onSourcesChange,
+  skills = [],
+  workspaceId,
   workingDirectory,
   onWorkingDirectoryChange,
   sessionId,
@@ -319,6 +331,13 @@ export function FreeFormInput({
     activeCommands,
   })
 
+  // Inline skill mention hook (for @mentions)
+  const inlineSkill = useInlineSkillMention({
+    textareaRef: textareaRef as React.RefObject<HTMLTextAreaElement>,
+    skills,
+    onSelect: () => {}, // Selection handled in handleInlineSkillSelect
+  })
+
   // Report height changes to parent (for external animation sync)
   React.useLayoutEffect(() => {
     if (!onHeightChange || !containerRef.current) return
@@ -509,7 +528,15 @@ export function FreeFormInput({
     // Tutorial may disable sending to guide user through specific steps
     if (disableSend) return false
 
-    onSubmit(input.trim(), attachments.length > 0 ? attachments : undefined)
+    // Parse @mentions to get skill slugs
+    const availableSlugs = skills.map(s => s.slug)
+    const mentionedSkillSlugs = parseSkillMentions(input, availableSlugs)
+
+    onSubmit(
+      input.trim(),
+      attachments.length > 0 ? attachments : undefined,
+      mentionedSkillSlugs.length > 0 ? mentionedSkillSlugs : undefined
+    )
     setInput('')
     setAttachments([])
     // Clear draft immediately (cancel any pending debounced sync)
@@ -523,7 +550,7 @@ export function FreeFormInput({
     })
 
     return true
-  }, [input, attachments, disabled, disableSend, onInputChange, onSubmit])
+  }, [input, attachments, disabled, disableSend, onInputChange, onSubmit, skills])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -547,6 +574,19 @@ export function FreeFormInput({
       const nextMode = modes[nextIndex]
       onPermissionModeChange?.(nextMode)
       return
+    }
+
+    // Don't submit when skill mention menu is open - let it handle the Enter key
+    if (inlineSkill.isOpen) {
+      if (e.key === 'Enter' || e.key === 'Tab' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        // These keys are handled by the InlineSkillMention component
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        inlineSkill.close()
+        return
+      }
     }
 
     // Don't submit when slash command menu is open - let it handle the Enter key
@@ -584,8 +624,11 @@ export function FreeFormInput({
     // Update inline slash command state
     inlineSlash.handleInputChange(value, cursorPosition)
 
-    // Auto-capitalize first letter (but not for slash commands)
-    if (value.length > 0 && value.charAt(0) !== '/') {
+    // Update inline skill mention state (for @mentions)
+    inlineSkill.handleInputChange(value, cursorPosition)
+
+    // Auto-capitalize first letter (but not for slash commands or @mentions)
+    if (value.length > 0 && value.charAt(0) !== '/' && value.charAt(0) !== '@') {
       value = value.charAt(0).toUpperCase() + value.slice(1)
     }
 
@@ -600,6 +643,22 @@ export function FreeFormInput({
     syncToParent(newValue)
     textareaRef.current?.focus()
   }, [inlineSlash, syncToParent, textareaRef])
+
+  // Handle inline skill mention selection (inserts @slug)
+  const handleInlineSkillSelect = React.useCallback((slug: string) => {
+    const newValue = inlineSkill.handleSelect(slug)
+    setInput(newValue)
+    syncToParent(newValue)
+    // Move cursor after the inserted @slug
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const cursorPos = newValue.indexOf('@' + slug) + slug.length + 2 // +2 for @ and space
+        textareaRef.current.selectionStart = cursorPos
+        textareaRef.current.selectionEnd = cursorPos
+        textareaRef.current.focus()
+      }
+    }, 0)
+  }, [inlineSkill, syncToParent, textareaRef])
 
   const hasContent = input.trim() || attachments.length > 0
 
@@ -628,6 +687,17 @@ export function FreeFormInput({
           onSelect={handleInlineSlashSelect}
           filter={inlineSlash.filter}
           position={inlineSlash.position}
+        />
+
+        {/* Inline Skill Mention Autocomplete */}
+        <InlineSkillMention
+          open={inlineSkill.isOpen}
+          onOpenChange={(open) => !open && inlineSkill.close()}
+          skills={skills}
+          onSelect={handleInlineSkillSelect}
+          filter={inlineSkill.filter}
+          position={inlineSkill.position}
+          workspaceId={workspaceId}
         />
 
         {/* Attachment Preview */}
