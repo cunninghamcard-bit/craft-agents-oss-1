@@ -1033,8 +1033,6 @@ export interface WorkspaceSettings {
   workingDirectory?: string
   /** Whether local (stdio) MCP servers are enabled */
   localMcpEnabled?: boolean
-  /** Whether interactive tutorials are enabled */
-  tutorialsEnabled?: boolean
 }
 
 /**

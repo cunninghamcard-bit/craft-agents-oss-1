@@ -15,7 +15,6 @@ import { useAppShellContext, usePendingPermission, usePendingCredential, useSess
 import { rendererPerf } from '@/lib/perf'
 import { routes } from '@/lib/navigate'
 import { ensureSessionMessagesLoadedAtom, loadedSessionsAtom, sessionMetaMapAtom } from '@/atoms/sessions'
-import { useTutorial } from '@/tutorial/TutorialContext'
 import { getSessionTitle } from '@/utils/session'
 
 export interface ChatPageProps {
@@ -97,10 +96,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   // Get pending permission and credential for this session
   const pendingPermission = usePendingPermission(sessionId)
   const pendingCredential = usePendingCredential(sessionId)
-
-  // Tutorial context - check if sending should be disabled for current step
-  const { currentStep } = useTutorial()
-  const tutorialDisablesSend = currentStep?.disableSend ?? false
 
   // Track draft value for this session
   const [inputValue, setInputValue] = React.useState(() => getDraft(sessionId))
@@ -326,7 +321,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
               workingDirectory={sessionMeta.workingDirectory}
               onWorkingDirectoryChange={handleWorkingDirectoryChange}
               messagesLoading={true}
-              disableSend={tutorialDisablesSend}
             />
           </div>
         </div>
@@ -380,7 +374,6 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
           onWorkingDirectoryChange={handleWorkingDirectoryChange}
           sessionFolderPath={session?.sessionFolderPath}
           messagesLoading={!messagesLoaded}
-          disableSend={tutorialDisablesSend}
         />
       </div>
     </div>

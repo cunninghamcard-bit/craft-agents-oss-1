@@ -51,12 +51,6 @@ export interface WorkspaceConfig {
    */
   localMcpServers?: LocalMcpConfig;
 
-  /**
-   * Whether interactive tutorials are enabled for this workspace.
-   * When true (default), tutorials will be shown when setting up new sources.
-   */
-  tutorialsEnabled?: boolean;
-
   createdAt: number;
   updatedAt: number;
 }

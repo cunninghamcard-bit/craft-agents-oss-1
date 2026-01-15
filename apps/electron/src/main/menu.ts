@@ -152,19 +152,6 @@ export async function rebuildMenu(): Promise<void> {
       label: 'Debug',
       submenu: [
         {
-          label: 'Reset Onboarding Tutorial',
-          click: async () => {
-            const win = BrowserWindow.getFocusedWindow()
-            if (win && !win.isDestroyed()) {
-              await win.webContents.executeJavaScript(
-                `localStorage.removeItem('craft-tutorial-progress')`
-              )
-              win.reload()
-            }
-          }
-        },
-        { type: 'separator' as const },
-        {
           label: 'Check for Updates',
           click: async () => {
             const { checkForUpdates } = await import('./auto-update')

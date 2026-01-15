@@ -23,14 +23,6 @@ import { useSession } from '@/hooks/useSession'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
-import {
-  TutorialProvider,
-  TutorialOverlay,
-  TutorialPrompt,
-  TutorialComplete,
-  registerTutorial,
-  sourceCreationTutorial,
-} from '@/tutorial'
 import { initRendererPerf } from './lib/perf'
 import { DEFAULT_MODEL } from '@config/models'
 import {
@@ -44,11 +36,7 @@ import {
   extractSessionMeta,
   type SessionMeta,
 } from '@/atoms/sessions'
-import { sourcesAtom } from '@/atoms/sources'
 import { getDefaultStore } from 'jotai'
-
-// Register tutorials at module load
-registerTutorial(sourceCreationTutorial)
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'ready'
 
@@ -207,9 +195,6 @@ export default function App() {
 
   // Notifications enabled state (from app settings)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
-
-  // Sources for tutorial trigger condition
-  const sources = useAtomValue(sourcesAtom)
 
   // Compute if app is fully ready (all data loaded)
   const isFullyReady = appState === 'ready' && sessionsLoaded
@@ -1212,42 +1197,35 @@ export default function App() {
           onInputChange={handleInputChange}
           isReady={appState === 'ready'}
         >
-          <TutorialProvider workspaceId={windowWorkspaceId} sourcesCount={sources.length}>
-            {/* Splash screen overlay - fades out when fully ready */}
-            {showSplash && (
-              <SplashScreen
-                isExiting={splashExiting}
-                onExitComplete={handleSplashExitComplete}
-              />
-            )}
+          {/* Splash screen overlay - fades out when fully ready */}
+          {showSplash && (
+            <SplashScreen
+              isExiting={splashExiting}
+              onExitComplete={handleSplashExitComplete}
+            />
+          )}
 
-            {/* Main UI - always rendered, splash fades away to reveal it */}
-            <div className="h-full flex flex-col text-foreground">
-              <div className="flex-1 min-h-0">
-                <AppShell
-                  contextValue={appShellContextValue}
-                  defaultLayout={[20, 32, 48]}
-                  menuNewChatTrigger={menuNewChatTrigger}
-                  isFocusedMode={isFocusedMode}
-                />
-              </div>
-              <ResetConfirmationDialog
-                open={showResetDialog}
-                onConfirm={executeReset}
-                onCancel={() => setShowResetDialog(false)}
-              />
-              <ImportClaudeCodeDialog
-                open={showImportDialog}
-                onOpenChange={setShowImportDialog}
-                onImportComplete={handleImportComplete}
+          {/* Main UI - always rendered, splash fades away to reveal it */}
+          <div className="h-full flex flex-col text-foreground">
+            <div className="flex-1 min-h-0">
+              <AppShell
+                contextValue={appShellContextValue}
+                defaultLayout={[20, 32, 48]}
+                menuNewChatTrigger={menuNewChatTrigger}
+                isFocusedMode={isFocusedMode}
               />
             </div>
-
-            {/* Tutorial system overlays */}
-            <TutorialOverlay />
-            <TutorialPrompt />
-            <TutorialComplete />
-          </TutorialProvider>
+            <ResetConfirmationDialog
+              open={showResetDialog}
+              onConfirm={executeReset}
+              onCancel={() => setShowResetDialog(false)}
+            />
+            <ImportClaudeCodeDialog
+              open={showImportDialog}
+              onOpenChange={setShowImportDialog}
+              onImportComplete={handleImportComplete}
+            />
+          </div>
         </NavigationProvider>
       </TooltipProvider>
     </FocusProvider>
