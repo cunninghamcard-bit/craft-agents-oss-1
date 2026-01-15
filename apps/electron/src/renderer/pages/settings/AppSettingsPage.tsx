@@ -284,7 +284,7 @@ export default function AppSettingsPage() {
   const [presetThemes, setPresetThemes] = useState<PresetTheme[]>([])
 
   // Billing state
-  const [authType, setAuthType] = useState<AuthType>('craft_credits')
+  const [authType, setAuthType] = useState<AuthType>('api_key')
   const [expandedMethod, setExpandedMethod] = useState<AuthType | null>(null)
   const [hasCredential, setHasCredential] = useState(false)
   const [isLoadingBilling, setIsLoadingBilling] = useState(true)
@@ -366,21 +366,10 @@ export default function AppSettingsPage() {
       return
     }
 
-    if (method === 'craft_credits' && window.electronAPI) {
-      try {
-        await window.electronAPI.updateBillingMethod(method)
-        setAuthType(method)
-        setHasCredential(true)
-        setExpandedMethod(null)
-      } catch (error) {
-        console.error('Failed to update billing method:', error)
-      }
-    } else {
-      setExpandedMethod(method)
-      setApiKeyError(undefined)
-      setClaudeOAuthStatus('idle')
-      setClaudeOAuthError(undefined)
-    }
+    setExpandedMethod(method)
+    setApiKeyError(undefined)
+    setClaudeOAuthStatus('idle')
+    setClaudeOAuthError(undefined)
   }, [authType, hasCredential])
 
   // Cancel billing method expansion
@@ -528,20 +517,17 @@ export default function AppSettingsPage() {
                 <SettingsMenuSelectRow
                   label="Payment method"
                   description={
-                    authType === 'craft_credits'
-                      ? 'Included with Craft'
-                      : authType === 'api_key' && hasCredential
-                        ? 'API key configured'
-                        : authType === 'oauth_token' && hasCredential
-                          ? 'Claude connected'
-                          : 'Select a method'
+                    authType === 'api_key' && hasCredential
+                      ? 'API key configured'
+                      : authType === 'oauth_token' && hasCredential
+                        ? 'Claude connected'
+                        : 'Select a method'
                   }
                   value={authType}
                   onValueChange={(v) => handleMethodClick(v as AuthType)}
                   options={[
-                    { value: 'craft_credits', label: 'Craft Credits', description: 'Included with Craft' },
+                    { value: 'oauth_token', label: 'Claude Pro/Max', description: 'Use your Pro or Max subscription' },
                     { value: 'api_key', label: 'API Key', description: 'Pay-as-you-go with your Anthropic key' },
-                    { value: 'oauth_token', label: 'Claude Max', description: 'Use your Pro or Max subscription' },
                   ]}
                 />
               </SettingsCard>

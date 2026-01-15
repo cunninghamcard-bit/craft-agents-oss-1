@@ -4,10 +4,9 @@
  * Manages the state machine for the onboarding wizard.
  * Simplified billing-only flow:
  * 1. Welcome
- * 2. Billing Method (Craft Credits / API Key / Claude OAuth)
- * 3. Craft Login (only if Craft Credits selected)
- * 4. Credentials (only if API Key or Claude OAuth selected)
- * 5. Complete
+ * 2. Billing Method (API Key / Claude OAuth)
+ * 3. Credentials (API Key or Claude OAuth)
+ * 4. Complete
  */
 import { useState, useCallback, useEffect } from 'react'
 import type {
@@ -34,11 +33,6 @@ interface UseOnboardingReturn {
   handleContinue: () => void
   handleBack: () => void
 
-  // Craft OAuth (for Craft Credits billing)
-  handleLogin: () => void
-  handleOpenLoginManually: () => void
-  handleRetryLogin: () => void
-
   // Billing
   handleSelectBillingMethod: (method: BillingMethod) => void
 
@@ -62,7 +56,6 @@ interface UseOnboardingReturn {
 // Map BillingMethod to AuthType
 function billingMethodToAuthType(method: BillingMethod): AuthType {
   switch (method) {
-    case 'craft_credits': return 'craft_credits'
     case 'api_key': return 'api_key'
     case 'claude_oauth': return 'oauth_token'
   }
@@ -128,17 +121,8 @@ export function useOnboarding({
         break
 
       case 'billing-method':
-        if (state.billingMethod === 'craft_credits') {
-          // Need Craft OAuth for billing
-          setState(s => ({ ...s, step: 'craft-login' }))
-        } else {
-          // API Key or Claude OAuth - go to credentials
-          setState(s => ({ ...s, step: 'credentials' }))
-        }
-        break
-
-      case 'craft-login':
-        // Auto-continues on successful login
+        // Go to credentials step for API Key or Claude OAuth
+        setState(s => ({ ...s, step: 'credentials' }))
         break
 
       case 'credentials':
@@ -157,57 +141,11 @@ export function useOnboarding({
       case 'billing-method':
         setState(s => ({ ...s, step: 'welcome' }))
         break
-      case 'craft-login':
-        setState(s => ({ ...s, step: 'billing-method', loginStatus: 'idle', errorMessage: undefined }))
-        break
       case 'credentials':
         setState(s => ({ ...s, step: 'billing-method', credentialStatus: 'idle', errorMessage: undefined }))
         break
     }
   }, [state.step])
-
-  // Start Craft OAuth (for Craft Credits billing)
-  const handleLogin = useCallback(async () => {
-    setState(s => ({ ...s, loginStatus: 'waiting', errorMessage: undefined }))
-
-    try {
-      const result = await window.electronAPI.startCraftOAuth()
-
-      if (result.success && result.token) {
-        setState(s => ({ ...s, loginStatus: 'success' }))
-
-        // Save config and go to completion
-        await handleSaveConfig()
-
-        setTimeout(() => {
-          setState(s => ({ ...s, step: 'complete' }))
-        }, 500)
-      } else {
-        setState(s => ({
-          ...s,
-          loginStatus: 'error',
-          errorMessage: result.error || 'Authentication failed',
-        }))
-      }
-    } catch (error) {
-      setState(s => ({
-        ...s,
-        loginStatus: 'error',
-        errorMessage: error instanceof Error ? error.message : 'Authentication failed',
-      }))
-    }
-  }, [handleSaveConfig])
-
-  // Open login page manually (if auto-open failed)
-  const handleOpenLoginManually = useCallback(() => {
-    handleLogin()
-  }, [handleLogin])
-
-  // Retry login after error
-  const handleRetryLogin = useCallback(() => {
-    setState(s => ({ ...s, loginStatus: 'idle', errorMessage: undefined }))
-    handleLogin()
-  }, [handleLogin])
 
   // Select billing method
   const handleSelectBillingMethod = useCallback((method: BillingMethod) => {
@@ -364,9 +302,6 @@ export function useOnboarding({
     state,
     handleContinue,
     handleBack,
-    handleLogin,
-    handleOpenLoginManually,
-    handleRetryLogin,
     handleSelectBillingMethod,
     handleSubmitCredential,
     handleStartOAuth,

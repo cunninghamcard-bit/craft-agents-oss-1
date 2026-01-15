@@ -262,7 +262,6 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
             mainLog.info('[Onboarding:Main] Claude OAuth saved (access token only)')
           }
         }
-        // craft_credits doesn't need additional credentials
       } else {
         mainLog.info('[Onboarding:Main] Skipping credential save', {
           hasCredential: !!config.credential,
@@ -276,7 +275,7 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
       mainLog.info('[Onboarding:Main] Existing config:', existingConfig ? 'found' : 'not found')
 
       const newConfig: StoredConfig = existingConfig || {
-        authType: config.authType || 'craft_credits', // Default to craft_credits for new configs
+        authType: config.authType || 'api_key',
         workspaces: [],
         activeWorkspaceId: null,
         activeSessionId: null,

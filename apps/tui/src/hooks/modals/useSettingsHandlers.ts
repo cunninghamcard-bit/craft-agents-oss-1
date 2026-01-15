@@ -49,9 +49,6 @@ export interface UseSettingsHandlersResult {
   // Claude Max modal handlers
   handleClaudeMaxSubmit: (token: string) => Promise<void>;
   handleClaudeMaxCancel: () => void;
-  // Craft Credits modal handlers
-  handleCraftCreditsSubmit: (token: string) => Promise<void>;
-  handleCraftCreditsCancel: () => void;
   // Settings menu handlers
   handleSettingsAction: (action: SettingsAction) => Promise<void>;
   handleSettingsCancel: () => void;
@@ -155,30 +152,6 @@ export function useSettingsHandlers(props: UseSettingsHandlersProps): UseSetting
     closeModal();
   }, [closeModal]);
 
-  // Craft Credits handlers
-  const handleCraftCreditsSubmit = useCallback(async (token: string) => {
-    // Block if processing a message
-    if (isProcessing) {
-      addMessage('Cannot switch auth while processing. Please wait for the current request to complete.', 'warning');
-      return;
-    }
-
-    closeModal();
-    try {
-      setAuthType('craft_credits');
-      // Hot-switch: update env vars for Craft Credits
-      setAuthEnvironment({ type: 'craft_credits', credentials: { gatewayToken: token } });
-      resetAgentInstance();
-      addMessage('Craft Credits authentication saved. Your next message will use the new credentials.', 'info');
-    } catch {
-      addMessage('Failed to save Craft credentials.', 'error');
-    }
-  }, [closeModal, addMessage, isProcessing, resetAgentInstance]);
-
-  const handleCraftCreditsCancel = useCallback(() => {
-    closeModal();
-  }, [closeModal]);
-
   // Settings menu handlers
   const handleSettingsAction = useCallback(async (action: SettingsAction) => {
     switch (action.type) {
@@ -210,12 +183,6 @@ export function useSettingsHandlers(props: UseSettingsHandlersProps): UseSetting
         }
 
         closeModal();
-
-        if (action.mode === 'craft_credits') {
-          // Go directly to CraftCreditsAuth - it handles browser OAuth
-          openModal('craftCreditsAuth');
-          return;
-        }
 
         if (action.mode === 'api_key') {
           const manager = getCredentialManager();
@@ -313,8 +280,6 @@ export function useSettingsHandlers(props: UseSettingsHandlersProps): UseSetting
     handleApiKeyCancel,
     handleClaudeMaxSubmit,
     handleClaudeMaxCancel,
-    handleCraftCreditsSubmit,
-    handleCraftCreditsCancel,
     handleSettingsAction,
     handleSettingsCancel,
     pendingAuthSwitch,

@@ -63,7 +63,6 @@ export const Header: React.FC<HeaderProps> = memo(({
   const authDisplay = useMemo(() => {
     if (authType === 'api_key') return 'API Key';
     if (authType === 'oauth_token') return 'Claude Sub';
-    if (authType === 'craft_credits') return 'Craft Credits';
     return 'Unknown';
   }, [authType]);
 
@@ -112,7 +111,7 @@ export const Header: React.FC<HeaderProps> = memo(({
           {connected ? '●' : '○'}
         </Text>
         <Text dimColor> | </Text>
-        <Text color={authType === 'api_key' ? 'blue' : authType === 'craft_credits' ? 'magenta' : 'green'}>{authDisplay}</Text>
+        <Text color={authType === 'api_key' ? 'blue' : 'green'}>{authDisplay}</Text>
 
         {/* Version */}
         {version && (

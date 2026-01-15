@@ -1,4 +1,7 @@
 /**
+ * @deprecated This file is deprecated. Use mentions.ts instead.
+ * The unified mentions module supports both skills and sources.
+ *
  * Utilities for parsing @skill mentions from chat messages
  */
 

@@ -15,14 +15,9 @@ export interface ClaudeMaxCredentials {
   oauthToken: string;
 }
 
-export interface CraftCreditsCredentials {
-  gatewayToken: string;
-}
-
 export type AuthCredentials =
   | { type: 'api_key'; credentials: ApiKeyCredentials }
-  | { type: 'oauth_token'; credentials: ClaudeMaxCredentials }
-  | { type: 'craft_credits'; credentials: CraftCreditsCredentials };
+  | { type: 'oauth_token'; credentials: ClaudeMaxCredentials };
 
 /**
  * Set environment variables for the specified auth type.
@@ -46,13 +41,6 @@ export function setAuthEnvironment(auth: AuthCredentials): void {
 
     case 'oauth_token':
       process.env.CLAUDE_CODE_OAUTH_TOKEN = auth.credentials.oauthToken;
-      break;
-
-    case 'craft_credits':
-      // Craft Credits uses a placeholder API key with gateway routing
-      process.env.ANTHROPIC_API_KEY = 'craft-credits-placeholder';
-      process.env.USE_CRAFT_AI_GATEWAY = 'true';
-      process.env.CRAFT_API_GATEWAY_TOKEN = auth.credentials.gatewayToken;
       break;
   }
 }

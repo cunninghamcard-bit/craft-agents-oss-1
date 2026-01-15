@@ -9,7 +9,6 @@ import { WorkspaceSelector } from './WorkspaceSelector.tsx';
 import { WorkspaceRename } from './WorkspaceRename.tsx';
 import { ApiKeyChange } from './ApiKeyChange.tsx';
 import { ClaudeMaxAuth } from './ClaudeMaxAuth.tsx';
-import { CraftCreditsAuth } from './CraftCreditsAuth.tsx';
 import { TodoList } from './TodoList.tsx';
 import { PlanSelector, type PlanFile } from './PlanSelector.tsx';
 import { SessionMenu } from './SessionMenu.tsx';
@@ -745,14 +744,6 @@ export const SessionContainer: React.FC<SessionContainerProps> = ({
         <ClaudeMaxAuth
           onSubmit={settingsHandlers.handleClaudeMaxSubmit}
           onCancel={settingsHandlers.handleClaudeMaxCancel}
-        />
-      )}
-
-      {/* Craft Credits auth */}
-      {isOpen('craftCreditsAuth') && (
-        <CraftCreditsAuth
-          onSubmit={settingsHandlers.handleCraftCreditsSubmit}
-          onCancel={settingsHandlers.handleCraftCreditsCancel}
         />
       )}
 

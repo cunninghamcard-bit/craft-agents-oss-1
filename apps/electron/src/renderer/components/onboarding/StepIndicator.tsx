@@ -2,7 +2,6 @@ import { cn } from "@/lib/utils"
 
 export type OnboardingStep =
   | 'welcome'
-  | 'craft-login'
   | 'billing-method'
   | 'credentials'
   | 'complete'
@@ -17,8 +16,7 @@ interface StepIndicatorProps {
 const NEW_USER_STEPS: OnboardingStep[] = [
   'welcome',
   'billing-method',
-  'craft-login',  // Only shown when Craft Credits selected
-  'credentials',  // Only shown when API Key or Claude OAuth selected
+  'credentials',
   'complete',
 ]
 

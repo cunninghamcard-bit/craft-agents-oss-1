@@ -7,14 +7,11 @@ import { getExistingClaudeToken, isClaudeCliInstalled, runClaudeSetupToken } fro
 import { getCredentialManager } from '@craft-agent/shared/credentials';
 import { TextInput } from './TextInput.tsx';
 import { AnimatedSpinner } from './Spinner.tsx';
-import { CraftCallbackStep } from './craftAuth/CraftCallbackStep.tsx';
-import type { ProfileResponse } from '@craft-agent/shared/clients';
 
-// Simplified flow: Welcome -> Billing Method -> [Craft Login if credits] -> [Credentials if API/Claude] -> Complete
+// Simplified flow: Welcome -> Billing Method -> [Credentials if API/Claude] -> Complete
 type SetupStep =
   | 'welcome'
-  | 'billing-method'     // Choose: craft_credits | api_key | oauth_token
-  | 'craft-login'        // Craft OAuth (only if craft_credits selected)
+  | 'billing-method'     // Choose: api_key | oauth_token
   | 'api-key-entry'      // Enter Anthropic API key
   | 'oauth-token-entry'  // Enter Claude Max OAuth token
   | 'oauth-token-setup'  // Running claude setup-token
@@ -54,7 +51,7 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
 
   // Billing method state
   const [billingMethod, setBillingMethod] = useState<AuthType>(
-    authState.billing.type || 'craft_credits'
+    authState.billing.type || 'api_key'
   );
   const [apiKey, setApiKey] = useState('');
   const [oauthToken, setOauthToken] = useState('');
@@ -170,19 +167,10 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
     }
   }, [apiKey, oauthToken, onComplete]);
 
-  // Craft OAuth complete -> Save
-  const handleCraftLoginComplete = useCallback(async (_token: string, _profile: ProfileResponse) => {
-    // Craft OAuth token is already saved by CraftCallbackStep
-    saveConfiguration('craft_credits');
-  }, [saveConfiguration]);
-
   // Billing method selected -> Credentials entry or Save
   const handleBillingMethodSelect = useCallback((method: AuthType) => {
     setBillingMethod(method);
-    if (method === 'craft_credits') {
-      // Need Craft OAuth - go to craft login
-      setStep('craft-login');
-    } else if (method === 'api_key') {
+    if (method === 'api_key') {
       // If ANTHROPIC_API_KEY is in environment, skip to save
       if (envApiKey) {
         saveConfiguration(method);
@@ -239,7 +227,6 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
       case 'billing-method':
         onCancel();
         break;
-      case 'craft-login':
       case 'api-key-entry':
       case 'oauth-token-entry':
       case 'oauth-token-setup':
@@ -289,13 +276,6 @@ export const Setup: React.FC<SetupProps> = ({ onComplete, onCancel, authState, s
             onBack={handleBack}
             envApiKey={envApiKey}
             envApiKeyVar={envApiKeyVar}
-          />
-        )}
-
-        {step === 'craft-login' && (
-          <CraftCallbackStep
-            onComplete={({ token, profile }) => handleCraftLoginComplete(token, profile)}
-            onBack={handleBack}
           />
         )}
 
@@ -380,7 +360,6 @@ function getStepNumber(step: SetupStep): number {
     case 'welcome':
     case 'billing-method':
       return 1;
-    case 'craft-login':
     case 'api-key-entry':
     case 'oauth-token-entry':
     case 'oauth-token-setup':
@@ -398,7 +377,6 @@ function getStepName(step: SetupStep): string {
   switch (step) {
     case 'welcome': return 'Welcome';
     case 'billing-method': return 'Choose Payment';
-    case 'craft-login': return 'Sign In';
     case 'api-key-entry': return 'API Key';
     case 'oauth-token-entry': return 'Claude Token';
     case 'oauth-token-setup': return 'Setting up...';
@@ -446,19 +424,14 @@ const BillingMethodStep: React.FC<BillingMethodStepProps> = ({ onSelect, onBack,
 
   const options: { id: AuthType; label: string; desc: string }[] = [
     {
-      id: 'craft_credits',
-      label: 'Craft Credits',
-      desc: 'Use your Craft subscription',
+      id: 'oauth_token',
+      label: 'Claude Pro/Max',
+      desc: 'Use your Claude subscription',
     },
     {
       id: 'api_key',
       label: envApiKey ? `Use ${envApiKeyVar} from env` : 'API Key',
       desc: envApiKey ? 'Use the API key from your environment' : 'Pay-as-you-go via Anthropic',
-    },
-    {
-      id: 'oauth_token',
-      label: 'Claude Pro/Max',
-      desc: 'Use your Claude subscription',
     },
   ];
 

@@ -1,10 +1,11 @@
 import { cn } from "@/lib/utils"
 import { StepIndicator, type OnboardingStep } from "./StepIndicator"
 import { WelcomeStep } from "./WelcomeStep"
-import { CraftLoginStep, type LoginStatus } from "./CraftLoginStep"
 import { BillingMethodStep, type BillingMethod } from "./BillingMethodStep"
 import { CredentialsStep, type CredentialStatus } from "./CredentialsStep"
 import { CompletionStep } from "./CompletionStep"
+
+export type LoginStatus = 'idle' | 'waiting' | 'success' | 'error'
 
 export interface OnboardingState {
   step: OnboardingStep
@@ -24,9 +25,6 @@ interface OnboardingWizardProps {
   onCancel?: () => void
   onContinue: () => void
   onBack: () => void
-  onLogin: () => void
-  onOpenLoginManually?: () => void
-  onRetryLogin?: () => void
   onSelectBillingMethod: (method: BillingMethod) => void
   onSubmitCredential: (credential: string) => void
   onStartOAuth?: () => void
@@ -45,19 +43,15 @@ interface OnboardingWizardProps {
  *
  * Manages the step-by-step flow for setting up Craft Agent:
  * 1. Welcome
- * 2. Billing Method (choose: Craft Credits / API Key / Claude OAuth)
- * 3. Craft Login (only if Craft Credits selected)
- * 4. Credentials (only if API Key or Claude OAuth selected)
- * 5. Completion
+ * 2. Billing Method (choose: API Key / Claude OAuth)
+ * 3. Credentials (API Key or Claude OAuth)
+ * 4. Completion
  */
 export function OnboardingWizard({
   state,
   onCancel,
   onContinue,
   onBack,
-  onLogin,
-  onOpenLoginManually,
-  onRetryLogin,
   onSelectBillingMethod,
   onSubmitCredential,
   onStartOAuth,
@@ -85,18 +79,6 @@ export function OnboardingWizard({
             onSelect={onSelectBillingMethod}
             onContinue={onContinue}
             onBack={onBack}
-          />
-        )
-
-      case 'craft-login':
-        return (
-          <CraftLoginStep
-            status={state.loginStatus}
-            errorMessage={state.errorMessage}
-            onLogin={onLogin}
-            onOpenManually={onOpenLoginManually}
-            onBack={onBack}
-            onRetry={onRetryLogin}
           />
         )
 

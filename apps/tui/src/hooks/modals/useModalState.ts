@@ -11,7 +11,6 @@ export type ModalName =
   | 'workspaceRename'
   | 'apiKeyChange'
   | 'claudeMaxAuth'
-  | 'craftCreditsAuth'
   | 'balance'
   | 'settings'
   | 'logoutConfirm'

@@ -45,8 +45,9 @@ import {
   getClaudeOAuthToken,
 } from '../config/storage.ts';
 import {
-  loadSourceConfigWithFallback,
-  saveSourceConfigWithContext,
+  loadSourceConfig,
+  saveSourceConfig,
+  getSourcePath,
 } from '../sources/storage.ts';
 import type { FolderSourceConfig, LoadedSource } from '../sources/types.ts';
 import { getSourceCredentialManager } from '../sources/index.ts';
@@ -729,8 +730,8 @@ After creating or editing a source's config.json, run this tool to:
 
       try {
         // Load the source config
-        const sourceResult = loadSourceConfigWithFallback(workspaceRootPath, args.sourceSlug);
-        if (!sourceResult) {
+        const source = loadSourceConfig(workspaceRootPath, args.sourceSlug);
+        if (!source) {
           return {
             content: [{
               type: 'text' as const,
@@ -739,7 +740,6 @@ After creating or editing a source's config.json, run this tool to:
             isError: true,
           };
         }
-        const source = sourceResult.config;
         
         const results: string[] = [];
         let hasErrors = false;
@@ -784,12 +784,12 @@ After creating or editing a source's config.json, run this tool to:
           if (cached) {
             source.iconSourceUrl = source.iconUrl;
             source.iconUrl = cached;
-            saveSourceConfigWithContext(workspaceRootPath, source);
+            saveSourceConfig(workspaceRootPath, source);
             results.push(`**✓ Icon Downloaded** (${cached})`);
           } else {
             // Download failed - clear invalid URL so we can try auto-fetch
             source.iconUrl = undefined;
-            saveSourceConfigWithContext(workspaceRootPath, source);
+            saveSourceConfig(workspaceRootPath, source);
           }
         }
 
@@ -809,7 +809,7 @@ After creating or editing a source's config.json, run this tool to:
               if (cached) {
                 source.iconUrl = cached;
                 source.iconSourceUrl = logoUrl;
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
                 results.push(`**✓ Icon Auto-fetched** (${cached})`);
               } else {
                 results.push('**○ No Icon** (auto-fetch failed)');
@@ -835,18 +835,18 @@ After creating or editing a source's config.json, run this tool to:
               const cached = await cacheIcon(source.iconSourceUrl, sourcePath);
               if (cached) {
                 source.iconUrl = cached;
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
                 results.push(`**✓ Icon Re-downloaded** (${cached})`);
               } else {
                 // Clear invalid iconUrl since file doesn't exist
                 source.iconUrl = undefined;
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
                 results.push('**⚠ Icon Missing** - re-download failed, cleared config');
               }
             } else {
               // No source URL to re-download from
               source.iconUrl = undefined;
-              saveSourceConfigWithContext(workspaceRootPath, source);
+              saveSourceConfig(workspaceRootPath, source);
               results.push('**⚠ Icon Missing** - file not found, cleared config');
             }
           }
@@ -870,7 +870,7 @@ After creating or editing a source's config.json, run this tool to:
             source.connectionStatus = 'failed';
             source.connectionError = result.error;
           }
-          saveSourceConfigWithContext(workspaceRootPath, source);
+          saveSourceConfig(workspaceRootPath, source);
 
           if (result.success) {
             results.push(`**✓ API Connected** (${result.status})`);
@@ -913,13 +913,13 @@ After creating or editing a source's config.json, run this tool to:
             source.lastTestedAt = Date.now();
             source.connectionStatus = 'connected';
             source.connectionError = undefined;
-            saveSourceConfigWithContext(workspaceRootPath, source);
+            saveSourceConfig(workspaceRootPath, source);
             results.push(`**✓ Local Path Exists** (${localPath})`);
           } else {
             hasErrors = true;
             source.connectionStatus = 'failed';
             source.connectionError = 'Path not found';
-            saveSourceConfigWithContext(workspaceRootPath, source);
+            saveSourceConfig(workspaceRootPath, source);
             results.push(`**❌ Local Path Not Found** (${localPath || 'not configured'})`);
           }
         }
@@ -949,7 +949,7 @@ After creating or editing a source's config.json, run this tool to:
                 source.connectionStatus = 'connected';
                 source.connectionError = undefined;
                 source.isAuthenticated = true; // Stdio sources don't need auth
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
 
                 results.push('**✓ Stdio MCP Server Connected**');
                 results.push(`  Command: ${source.mcp.command}`);
@@ -967,7 +967,7 @@ After creating or editing a source's config.json, run this tool to:
                 hasErrors = true;
                 source.connectionStatus = 'failed';
                 source.connectionError = stdioResult.error || 'Unknown error';
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
 
                 results.push('**❌ Stdio MCP Server Failed**');
                 results.push(`  Command: ${source.mcp.command}`);
@@ -1037,7 +1037,7 @@ After creating or editing a source's config.json, run this tool to:
               if (mcpResult.success) {
                 source.connectionStatus = 'connected';
                 source.connectionError = undefined;
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
 
                 results.push('**✓ MCP Connected**');
                 if (mcpResult.serverInfo) {
@@ -1065,14 +1065,14 @@ After creating or editing a source's config.json, run this tool to:
                 }
               } else if (mcpResult.errorType === 'needs-auth') {
                 source.connectionStatus = 'needs_auth';
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
                 results.push('**⚠ MCP Needs Authentication**');
                 results.push('Use `source_oauth_trigger` to authenticate.');
               } else {
                 hasErrors = true;
                 source.connectionStatus = 'failed';
                 source.connectionError = getValidationErrorMessage(mcpResult);
-                saveSourceConfigWithContext(workspaceRootPath, source);
+                saveSourceConfig(workspaceRootPath, source);
                 results.push(`**❌ MCP Connection Failed**`);
                 results.push(`  Error: ${getValidationErrorMessage(mcpResult)}`);
 
@@ -1118,6 +1118,39 @@ After creating or editing a source's config.json, run this tool to:
 }
 
 // ============================================================
+// OAuth Helpers
+// ============================================================
+
+/**
+ * Verify that a source has a valid token in the credential store.
+ * The isAuthenticated flag in config.json can be stale if the token was deleted or expired.
+ *
+ * @returns true if a valid token exists, false if re-authentication is needed
+ */
+async function verifySourceHasValidToken(
+  workspaceRootPath: string,
+  source: FolderSourceConfig,
+  sourceSlug: string
+): Promise<boolean> {
+  if (!source.isAuthenticated) {
+    return false;
+  }
+
+  const credManager = getSourceCredentialManager();
+  const workspaceId = basename(workspaceRootPath);
+  const loadedSource: LoadedSource = {
+    config: source,
+    guide: null,
+    folderPath: getSourcePath(workspaceRootPath, sourceSlug),
+    workspaceRootPath,
+    workspaceId,
+  };
+
+  const token = await credManager.getToken(loadedSource);
+  return token !== null;
+}
+
+// ============================================================
 // OAuth Trigger Tool
 // ============================================================
 
@@ -1159,8 +1192,8 @@ A browser window will open for the user to complete authentication.
 
       try {
         // Load the source config
-        const sourceResult = loadSourceConfigWithFallback(workspaceRootPath, args.sourceSlug);
-        if (!sourceResult) {
+        const source = loadSourceConfig(workspaceRootPath, args.sourceSlug);
+        if (!source) {
           return {
             content: [{
               type: 'text' as const,
@@ -1169,7 +1202,6 @@ A browser window will open for the user to complete authentication.
             isError: true,
           };
         }
-        const source = sourceResult.config;
 
         if (source.type !== 'mcp') {
           return {
@@ -1290,8 +1322,8 @@ After successful authentication, the tokens are stored and the source is marked 
     async (args) => {
       try {
         // Load the source config
-        const sourceResult = loadSourceConfigWithFallback(workspaceRootPath, args.sourceSlug);
-        if (!sourceResult) {
+        const source = loadSourceConfig(workspaceRootPath, args.sourceSlug);
+        if (!source) {
           return {
             content: [{
               type: 'text' as const,
@@ -1300,7 +1332,6 @@ After successful authentication, the tokens are stored and the source is marked 
             isError: true,
           };
         }
-        const source = sourceResult.config;
 
         // Verify this is a Google source
         if (source.provider !== 'google') {
@@ -1316,7 +1347,9 @@ After successful authentication, the tokens are stored and the source is marked 
           };
         }
 
-        if (source.isAuthenticated) {
+        // Check if source has valid credentials (not just isAuthenticated flag)
+        const hasValidToken = await verifySourceHasValidToken(workspaceRootPath, source, args.sourceSlug);
+        if (hasValidToken) {
           return {
             content: [{
               type: 'text' as const,
@@ -1324,6 +1357,9 @@ After successful authentication, the tokens are stored and the source is marked 
             }],
             isError: false,
           };
+        }
+        if (source.isAuthenticated) {
+          debug(`[source_google_oauth_trigger] Source '${args.sourceSlug}' marked as authenticated but no valid token found, triggering re-auth`);
         }
 
         // Determine service from config for new pattern
@@ -1426,8 +1462,8 @@ After successful authentication, the tokens are stored and the source is marked 
     async (args) => {
       try {
         // Load the source config
-        const sourceResult = loadSourceConfigWithFallback(workspaceRootPath, args.sourceSlug);
-        if (!sourceResult) {
+        const source = loadSourceConfig(workspaceRootPath, args.sourceSlug);
+        if (!source) {
           return {
             content: [{
               type: 'text' as const,
@@ -1436,7 +1472,6 @@ After successful authentication, the tokens are stored and the source is marked 
             isError: true,
           };
         }
-        const source = sourceResult.config;
 
         // Verify this is a Slack source
         if (source.provider !== 'slack') {
@@ -1467,7 +1502,9 @@ After successful authentication, the tokens are stored and the source is marked 
           };
         }
 
-        if (source.isAuthenticated) {
+        // Check if source has valid credentials (not just isAuthenticated flag)
+        const hasValidToken = await verifySourceHasValidToken(workspaceRootPath, source, args.sourceSlug);
+        if (hasValidToken) {
           return {
             content: [{
               type: 'text' as const,
@@ -1475,6 +1512,9 @@ After successful authentication, the tokens are stored and the source is marked 
             }],
             isError: false,
           };
+        }
+        if (source.isAuthenticated) {
+          debug(`[source_slack_oauth_trigger] Source '${args.sourceSlug}' marked as authenticated but no valid token found, triggering re-auth`);
         }
 
         // Determine service from config for new pattern
@@ -1577,8 +1617,8 @@ After successful authentication, the tokens are stored and the source is marked 
     async (args) => {
       try {
         // Load the source config
-        const sourceResult = loadSourceConfigWithFallback(workspaceRootPath, args.sourceSlug);
-        if (!sourceResult) {
+        const source = loadSourceConfig(workspaceRootPath, args.sourceSlug);
+        if (!source) {
           return {
             content: [{
               type: 'text' as const,
@@ -1587,7 +1627,6 @@ After successful authentication, the tokens are stored and the source is marked 
             isError: true,
           };
         }
-        const source = sourceResult.config;
 
         // Verify this is a Microsoft source
         if (source.provider !== 'microsoft') {
@@ -1603,7 +1642,9 @@ After successful authentication, the tokens are stored and the source is marked 
           };
         }
 
-        if (source.isAuthenticated) {
+        // Check if source has valid credentials (not just isAuthenticated flag)
+        const hasValidToken = await verifySourceHasValidToken(workspaceRootPath, source, args.sourceSlug);
+        if (hasValidToken) {
           return {
             content: [{
               type: 'text' as const,
@@ -1611,6 +1652,9 @@ After successful authentication, the tokens are stored and the source is marked 
             }],
             isError: false,
           };
+        }
+        if (source.isAuthenticated) {
+          debug(`[source_microsoft_oauth_trigger] Source '${args.sourceSlug}' marked as authenticated but no valid token found, triggering re-auth`);
         }
 
         // Determine service from config for new pattern
@@ -1728,8 +1772,8 @@ source_credential_prompt({
 
       try {
         // Load source to get name and validate
-        const sourceResult = loadSourceConfigWithFallback(workspaceRootPath, args.sourceSlug);
-        if (!sourceResult) {
+        const source = loadSourceConfig(workspaceRootPath, args.sourceSlug);
+        if (!source) {
           return {
             content: [{
               type: 'text' as const,
@@ -1738,7 +1782,6 @@ source_credential_prompt({
             isError: true,
           };
         }
-        const source = sourceResult.config;
 
         // Get callbacks
         const callbacks = getSessionScopedToolCallbacks(sessionId);

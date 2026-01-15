@@ -1,7 +1,6 @@
 import type { ComponentEntry } from './types'
 import { StepIndicator } from '@/components/onboarding/StepIndicator'
 import { WelcomeStep } from '@/components/onboarding/WelcomeStep'
-import { CraftLoginStep } from '@/components/onboarding/CraftLoginStep'
 import { BillingMethodStep } from '@/components/onboarding/BillingMethodStep'
 import { CredentialsStep } from '@/components/onboarding/CredentialsStep'
 import { CompletionStep } from '@/components/onboarding/CompletionStep'
@@ -36,7 +35,6 @@ export const onboardingComponents: ComponentEntry[] = [
           options: [
             { label: 'Welcome', value: 'welcome' },
             { label: 'Billing Method', value: 'billing-method' },
-            { label: 'Craft Login', value: 'craft-login' },
             { label: 'Credentials', value: 'credentials' },
             { label: 'Complete', value: 'complete' },
           ],
@@ -53,7 +51,6 @@ export const onboardingComponents: ComponentEntry[] = [
     variants: [
       { name: 'New User - Welcome', props: { currentStep: 'welcome', isExistingUser: false } },
       { name: 'New User - Billing', props: { currentStep: 'billing-method', isExistingUser: false } },
-      { name: 'New User - Craft Login', props: { currentStep: 'craft-login', isExistingUser: false } },
       { name: 'New User - Credentials', props: { currentStep: 'credentials', isExistingUser: false } },
       { name: 'New User - Complete', props: { currentStep: 'complete', isExistingUser: false } },
       { name: 'Existing User - Welcome', props: { currentStep: 'welcome', isExistingUser: true } },
@@ -85,47 +82,6 @@ export const onboardingComponents: ComponentEntry[] = [
     }),
   },
   {
-    id: 'craft-login-step',
-    name: 'CraftLoginStep',
-    category: 'Onboarding',
-    description: 'OAuth login flow with Craft account (for Craft Credits billing)',
-    component: CraftLoginStep,
-    props: [
-      {
-        name: 'status',
-        description: 'Current login status',
-        control: {
-          type: 'select',
-          options: [
-            { label: 'Idle', value: 'idle' },
-            { label: 'Waiting', value: 'waiting' },
-            { label: 'Success', value: 'success' },
-            { label: 'Error', value: 'error' },
-          ],
-        },
-        defaultValue: 'idle',
-      },
-      {
-        name: 'errorMessage',
-        description: 'Error message to display',
-        control: { type: 'string', placeholder: 'Error message' },
-        defaultValue: '',
-      },
-    ],
-    variants: [
-      { name: 'Idle', props: { status: 'idle' } },
-      { name: 'Waiting', props: { status: 'waiting' } },
-      { name: 'Success', props: { status: 'success' } },
-      { name: 'Error', props: { status: 'error', errorMessage: 'Your subscription has expired. Please renew to continue.' } },
-    ],
-    mockData: () => ({
-      onLogin: noopHandler,
-      onOpenManually: noopHandler,
-      onBack: noopHandler,
-      onRetry: noopHandler,
-    }),
-  },
-  {
     id: 'billing-method-step',
     name: 'BillingMethodStep',
     category: 'Onboarding',
@@ -139,9 +95,8 @@ export const onboardingComponents: ComponentEntry[] = [
           type: 'select',
           options: [
             { label: 'None', value: '' },
-            { label: 'Craft Credits', value: 'craft_credits' },
-            { label: 'API Key', value: 'api_key' },
             { label: 'Claude OAuth', value: 'claude_oauth' },
+            { label: 'API Key', value: 'api_key' },
           ],
         },
         defaultValue: '',
@@ -149,9 +104,8 @@ export const onboardingComponents: ComponentEntry[] = [
     ],
     variants: [
       { name: 'No Selection', props: { selectedMethod: null } },
-      { name: 'Craft Credits Selected', props: { selectedMethod: 'craft_credits' } },
-      { name: 'API Key Selected', props: { selectedMethod: 'api_key' } },
       { name: 'Claude OAuth Selected', props: { selectedMethod: 'claude_oauth' } },
+      { name: 'API Key Selected', props: { selectedMethod: 'api_key' } },
     ],
     mockData: () => ({
       onSelect: (method: string) => console.log('[Playground] Selected method:', method),
@@ -298,19 +252,7 @@ export const onboardingComponents: ComponentEntry[] = [
       {
         name: 'Billing Method (Selected)',
         props: {
-          state: createOnboardingState({ step: 'billing-method', billingMethod: 'craft_credits' }),
-        },
-      },
-      {
-        name: 'Craft Login - Idle',
-        props: {
-          state: createOnboardingState({ step: 'craft-login', loginStatus: 'idle', billingMethod: 'craft_credits' }),
-        },
-      },
-      {
-        name: 'Craft Login - Waiting',
-        props: {
-          state: createOnboardingState({ step: 'craft-login', loginStatus: 'waiting', billingMethod: 'craft_credits' }),
+          state: createOnboardingState({ step: 'billing-method', billingMethod: 'claude_oauth' }),
         },
       },
       {
@@ -347,9 +289,6 @@ export const onboardingComponents: ComponentEntry[] = [
       onCancel: noopHandler,
       onContinue: noopHandler,
       onBack: noopHandler,
-      onLogin: noopHandler,
-      onOpenLoginManually: noopHandler,
-      onRetryLogin: noopHandler,
       onSelectBillingMethod: (method: string) => console.log('[Playground] Selected billing:', method),
       onSubmitCredential: (cred: string) => console.log('[Playground] Submitted:', cred),
       onStartOAuth: noopHandler,

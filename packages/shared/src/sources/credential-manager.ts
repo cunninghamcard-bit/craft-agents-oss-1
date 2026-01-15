@@ -44,7 +44,7 @@ import {
   type MicrosoftOAuthOptions,
 } from '../auth/microsoft-oauth.ts';
 import { debug } from '../utils/debug.ts';
-import { markSourceAuthenticated } from './storage.ts';
+import { markSourceAuthenticated, loadSourceConfig, saveSourceConfig } from './storage.ts';
 
 /**
  * Result of authentication attempt
@@ -269,6 +269,26 @@ export class SourceCredentialManager {
     if (!credential.expiresAt) return false;
     const fiveMinutes = 5 * 60 * 1000;
     return Date.now() > credential.expiresAt - fiveMinutes;
+  }
+
+  /**
+   * Mark a source as needing re-authentication.
+   * Called when token is missing/expired or token refresh fails.
+   * Updates config.json so the UI shows "needs auth" and the agent gets proper context.
+   */
+  markSourceNeedsReauth(source: LoadedSource, errorMessage: string): void {
+    try {
+      const config = loadSourceConfig(source.workspaceRootPath, source.config.slug);
+      if (config) {
+        config.isAuthenticated = false;
+        config.connectionStatus = 'needs_auth';
+        config.connectionError = errorMessage;
+        saveSourceConfig(source.workspaceRootPath, config);
+        debug(`[SourceCredentialManager] Marked ${source.config.slug} as needing re-auth: ${errorMessage}`);
+      }
+    } catch (error) {
+      debug(`[SourceCredentialManager] Failed to mark ${source.config.slug} as needing re-auth:`, error);
+    }
   }
 
   /**
@@ -622,7 +642,9 @@ export class SourceCredentialManager {
       debug(`[SourceCredentialManager] Refreshed Google token for ${source.config.slug}`);
       return result.accessToken;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       debug(`[SourceCredentialManager] Google token refresh failed:`, error);
+      this.markSourceNeedsReauth(source, `Token refresh failed: ${errorMsg}`);
       return null;
     }
   }
@@ -647,7 +669,9 @@ export class SourceCredentialManager {
       debug(`[SourceCredentialManager] Refreshed Slack token for ${source.config.slug}`);
       return result.accessToken;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       debug(`[SourceCredentialManager] Slack token refresh failed:`, error);
+      this.markSourceNeedsReauth(source, `Token refresh failed: ${errorMsg}`);
       return null;
     }
   }
@@ -673,7 +697,9 @@ export class SourceCredentialManager {
       debug(`[SourceCredentialManager] Refreshed Microsoft token for ${source.config.slug}`);
       return result.accessToken;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       debug(`[SourceCredentialManager] Microsoft token refresh failed:`, error);
+      this.markSourceNeedsReauth(source, `Token refresh failed: ${errorMsg}`);
       return null;
     }
   }
@@ -687,13 +713,15 @@ export class SourceCredentialManager {
   ): Promise<string | null> {
     if (!cred.clientId) {
       debug(`[SourceCredentialManager] No clientId for MCP token refresh`);
+      this.markSourceNeedsReauth(source, 'Missing clientId for token refresh');
       return null;
     }
 
     try {
       // Only HTTP/SSE transport can refresh tokens - stdio doesn't use OAuth
       if (!source.config.mcp?.url) {
-        debug(`[SourceCredentialManager] No URL for MCP token refresh (stdio transport?)`);
+        // This is expected for stdio transport - not an error
+        debug(`[SourceCredentialManager] No URL for MCP token refresh (stdio transport)`);
         return null;
       }
 
@@ -718,7 +746,9 @@ export class SourceCredentialManager {
       debug(`[SourceCredentialManager] Refreshed MCP token for ${source.config.slug}`);
       return tokens.accessToken;
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
       debug(`[SourceCredentialManager] MCP token refresh failed:`, error);
+      this.markSourceNeedsReauth(source, `Token refresh failed: ${errorMsg}`);
       return null;
     }
   }

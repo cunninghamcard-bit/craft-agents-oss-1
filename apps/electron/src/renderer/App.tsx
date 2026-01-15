@@ -404,11 +404,9 @@ export default function App() {
   // Subscribe to theme change events (live updates when theme.json files change)
   useEffect(() => {
     const cleanupApp = window.electronAPI.onAppThemeChange((theme) => {
-      console.log('[App] App theme changed')
       setAppTheme(theme)
     })
     const cleanupWorkspace = window.electronAPI.onWorkspaceThemeChange((theme) => {
-      console.log('[App] Workspace theme changed')
       setWorkspaceTheme(theme)
     })
     // Note: Agent theme changes are not yet wired up (would need active agent tracking)
@@ -465,6 +463,17 @@ export default function App() {
               next.set(sessionId, [...existingQueue, effect.request])
               return next
             })
+            break
+          }
+          case 'auto_retry': {
+            // A source was auto-activated, automatically re-send the original message
+            console.log('[App] auto_retry: Source', effect.sourceSlug, 'activated, re-sending message')
+            // Add suffix to indicate the source was activated
+            const messageWithSuffix = `${effect.originalMessage}\n\n[${effect.sourceSlug} activated]`
+            // Use setTimeout to ensure the previous turn has fully completed
+            setTimeout(() => {
+              window.electronAPI.sendMessage(effect.sessionId, messageWithSuffix)
+            }, 100)
             break
           }
         }

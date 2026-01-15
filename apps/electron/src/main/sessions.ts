@@ -35,7 +35,7 @@ import {
   type SessionMetadata,
   type TodoState,
 } from '@craft-agent/shared/sessions'
-import { loadWorkspaceSources, getSourcesBySlugs, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider } from '@craft-agent/shared/sources'
+import { loadWorkspaceSources, getSourcesBySlugs, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, SERVER_BUILD_ERRORS } from '@craft-agent/shared/sources'
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
 import { getAuthState } from '@craft-agent/shared/auth'
 import { setAnthropicOptionsEnv, setPathToClaudeCodeExecutable, setInterceptorPath, setExecutable } from '@craft-agent/shared/agent'
@@ -57,6 +57,7 @@ export const AGENT_FLAGS = {
 /**
  * Build MCP and API servers from sources using the new unified modules.
  * Handles credential loading and server building in one step.
+ * When auth errors occur, updates source configs to reflect actual state.
  */
 async function buildServersFromSources(sources: LoadedSource[]) {
   const span = perf.span('sources.buildServers', { count: sources.length })
@@ -90,6 +91,18 @@ async function buildServersFromSources(sources: LoadedSource[]) {
   span.mark('servers.built')
   span.setMetadata('mcpCount', Object.keys(result.mcpServers).length)
   span.setMetadata('apiCount', Object.keys(result.apiServers).length)
+
+  // Update source configs for auth errors so UI reflects actual state
+  for (const error of result.errors) {
+    if (error.error === SERVER_BUILD_ERRORS.AUTH_REQUIRED) {
+      const source = sources.find(s => s.config.slug === error.sourceSlug)
+      if (source) {
+        credManager.markSourceNeedsReauth(source, 'Token missing or expired')
+        sessionLog.info(`Marked source ${error.sourceSlug} as needing re-auth`)
+      }
+    }
+  }
+
   span.end()
   return result
 }
@@ -140,10 +153,6 @@ interface ManagedSession {
   lastReadMessageId?: string
   // Per-session source selection (slugs of enabled sources)
   enabledSourceSlugs?: string[]
-  // Built source server configs (applied to CraftAgent)
-  sourceMcpServers?: Record<string, McpServerConfig>
-  // Built API servers (Gmail, etc.) - in-process MCP servers
-  sourceApiServers?: Record<string, ReturnType<typeof createSdkMcpServer>>
   // Working directory for this session (used by agent for bash commands)
   workingDirectory?: string
   // SDK cwd for session storage - set once at creation, never changes.
@@ -416,11 +425,12 @@ export class SessionManager {
   }
 
   /**
-   * Reload sources for a specific session.
+   * Reload sources for a session with an active agent.
    * Called by ConfigWatcher when source files change on disk.
+   * If agent is null (session hasn't sent any messages), skip - fresh build happens on next message.
    */
   private async reloadSessionSources(managed: ManagedSession): Promise<void> {
-    if (!managed.agent) return
+    if (!managed.agent) return  // No agent = nothing to update (fresh build on next message)
 
     const workspaceRootPath = managed.workspace.rootPath
     sessionLog.info(`Reloading sources for session ${managed.id}`)
@@ -435,9 +445,6 @@ export class SessionManager {
       enabledSlugs.includes(s.config.slug) && s.config.enabled && s.config.isAuthenticated
     )
     const { mcpServers, apiServers } = await buildServersFromSources(enabledSources)
-    managed.sourceMcpServers = mcpServers
-    managed.sourceApiServers = apiServers
-    // Pass intended slugs so agent shows sources as active even if build failed
     const intendedSlugs = enabledSources.map(s => s.config.slug)
     managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
@@ -455,16 +462,7 @@ export class SessionManager {
 
       sessionLog.info('Reinitializing auth with billing type:', billing.type)
 
-      if (billing.type === 'craft_credits') {
-        const token = await getCraftToken()
-        setAnthropicOptionsEnv({
-          USE_CRAFT_AI_GATEWAY: 'true',
-          CRAFT_API_GATEWAY_TOKEN: token,
-        })
-        // Set placeholder API key so SDK starts
-        process.env.ANTHROPIC_API_KEY = 'craft-credits-placeholder'
-        sessionLog.info('Set Craft API Gateway Token')
-      } else if (billing.type === 'oauth_token' && billing.claudeOAuthToken) {
+      if (billing.type === 'oauth_token' && billing.claudeOAuthToken) {
         // Use Claude Max subscription via OAuth token
         process.env.CLAUDE_CODE_OAUTH_TOKEN = billing.claudeOAuthToken
         delete process.env.ANTHROPIC_API_KEY
@@ -878,6 +876,11 @@ export class SessionManager {
       const { markSourceAuthenticated } = await import('@craft-agent/shared/sources')
       markSourceAuthenticated(managed.workspace.rootPath, request.sourceSlug)
 
+      // Mark source as unseen so fresh guide is injected on next message
+      if (managed.agent) {
+        managed.agent.markSourceUnseen(request.sourceSlug)
+      }
+
       await this.completeAuthRequest(sessionId, {
         requestId,
         sourceSlug: request.sourceSlug,
@@ -1282,6 +1285,91 @@ export class SessionManager {
         // The UI will call sessionCommand({ type: 'startOAuth' }) when user clicks "Sign in"
       }
 
+      // Wire up onSourceActivationRequest to auto-enable sources when agent tries to use them
+      managed.agent.onSourceActivationRequest = async (sourceSlug: string): Promise<boolean> => {
+        sessionLog.info(`Source activation request for session ${managed.id}:`, sourceSlug)
+
+        const workspaceRootPath = managed.workspace.rootPath
+
+        // Check if source is already enabled
+        if (managed.enabledSourceSlugs?.includes(sourceSlug)) {
+          sessionLog.info(`Source ${sourceSlug} already in enabledSourceSlugs, checking server status`)
+          // Source is in the list but server might not be active (e.g., build failed previously)
+        }
+
+        // Load the source to check if it exists and is ready
+        const sources = getSourcesBySlugs(workspaceRootPath, [sourceSlug])
+        if (sources.length === 0) {
+          sessionLog.warn(`Source ${sourceSlug} not found in workspace`)
+          return false
+        }
+
+        const source = sources[0]
+
+        // Check if source is enabled at workspace level
+        if (!source.config.enabled) {
+          sessionLog.warn(`Source ${sourceSlug} is disabled at workspace level`)
+          return false
+        }
+
+        // Check if source is authenticated (if it requires auth)
+        if (!source.config.isAuthenticated) {
+          sessionLog.warn(`Source ${sourceSlug} requires authentication`)
+          return false
+        }
+
+        // Track whether we added this slug (for rollback on failure)
+        const slugSet = new Set(managed.enabledSourceSlugs || [])
+        const wasAlreadyEnabled = slugSet.has(sourceSlug)
+
+        // Add to enabled sources if not already there
+        if (!wasAlreadyEnabled) {
+          slugSet.add(sourceSlug)
+          managed.enabledSourceSlugs = Array.from(slugSet)
+          sessionLog.info(`Added source ${sourceSlug} to session enabled sources`)
+        }
+
+        // Build server configs for all enabled sources
+        const allEnabledSources = getSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs)
+        const { mcpServers, apiServers, errors } = await buildServersFromSources(allEnabledSources)
+
+        if (errors.length > 0) {
+          sessionLog.warn(`Source build errors during auto-enable:`, errors)
+        }
+
+        // Check if our target source was built successfully
+        const sourceBuilt = sourceSlug in mcpServers || sourceSlug in apiServers
+        if (!sourceBuilt) {
+          sessionLog.warn(`Source ${sourceSlug} failed to build`)
+          // Only remove if WE added it (not if it was already there)
+          if (!wasAlreadyEnabled) {
+            slugSet.delete(sourceSlug)
+            managed.enabledSourceSlugs = Array.from(slugSet)
+          }
+          return false
+        }
+
+        // Apply source servers to the agent
+        const intendedSlugs = allEnabledSources
+          .filter(s => s.config.enabled && s.config.isAuthenticated)
+          .map(s => s.config.slug)
+        managed.agent!.setSourceServers(mcpServers, apiServers, intendedSlugs)
+
+        sessionLog.info(`Auto-enabled source ${sourceSlug} for session ${managed.id}`)
+
+        // Persist session with updated enabled sources
+        this.persistSession(managed)
+
+        // Notify renderer of source change
+        this.sendEvent({
+          type: 'sources_changed',
+          sessionId: managed.id,
+          enabledSourceSlugs: managed.enabledSourceSlugs,
+        }, managed.workspace.id)
+
+        return true
+      }
+
       // NOTE: Source reloading is now handled by ConfigWatcher callbacks
       // which detect filesystem changes and update all affected sessions.
       // See setupConfigWatcher() for the full reload logic.
@@ -1474,7 +1562,8 @@ export class SessionManager {
 
   /**
    * Update session's enabled sources
-   * Builds MCP server configs from sources and applies to agent
+   * If agent exists, builds and applies servers immediately.
+   * Otherwise, servers will be built fresh on next message.
    */
   async setSessionSources(sessionId: string, sourceSlugs: string[]): Promise<void> {
     const managed = this.sessions.get(sessionId)
@@ -1488,26 +1577,19 @@ export class SessionManager {
     // Store the selection
     managed.enabledSourceSlugs = sourceSlugs
 
-    // Build server configs from selected sources
-    const sources = getSourcesBySlugs(workspaceRootPath, sourceSlugs)
-    const { mcpServers, apiServers, errors } = await buildServersFromSources(sources)
-
-    if (errors.length > 0) {
-      sessionLog.warn(`Source build errors:`, errors)
-    }
-
-    // Store the built configs
-    managed.sourceMcpServers = mcpServers
-    managed.sourceApiServers = apiServers
-
-    // IMMEDIATELY update the agent's source servers if agent exists
-    // This ensures tool availability is updated mid-conversation
+    // If agent exists, build and apply servers immediately
     if (managed.agent) {
+      const sources = getSourcesBySlugs(workspaceRootPath, sourceSlugs)
+      const { mcpServers, apiServers, errors } = await buildServersFromSources(sources)
+      if (errors.length > 0) {
+        sessionLog.warn(`Source build errors:`, errors)
+      }
+
       // Set all sources for context (agent sees full list with descriptions)
       const allSources = loadWorkspaceSources(workspaceRootPath)
       managed.agent.setAllSources(allSources)
+
       // Set active source servers (tools are only available from these)
-      // Pass intended slugs so agent shows sources as active even if build failed
       const intendedSlugs = sources.filter(s => s.config.enabled && s.config.isAuthenticated).map(s => s.config.slug)
       managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
       sessionLog.info(`Applied ${Object.keys(mcpServers).length} MCP + ${Object.keys(apiServers).length} API sources to active agent (${allSources.length} total)`)
@@ -1802,24 +1884,20 @@ export class SessionManager {
 
     // Apply source servers if any are enabled
     if (managed.enabledSourceSlugs?.length) {
-      // Build server configs if not already built
+      // Always build server configs fresh (no caching - single source of truth)
       const sources = getSourcesBySlugs(workspaceRootPath, managed.enabledSourceSlugs)
-      if (!managed.sourceMcpServers) {
-        const { mcpServers, apiServers, errors } = await buildServersFromSources(sources)
-        if (errors.length > 0) {
-          sessionLog.warn(`Source build errors:`, errors)
-        }
-        managed.sourceMcpServers = mcpServers
-        managed.sourceApiServers = apiServers
+      const { mcpServers, apiServers, errors } = await buildServersFromSources(sources)
+      if (errors.length > 0) {
+        sessionLog.warn(`Source build errors:`, errors)
       }
 
       // Apply source servers to the agent
-      const mcpCount = Object.keys(managed.sourceMcpServers || {}).length
-      const apiCount = Object.keys(managed.sourceApiServers || {}).length
+      const mcpCount = Object.keys(mcpServers).length
+      const apiCount = Object.keys(apiServers).length
       if (mcpCount > 0 || apiCount > 0 || managed.enabledSourceSlugs.length > 0) {
         // Pass intended slugs so agent shows sources as active even if build failed
         const intendedSlugs = sources.filter(s => s.config.enabled && s.config.isAuthenticated).map(s => s.config.slug)
-        agent.setSourceServers(managed.sourceMcpServers || {}, managed.sourceApiServers || {}, intendedSlugs)
+        agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
         sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
       }
       sendSpan.mark('servers.applied')
@@ -1861,16 +1939,10 @@ export class SessionManager {
         }
       }
 
-      // Inject skill context if skills are mentioned via @mentions
+      // Skills mentioned via @mentions are handled by the Agent SDK's Skill tool
+      // The @skill-name text remains in the message for the agent to process
       if (options?.skillSlugs?.length) {
-        const skillContext = await this.buildSkillContext(
-          managed.workspace.rootPath,
-          options.skillSlugs
-        )
-        if (skillContext) {
-          messageToSend = `${skillContext}\n\n${messageToSend}`
-          sessionLog.info(`Injected ${options.skillSlugs.length} skill(s) context: ${options.skillSlugs.join(', ')}`)
-        }
+        sessionLog.info(`Message contains ${options.skillSlugs.length} skill mention(s): ${options.skillSlugs.join(', ')}`)
       }
 
       sendSpan.mark('chat.starting')
@@ -2659,6 +2731,17 @@ To view this task's output:
         }, workspaceId)
         break
 
+      case 'source_activated':
+        // A source was auto-activated mid-turn, forward to renderer for auto-retry
+        sessionLog.info(`Source "${event.sourceSlug}" activated, notifying renderer for auto-retry`)
+        this.sendEvent({
+          type: 'source_activated',
+          sessionId,
+          sourceSlug: event.sourceSlug,
+          originalMessage: event.originalMessage,
+        }, workspaceId)
+        break
+
       case 'complete':
         // Complete event from CraftAgent - actual 'complete' sent to renderer
         // comes from the finally block in sendMessage, not here
@@ -2670,6 +2753,7 @@ To view this task's output:
   }
 
   /**
+   * @deprecated No longer used. Skills are now handled by the Agent SDK's Skill tool.
    * Build skill context from @mentioned skill slugs
    * Returns XML-formatted skill instructions to prepend to the message
    */

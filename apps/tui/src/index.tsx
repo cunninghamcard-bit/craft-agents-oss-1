@@ -32,8 +32,6 @@ import { debug, enableDebug } from '@craft-agent/shared/utils';
 import { install } from '@craft-agent/shared/version';
 import { getCurrentVersion } from '@craft-agent/shared/version';
 import { DEFAULT_MODEL } from '@craft-agent/shared/config';
-import { setAnthropicOptionsEnv } from '@craft-agent/shared/agent';
-import { getCraftToken } from '@craft-agent/shared/auth';
 
 /**
  * Generate a deterministic workspace ID from a URL.
@@ -209,17 +207,7 @@ const Root: React.FC<RootProps> = ({ initialConfig, cliFlags, authState, setupNe
     debug(`billing type: ${billing.type}`);
 
     (async () => {
-      if (billing.type === 'craft_credits') {
-        const token = await getCraftToken();
-        setAnthropicOptionsEnv({
-          USE_CRAFT_AI_GATEWAY: 'true',
-          CRAFT_API_GATEWAY_TOKEN: token,
-        });
-        // Set placeholder API key so SDK starts - the cache-ttl-interceptor
-        // will replace the auth header with the real Craft token
-        process.env.ANTHROPIC_API_KEY = 'craft-credits-placeholder';
-        debug(`Set Craft API Gateway Token`);
-      } else if (billing.type === 'oauth_token' && billing.claudeOAuthToken) {
+      if (billing.type === 'oauth_token' && billing.claudeOAuthToken) {
         // Use Claude Max subscription via OAuth token
         process.env.CLAUDE_CODE_OAUTH_TOKEN = billing.claudeOAuthToken;
         // Clear API key and Craft Gateway settings to ensure SDK uses OAuth token

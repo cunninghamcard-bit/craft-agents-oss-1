@@ -59,9 +59,10 @@ export function useGlobalShortcuts({ shortcuts, disabled = false }: UseGlobalSho
         const keyMatch = e.key.toLowerCase() === shortcut.key.toLowerCase()
 
         if (cmdMatch && shiftMatch && altMatch && keyMatch) {
-          // Skip non-meta shortcuts in inputs, EXCEPT Tab which is for zone navigation
+          // Skip non-meta shortcuts in inputs, EXCEPT Tab (zone navigation) and Escape (cancel)
           const isTabKey = e.key.toLowerCase() === 'tab'
-          if (isInput && !shortcut.cmd && !isTabKey) continue
+          const isEscapeKey = e.key.toLowerCase() === 'escape'
+          if (isInput && !shortcut.cmd && !isTabKey && !isEscapeKey) continue
 
           // Check condition
           if (shortcut.when && !shortcut.when()) continue

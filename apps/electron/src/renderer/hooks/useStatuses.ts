@@ -61,7 +61,6 @@ export function useStatuses(workspaceId: string | null): UseStatusesResult {
     const cleanup = window.electronAPI.onStatusesChanged((changedWorkspaceId) => {
       // Only refresh if this is our workspace
       if (changedWorkspaceId === workspaceId) {
-        console.log('[useStatuses] Statuses changed, refreshing...')
         clearIconCache()  // Clear cached icon files before refreshing
         refresh()
       }

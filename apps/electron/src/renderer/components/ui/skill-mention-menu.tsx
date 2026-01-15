@@ -1,3 +1,8 @@
+/**
+ * @deprecated This file is deprecated. Use mention-menu.tsx instead.
+ * The unified mention menu supports both skills and sources with type badges.
+ */
+
 import * as React from 'react'
 import { cn } from '@/lib/utils'
 import { SkillAvatar } from '@/components/ui/skill-avatar'

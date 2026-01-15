@@ -19,7 +19,7 @@ let anthropicClient: Anthropic | null = null;
 
 /**
  * Get or create Anthropic client for summarization.
- * Supports all auth types: api_key, oauth_token, and craft_credits.
+ * Supports auth types: api_key and oauth_token.
  */
 async function getAnthropicClient(): Promise<Anthropic | null> {
   if (anthropicClient) {
@@ -28,7 +28,7 @@ async function getAnthropicClient(): Promise<Anthropic | null> {
 
   // Option 1: Direct API key from env (set by setAuthEnvironment)
   const envApiKey = process.env.ANTHROPIC_API_KEY;
-  if (envApiKey && envApiKey !== 'craft-credits-placeholder') {
+  if (envApiKey) {
     anthropicClient = new Anthropic({ apiKey: envApiKey });
     debug('[summarize] Using ANTHROPIC_API_KEY for summarization');
     return anthropicClient;
@@ -39,19 +39,6 @@ async function getAnthropicClient(): Promise<Anthropic | null> {
   if (oauthToken) {
     anthropicClient = new Anthropic({ apiKey: oauthToken });
     debug('[summarize] Using CLAUDE_CODE_OAUTH_TOKEN for summarization');
-    return anthropicClient;
-  }
-
-  // Option 3: Craft Credits Gateway
-  if (process.env.USE_CRAFT_AI_GATEWAY === 'true' && process.env.CRAFT_API_GATEWAY_TOKEN) {
-    anthropicClient = new Anthropic({
-      apiKey: 'craft-credits-placeholder',
-      baseURL: 'https://api.craft.do/ai-gateway/anthropic',
-      defaultHeaders: {
-        'authorization': process.env.CRAFT_API_GATEWAY_TOKEN,
-      },
-    });
-    debug('[summarize] Using Craft AI Gateway for summarization');
     return anthropicClient;
   }
 

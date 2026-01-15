@@ -57,7 +57,7 @@ const WorkspaceSchema = z.object({
   iconUrl: z.string().optional(),
 });
 
-const AuthTypeSchema = z.enum(['api_key', 'oauth_token', 'craft_credits']);
+const AuthTypeSchema = z.enum(['api_key', 'oauth_token']);
 
 const TokenDisplayModeSchema = z.enum(['hidden', 'total', 'separate']);
 

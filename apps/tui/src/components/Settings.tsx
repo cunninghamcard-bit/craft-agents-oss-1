@@ -32,7 +32,6 @@ export interface SettingsProps {
 }
 
 const AUTH_MODE_LABELS: Record<AuthType, string> = {
-  'craft_credits': 'Craft Credits',
   'api_key': 'API Key',
   'oauth_token': 'Claude Max',
 };
@@ -176,11 +175,11 @@ export const Settings: React.FC<SettingsProps> = ({
       isHeader: true,
     },
     {
-      key: 'craft_credits',
-      label: 'Craft Credits',
-      desc: currentAuthType === 'craft_credits' ? 'Re-authenticate' : 'Use Craft AI credits',
-      action: { type: 'change_auth_mode', mode: 'craft_credits' },
-      isCurrent: currentAuthType === 'craft_credits',
+      key: 'oauth_token',
+      label: 'Claude Pro/Max',
+      desc: currentAuthType === 'oauth_token' ? 'Re-authenticate' : 'Use Claude subscription',
+      action: { type: 'change_auth_mode', mode: 'oauth_token' },
+      isCurrent: currentAuthType === 'oauth_token',
     },
     {
       key: 'api_key',
@@ -188,13 +187,6 @@ export const Settings: React.FC<SettingsProps> = ({
       desc: currentAuthType === 'api_key' ? 'Change API key' : 'Use your Anthropic API key',
       action: { type: 'change_auth_mode', mode: 'api_key' },
       isCurrent: currentAuthType === 'api_key',
-    },
-    {
-      key: 'oauth_token',
-      label: 'Claude Max',
-      desc: currentAuthType === 'oauth_token' ? 'Re-authenticate' : 'Use Claude Max subscription',
-      action: { type: 'change_auth_mode', mode: 'oauth_token' },
-      isCurrent: currentAuthType === 'oauth_token',
     },
   ];
 

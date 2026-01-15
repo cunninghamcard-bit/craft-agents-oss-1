@@ -1,8 +1,8 @@
 import { cn } from "@/lib/utils"
-import { Check, CreditCard, Key, Zap } from "lucide-react"
+import { Check, CreditCard, Key } from "lucide-react"
 import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
 
-export type BillingMethod = 'craft_credits' | 'api_key' | 'claude_oauth'
+export type BillingMethod = 'api_key' | 'claude_oauth'
 
 interface BillingOption {
   id: BillingMethod
@@ -14,10 +14,10 @@ interface BillingOption {
 
 const BILLING_OPTIONS: BillingOption[] = [
   {
-    id: 'craft_credits',
-    name: 'Craft Credits',
-    description: 'Use your Craft subscription credits. No additional setup needed.',
-    icon: <Zap className="size-4" />,
+    id: 'claude_oauth',
+    name: 'Claude Pro/Max',
+    description: 'Use your Claude subscription for unlimited access.',
+    icon: <CreditCard className="size-4" />,
     recommended: true,
   },
   {
@@ -25,12 +25,6 @@ const BILLING_OPTIONS: BillingOption[] = [
     name: 'Anthropic API Key',
     description: 'Pay-as-you-go with your own API key from console.anthropic.com',
     icon: <Key className="size-4" />,
-  },
-  {
-    id: 'claude_oauth',
-    name: 'Claude Pro/Max',
-    description: 'Use your Claude subscription for unlimited access.',
-    icon: <CreditCard className="size-4" />,
   },
 ]
 
@@ -44,10 +38,9 @@ interface BillingMethodStepProps {
 /**
  * BillingMethodStep - Choose how to pay for AI usage
  *
- * Three options:
- * - Craft Credits (recommended) - Uses Craft subscription
+ * Two options:
+ * - Claude Pro/Max (recommended) - Uses Claude subscription
  * - API Key - Pay-as-you-go via Anthropic
- * - Claude Pro/Max - Uses Claude subscription
  */
 export function BillingMethodStep({
   selectedMethod,

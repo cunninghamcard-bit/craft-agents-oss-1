@@ -73,6 +73,7 @@ const sections: ShortcutSection[] = [
       { keys: ['Enter'], description: 'Send message' },
       { keys: ['Shift', 'Enter'], description: 'New line' },
       { keys: [cmdKey, 'Enter'], description: 'Send message' },
+      { keys: ['Esc'], description: 'Stop agent (when processing)' },
     ],
   },
 ]

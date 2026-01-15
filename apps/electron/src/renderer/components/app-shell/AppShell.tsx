@@ -334,7 +334,6 @@ export function AppShell({
   // Subscribe to live source updates (when sources are added/removed dynamically)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onSourcesChanged((updatedSources) => {
-      console.log('[Chat] Sources changed, updating sidebar:', updatedSources.length)
       setSources(updatedSources || [])
     })
     return cleanup
@@ -353,7 +352,6 @@ export function AppShell({
   // Subscribe to live skill updates (when skills are added/removed dynamically)
   React.useEffect(() => {
     const cleanup = window.electronAPI.onSkillsChanged?.((updatedSkills) => {
-      console.log('[Chat] Skills changed, updating sidebar:', updatedSkills.length)
       setSkills(updatedSkills || [])
     })
     return cleanup
@@ -455,6 +453,23 @@ export function AppShell({
       // History navigation
       { key: '[', cmd: true, action: goBack },
       { key: ']', cmd: true, action: goForward },
+      // ESC to stop processing (like clicking Stop button)
+      { key: 'Escape', action: () => {
+        if (session.selected) {
+          const meta = sessionMetaMap.get(session.selected)
+          if (meta?.isProcessing) {
+            window.electronAPI.cancelProcessing(session.selected, false).catch(err => {
+              console.error('[AppShell] Failed to cancel processing:', err)
+            })
+          }
+        }
+      }, when: () => {
+        // Only active when no dialog is open and session is processing
+        if (document.querySelector('[role="dialog"]')) return false
+        if (!session.selected) return false
+        const meta = sessionMetaMap.get(session.selected)
+        return meta?.isProcessing ?? false
+      }},
     ],
   })
 

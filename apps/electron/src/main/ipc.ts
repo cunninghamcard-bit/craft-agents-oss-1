@@ -762,9 +762,6 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       hasCredential = !!(await manager.getApiKey())
     } else if (authType === 'oauth_token') {
       hasCredential = !!(await manager.getClaudeOAuth())
-    } else if (authType === 'craft_credits') {
-      // Craft credits use Craft OAuth which is always present after setup
-      hasCredential = true
     }
 
     return { authType, hasCredential }
