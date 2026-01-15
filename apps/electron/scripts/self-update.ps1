@@ -76,44 +76,69 @@ if (-not $InstallerPath.EndsWith(".exe")) {
 Show-Notification -Title "Craft Agent" -Message "Installing update, please wait..."
 
 # Wait for app to quit (max 10 seconds)
-$AppName = "Craft Agent"
+# Use the executable path to find the process, not a hardcoded name
+# This is more reliable than using Get-Process -Name which may not match
 $MaxWaitSeconds = 10
 $WaitedSeconds = 0
 
 Log "Waiting for app to quit..."
+Log "Looking for process at: $AppPath"
+
+# Get process by path - more reliable than by name
+function Get-ProcessByPath {
+    param([string]$Path)
+    Get-Process | Where-Object {
+        try {
+            $_.Path -eq $Path -or $_.MainModule.FileName -eq $Path
+        } catch {
+            $false  # Process may have exited or access denied
+        }
+    }
+}
 
 while ($WaitedSeconds -lt $MaxWaitSeconds) {
-    $processes = Get-Process -Name $AppName -ErrorAction SilentlyContinue
+    $processes = Get-ProcessByPath -Path $AppPath
     if (-not $processes) {
         Log "App has quit after $WaitedSeconds seconds"
         break
     }
+    Log "Found $($processes.Count) matching process(es), waiting..."
     Start-Sleep -Seconds 1
     $WaitedSeconds++
 }
 
 # Force kill if still running
-$processes = Get-Process -Name $AppName -ErrorAction SilentlyContinue
+$processes = Get-ProcessByPath -Path $AppPath
 if ($processes) {
-    Log "Force killing app..."
-    Stop-Process -Name $AppName -Force -ErrorAction SilentlyContinue
+    Log "Force killing app (PID: $($processes.Id -join ', '))..."
+    $processes | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
 }
 
 # Brief wait for file handles to be released
 Start-Sleep -Milliseconds 500
 
-# Run NSIS installer silently
-Log "Running NSIS installer..."
+# Run NSIS installer with elevation request
+# The -Verb RunAs requests admin elevation via UAC if needed
+Log "Running NSIS installer (with elevation if needed)..."
 try {
-    $process = Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -PassThru -NoNewWindow
+    # First try silent install without elevation (for per-user installs)
+    $process = Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Wait -PassThru -NoNewWindow -ErrorAction Stop
     $exitCode = $process.ExitCode
     Log "Installer exit code: $exitCode"
 
     if ($exitCode -ne 0) {
-        Log "ERROR: Installer failed with exit code $exitCode"
-        Show-Notification -Title "Craft Agent" -Message "Update failed: installation error."
-        exit 1
+        # Non-zero exit might mean elevation needed - try with RunAs
+        Log "Silent install failed (exit code $exitCode), retrying with elevation..."
+        $process = Start-Process -FilePath $InstallerPath -ArgumentList "/S" -Verb RunAs -Wait -PassThru -ErrorAction Stop
+        $exitCode = $process.ExitCode
+        Log "Elevated installer exit code: $exitCode"
+
+        if ($exitCode -ne 0) {
+            Log "ERROR: Installer failed with exit code $exitCode"
+            Show-Notification -Title "Craft Agent" -Message "Update failed: installation error."
+            exit 1
+        }
     }
 } catch {
     Log "ERROR: Failed to run installer: $_"

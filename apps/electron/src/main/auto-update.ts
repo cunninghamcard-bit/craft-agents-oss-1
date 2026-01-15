@@ -8,10 +8,11 @@
  */
 
 import { app } from 'electron'
-import { createWriteStream, existsSync, mkdirSync, unlinkSync } from 'fs'
+import { createWriteStream, createReadStream, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
+import { pipeline } from 'stream/promises'
 import { mainLog } from './logger'
 import {
   getElectronLatestVersion,
@@ -27,7 +28,6 @@ import {
   setPendingUpdate,
   clearPendingUpdate,
 } from '@craft-agent/shared/config'
-import { readFileSync } from 'fs'
 import type { VersionManifest, BinaryInfo } from '@craft-agent/shared/version/manifest'
 import type { UpdateInfo } from '../shared/types'
 import type { WindowManager } from './window-manager'
@@ -367,6 +367,17 @@ async function doDownloadUpdate(): Promise<void> {
     rebuildMenu()
   } catch (error) {
     mainLog.error('[auto-update] Download failed:', error)
+
+    // Clean up partial download on failure
+    if (installerPath && existsSync(installerPath)) {
+      try {
+        unlinkSync(installerPath)
+        mainLog.info('[auto-update] Cleaned up partial download')
+      } catch (cleanupError) {
+        mainLog.warn('[auto-update] Failed to clean up partial download:', cleanupError)
+      }
+    }
+
     updateInfo = {
       ...updateInfo,
       downloadState: 'error',
@@ -466,6 +477,10 @@ async function installMacOS(): Promise<void> {
   })
 
   child.unref()
+
+  // Clear pending update since install script is now running
+  clearPendingUpdate()
+
   mainLog.info('[auto-update] Quitting app for macOS update...')
   app.quit()
 }
@@ -502,6 +517,10 @@ async function installWindows(): Promise<void> {
   })
 
   child.unref()
+
+  // Clear pending update since install script is now running
+  clearPendingUpdate()
+
   mainLog.info('[auto-update] Quitting app for Windows update...')
   app.quit()
 }
@@ -548,6 +567,10 @@ async function installLinux(): Promise<void> {
   })
 
   child.unref()
+
+  // Clear pending update since install script is now running
+  clearPendingUpdate()
+
   mainLog.info('[auto-update] Quitting app for Linux update...')
   app.quit()
 }
@@ -559,6 +582,17 @@ export interface UpdateOnLaunchResult {
   action: 'none' | 'skipped' | 'ready' | 'downloading'
   reason?: string
   version?: string | null
+}
+
+/**
+ * Compute SHA256 hash of a file using streams (memory-efficient for large files)
+ */
+async function computeFileHashStreaming(filePath: string): Promise<string> {
+  const hash = createHash('sha256')
+  const stream = createReadStream(filePath)
+
+  await pipeline(stream, hash)
+  return hash.digest('hex')
 }
 
 /**
@@ -583,10 +617,9 @@ export async function checkPendingUpdateAndInstall(): Promise<boolean> {
     return false
   }
 
-  // Verify checksum to ensure file wasn't corrupted
+  // Verify checksum using streaming to avoid loading large files into memory
   try {
-    const fileBuffer = readFileSync(pending.installerPath)
-    const hash = createHash('sha256').update(fileBuffer).digest('hex')
+    const hash = await computeFileHashStreaming(pending.installerPath)
 
     if (hash !== pending.sha256) {
       mainLog.error('[auto-update] Pending installer checksum mismatch, clearing')
@@ -611,15 +644,21 @@ export async function checkPendingUpdateAndInstall(): Promise<boolean> {
     downloadState: 'ready',
   }
 
-  // Clear pending update before install (so we don't loop on failure)
-  clearPendingUpdate()
+  // NOTE: Pending update is cleared inside the platform-specific install functions
+  // right before app.quit(). This ensures we only clear after successful script spawn.
+  // If install throws before spawning the script, we preserve the pending state
+  // to allow retry on next launch.
 
   // Trigger installation
   try {
     await installUpdate()
-    return true // App will quit
+    // Note: If we reach here, app.quit() was called and this line won't execute.
+    // The clearPendingUpdate() is done inside installMacOS/Windows/Linux before quit.
+    return true
   } catch (error) {
     mainLog.error('[auto-update] Auto-install failed:', error)
+    // DON'T clear pending update - allow retry on next launch
+    mainLog.info('[auto-update] Pending update preserved for retry on next launch')
     return false
   }
 }

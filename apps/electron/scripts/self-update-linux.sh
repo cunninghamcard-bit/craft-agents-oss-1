@@ -135,23 +135,34 @@ log "Installation complete. Launching app..."
 # Wait a moment
 sleep 1
 
-# Launch the updated app
+# Launch the updated app and capture PID
 log "Launching updated AppImage..."
 nohup "$CURRENT_APPIMAGE" > /dev/null 2>&1 &
+APP_PID=$!
+log "Launched with PID: $APP_PID"
 
 # Wait briefly to see if the app launches
 sleep 3
 
-# Check if app is running (look for process with our AppImage)
-if pgrep -f "$(basename "$CURRENT_APPIMAGE")" > /dev/null 2>&1; then
-    log "New version launched successfully"
+# Check if the specific PID is still running
+# This is more reliable than pgrep which could match other processes
+if kill -0 "$APP_PID" 2>/dev/null; then
+    log "New version launched successfully (PID $APP_PID is running)"
     # Clean up backup
     rm -f "$BACKUP_PATH" 2>/dev/null || true
     log "Cleanup complete"
 else
-    log "WARNING: Could not verify new app launch"
-    # Keep backup for manual recovery
-    log "Backup kept at: $BACKUP_PATH"
+    # PID not running - check if any Craft Agent process is running with the exact path
+    # Use exact path match to avoid false positives from other AppImages
+    if pgrep -f "^$CURRENT_APPIMAGE" > /dev/null 2>&1; then
+        log "App is running (found process matching exact path)"
+        rm -f "$BACKUP_PATH" 2>/dev/null || true
+        log "Cleanup complete"
+    else
+        log "WARNING: Could not verify new app launch (PID $APP_PID not running)"
+        # Keep backup for manual recovery
+        log "Backup kept at: $BACKUP_PATH"
+    fi
 fi
 
 log "Update complete!"
