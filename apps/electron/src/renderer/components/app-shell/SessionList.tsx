@@ -297,7 +297,7 @@ function SessionItem({
                 <Spinner className="text-[8px] text-foreground shrink-0" />
               )}
               {!item.isProcessing && hasUnreadMessages(item) && (
-                <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-background">
+                <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-white">
                   New
                 </span>
               )}

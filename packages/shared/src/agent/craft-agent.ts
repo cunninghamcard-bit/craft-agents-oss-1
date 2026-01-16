@@ -6,7 +6,7 @@ import { getSystemPrompt, getDateTimeContext, getWorkingDirectoryContext } from 
 // Plan types are used by UI components; not needed in craft-agent.ts since Safe Mode is user-controlled
 import { parseError, type AgentError } from './errors.ts';
 import { runErrorDiagnostics } from './diagnostics.ts';
-import { shouldUseExtendedCacheTtl, loadStoredConfig, getDefaultPermissionMode, type Workspace } from '../config/storage.ts';
+import { loadStoredConfig, getDefaultPermissionMode, type Workspace } from '../config/storage.ts';
 import { isLocalMcpEnabled } from '../workspaces/storage.ts';
 import { loadPlanFromPath, type SessionConfig as Session } from '../sessions/storage.ts';
 import { DEFAULT_MODEL } from '../config/models.ts';
@@ -87,12 +87,28 @@ export enum AbortReason {
   SourceActivated = 'source_activated',
 }
 
+/**
+ * Message type for recovery context building.
+ * Simplified from StoredMessage - only what's needed for context injection.
+ */
+export interface RecoveryMessage {
+  type: 'user' | 'assistant';
+  content: string;
+}
+
 export interface CraftAgentConfig {
   workspace: Workspace;
   session?: Session;           // Current session (primary isolation boundary)
   mcpToken?: string;           // Override token (for testing)
   model?: string;
   onSdkSessionIdUpdate?: (sdkSessionId: string) => void;  // Callback when SDK session ID is captured
+  onSdkSessionIdCleared?: () => void;  // Callback when SDK session ID is cleared (e.g., after failed resume)
+  /**
+   * Callback to get recent messages for recovery context.
+   * Called when SDK resume fails and we need to inject previous conversation context into retry.
+   * Returns last N user/assistant message pairs for context injection.
+   */
+  getRecoveryMessages?: () => RecoveryMessage[];
   isHeadless?: boolean;        // Running in headless mode (disables interactive tools)
   debugMode?: {                // Debug mode configuration (when running in dev)
     enabled: boolean;          // Whether debug mode is active
@@ -751,7 +767,6 @@ export class CraftAgent {
       
       // Configure SDK options
       const model = this.config.model || DEFAULT_MODEL;
-      const useExtendedCache = shouldUseExtendedCacheTtl(model);
 
       // Determine maxThinkingTokens based on model when ultrathink is enabled
       // Opus/Sonnet support up to 128k, Haiku up to 8k
@@ -784,11 +799,7 @@ export class CraftAgent {
         },
         // Beta features:
         // - advanced-tool-use-2025-11-20: Enhanced tool use capabilities
-        // - extended-cache-ttl-2025-04-11: Extended prompt cache TTL (1 hour instead of 5 minutes)
-        betas: [
-          'advanced-tool-use-2025-11-20',
-          ...(useExtendedCache ? ['extended-cache-ttl-2025-04-11'] : []),
-        ] as any,
+        betas: ['advanced-tool-use-2025-11-20'] as any,
         // Extended thinking: set tokens based on model when ultrathink mode is active, otherwise 0
         maxThinkingTokens: this.ultrathinkMode ? getUltrathinkTokens(model) : 0,
         // Option A: Append to Claude Code's system prompt (recommended by docs)
@@ -1530,8 +1541,23 @@ export class CraftAgent {
       let pendingTextForStopReason: string | null = null;
       // Track current turn ID from message_start (correlation ID for grouping events)
       let currentTurnId: string | null = null;
+      // Track whether we received any assistant content (for empty response detection)
+      // When SDK returns empty response (e.g., failed resume), we need to detect and recover
+      let receivedAssistantContent = false;
       try {
         for await (const message of this.currentQuery) {
+          // Track if we got any text content from assistant
+          if ('type' in message && message.type === 'assistant' && 'message' in message) {
+            const assistantMsg = message.message as { content?: unknown[] };
+            if (assistantMsg.content && Array.isArray(assistantMsg.content) && assistantMsg.content.length > 0) {
+              receivedAssistantContent = true;
+            }
+          }
+          // Also track text_delta events as assistant content
+          if ('type' in message && message.type === 'content_block_delta') {
+            receivedAssistantContent = true;
+          }
+
           // Capture session ID for conversation continuity (only when it changes)
           if ('session_id' in message && message.session_id && message.session_id !== this.sessionId) {
             this.sessionId = message.session_id;
@@ -1604,6 +1630,31 @@ export class CraftAgent {
           }
         }
 
+        // Detect empty response when resuming - SDK silently fails resume if session is invalid
+        // In this case, we got a new session ID but no assistant content
+        debug('[SESSION_DEBUG] Post-loop check: wasResuming=', wasResuming, 'receivedAssistantContent=', receivedAssistantContent, '_isRetry=', _isRetry);
+        if (wasResuming && !receivedAssistantContent && !_isRetry) {
+          debug('[SESSION_DEBUG] >>> DETECTED EMPTY RESPONSE - triggering recovery');
+          // SDK resume failed silently - clear session and retry with context
+          this.sessionId = null;
+          // Notify that we're clearing the session ID (for persistence)
+          this.config.onSdkSessionIdCleared?.();
+          // Clear pinned state for fresh start
+          this.pinnedPreferencesPrompt = null;
+          this.preferencesDriftNotified = false;
+
+          // Build recovery context from previous messages to inject into retry
+          const recoveryContext = this.buildRecoveryContext();
+          const messageWithContext = recoveryContext
+            ? recoveryContext + userMessage
+            : userMessage;
+
+          yield { type: 'info', message: 'Restoring conversation context...' };
+          // Retry with fresh session, injecting conversation history into the message
+          yield* this.chat(messageWithContext, attachments, true);
+          return;
+        }
+
         // Defensive: flush any pending text that wasn't emitted
         // This can happen if the SDK sends an assistant message with text but skips the
         // message_delta event that normally triggers text_complete (e.g., in some ultrathink scenarios)
@@ -1624,6 +1675,15 @@ export class CraftAgent {
         if (sdkError instanceof AbortError) {
           const reason = this.lastAbortReason;
           this.lastAbortReason = null;  // Clear for next time
+
+          // If interrupted before receiving any assistant content, clear session ID
+          // This prevents broken resume state where SDK session file is empty/invalid
+          // Next message will start fresh instead of trying to resume empty session
+          if (!receivedAssistantContent && this.sessionId) {
+            debug('[SESSION_DEBUG] Interrupt before assistant content - clearing sdkSessionId:', this.sessionId);
+            this.sessionId = null;
+            this.config.onSdkSessionIdCleared?.();
+          }
 
           // Only emit "Interrupted" status for user-initiated stops
           // Plan submissions and redirects should be silent
@@ -1694,6 +1754,18 @@ export class CraftAgent {
         // Check for SDK process errors - these often wrap underlying billing/auth issues
         // The SDK's internal Claude Code process exits with code 1 for various API errors
         const isProcessError = errorMsg.includes('process exited with code');
+
+        // [SESSION_DEBUG] Comprehensive logging for session recovery investigation
+        debug('[SESSION_DEBUG] === ERROR HANDLER ENTRY ===');
+        debug('[SESSION_DEBUG] errorMsg:', errorMsg);
+        debug('[SESSION_DEBUG] rawErrorMsg:', rawErrorMsg);
+        debug('[SESSION_DEBUG] isProcessError:', isProcessError);
+        debug('[SESSION_DEBUG] wasResuming:', wasResuming);
+        debug('[SESSION_DEBUG] _isRetry:', _isRetry);
+        debug('[SESSION_DEBUG] this.sessionId:', this.sessionId);
+        debug('[SESSION_DEBUG] lastStderrOutput length:', this.lastStderrOutput.length);
+        debug('[SESSION_DEBUG] lastStderrOutput:', this.lastStderrOutput.join('\n'));
+
         if (isProcessError) {
           // Include captured stderr in diagnostics - this is often where the real error is
           const stderrContext = this.lastStderrOutput.length > 0
@@ -1706,7 +1778,10 @@ export class CraftAgent {
           // Check for expired session error - SDK session no longer exists server-side
           // This happens when sessions expire (TTL) or are cleaned up by Anthropic
           const isSessionExpired = stderrContext?.includes('No conversation found with session ID');
+          debug('[SESSION_DEBUG] isSessionExpired:', isSessionExpired);
+
           if (isSessionExpired && wasResuming && !_isRetry) {
+            debug('[SESSION_DEBUG] >>> TAKING PATH: Session expired recovery');
             console.error('[CraftAgent] SDK session expired server-side, clearing and retrying fresh');
             debug('[CraftAgent] SDK session expired server-side, clearing and retrying fresh');
             this.sessionId = null;
@@ -1720,6 +1795,8 @@ export class CraftAgent {
             return;
           }
 
+          debug('[SESSION_DEBUG] >>> TAKING PATH: Run diagnostics (not session expired)');
+
           // Run diagnostics to identify specific cause (2s timeout)
           const storedConfig = loadStoredConfig();
           const diagnostics = await runErrorDiagnostics({
@@ -1727,6 +1804,10 @@ export class CraftAgent {
             workspaceId: this.config.workspace?.id,
             rawError: stderrContext || rawErrorMsg,
           });
+
+          debug('[SESSION_DEBUG] diagnostics.code:', diagnostics.code);
+          debug('[SESSION_DEBUG] diagnostics.title:', diagnostics.title);
+          debug('[SESSION_DEBUG] diagnostics.message:', diagnostics.message);
 
           // Get recovery actions based on diagnostic code
           const actions = diagnostics.code === 'token_expired' || diagnostics.code === 'mcp_unreachable'
@@ -1764,7 +1845,9 @@ export class CraftAgent {
         }
 
         // Session-related retry: only if we were resuming and haven't retried yet
+        debug('[SESSION_DEBUG] isProcessError=false, checking wasResuming fallback');
         if (wasResuming && !_isRetry) {
+          debug('[SESSION_DEBUG] >>> TAKING PATH: wasResuming fallback retry');
           this.sessionId = null;
           // Clear pinned state so retry captures fresh values
           this.pinnedPreferencesPrompt = null;
@@ -1774,6 +1857,8 @@ export class CraftAgent {
           const isSessionError =
             errorMsg.includes('session') ||
             errorMsg.includes('resume');
+
+          debug('[SESSION_DEBUG] isSessionError (for message):', isSessionError);
 
           const statusMessage = isSessionError
             ? 'Conversation sync failed, starting fresh...'
@@ -1786,6 +1871,7 @@ export class CraftAgent {
           return;
         }
 
+        debug('[SESSION_DEBUG] >>> TAKING PATH: Final fallback (show generic error)');
         // Retry also failed, or wasn't resuming - show generic error
         // (Auth, billing, and rate limit errors are handled above)
         const rawMessage = sdkError instanceof Error ? sdkError.message : String(sdkError);
@@ -2000,6 +2086,40 @@ export class CraftAgent {
     }
 
     return `<workspace_capabilities>\n${capabilities.join('\n')}\n</workspace_capabilities>`;
+  }
+
+  /**
+   * Build recovery context from previous messages when SDK resume fails.
+   * Called when we detect an empty response during resume - we need to inject
+   * the previous conversation context so the agent can continue naturally.
+   *
+   * Returns a formatted string to prepend to the user message, or null if no context available.
+   */
+  private buildRecoveryContext(): string | null {
+    const messages = this.config.getRecoveryMessages?.();
+    if (!messages || messages.length === 0) {
+      return null;
+    }
+
+    // Format messages as a conversation block the agent can understand
+    const formattedMessages = messages.map(m => {
+      const role = m.type === 'user' ? 'User' : 'Assistant';
+      // Truncate very long messages to avoid bloating context (max ~1000 chars each)
+      const content = m.content.length > 1000
+        ? m.content.slice(0, 1000) + '...[truncated]'
+        : m.content;
+      return `[${role}]: ${content}`;
+    }).join('\n\n');
+
+    return `<conversation_recovery>
+This session was interrupted and is being restored. Here is the recent conversation context:
+
+${formattedMessages}
+
+Please continue the conversation naturally from where we left off.
+</conversation_recovery>
+
+`;
   }
 
   /**

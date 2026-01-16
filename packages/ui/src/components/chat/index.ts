@@ -10,6 +10,7 @@ export { TurnCard, ResponseCard, type TurnCardProps, type ResponseCardProps, typ
 export { TurnCardActionsMenu, type TurnCardActionsMenuProps } from './TurnCardActionsMenu'
 export { ChatView, type ChatViewProps, type ChatViewMode } from './ChatView'
 export { UserMessageBubble, type UserMessageBubbleProps } from './UserMessageBubble'
+export { SystemMessage, type SystemMessageProps, type SystemMessageType } from './SystemMessage'
 
 // Attachment helpers
 export { FileTypeIcon, getFileTypeLabel, type FileTypeIconProps } from './attachment-helpers'

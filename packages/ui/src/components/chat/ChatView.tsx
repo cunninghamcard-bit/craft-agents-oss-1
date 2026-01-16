@@ -15,9 +15,9 @@ import type { StoredSession } from '@craft-agent/core'
 import { cn } from '../../lib/utils'
 import { CHAT_LAYOUT, CHAT_CLASSES } from '../../lib/layout'
 import { PlatformProvider, type PlatformActions } from '../../context'
-import { Markdown } from '../markdown'
 import { TurnCard } from './TurnCard'
 import { UserMessageBubble } from './UserMessageBubble'
+import { SystemMessage } from './SystemMessage'
 import {
   groupMessagesByTurn,
   storedToMessage,
@@ -68,37 +68,6 @@ function CraftAgentLogo({ className }: { className?: string }) {
     </svg>
   )
 }
-
-/**
- * SystemMessage - Displays system/info/error messages
- */
-function SystemMessage({
-  content,
-  type,
-  className,
-}: {
-  content: string
-  type: 'error' | 'info' | 'warning' | 'system'
-  className?: string
-}) {
-  const colorClass = type === 'error'
-    ? 'text-destructive border-destructive/30 bg-destructive/5'
-    : type === 'warning'
-    ? 'text-amber-600 border-amber-500/30 bg-amber-50 dark:text-amber-400 dark:bg-amber-950/30'
-    : 'text-muted-foreground border-muted bg-muted/30'
-
-  return (
-    <div className={cn("px-4 py-2", className)}>
-      <div className={cn(
-        "text-sm px-3 py-2 rounded-md border",
-        colorClass
-      )}>
-        <Markdown mode="minimal">{content}</Markdown>
-      </div>
-    </div>
-  )
-}
-
 
 /**
  * ChatView - Main session viewer component

@@ -491,9 +491,9 @@ export class SessionManager {
 
     // Set path to fetch interceptor for SDK subprocess
     // This interceptor captures API errors and adds metadata to MCP tool schemas
-    const interceptorPath = join(basePath, 'packages', 'shared', 'src', 'cache-ttl-interceptor.ts')
+    const interceptorPath = join(basePath, 'packages', 'shared', 'src', 'network-interceptor.ts')
     if (!existsSync(interceptorPath)) {
-      const error = `Cache TTL interceptor not found at ${interceptorPath}. The app package may be corrupted.`
+      const error = `Network interceptor not found at ${interceptorPath}. The app package may be corrupted.`
       sessionLog.error(error)
       throw new Error(error)
     }
@@ -1144,6 +1144,27 @@ export class SessionManager {
           // Persist immediately and flush - critical for resumption reliability
           this.persistSession(managed)
           sessionPersistenceQueue.flush(managed.id)
+        },
+        // Called when SDK session ID is cleared after failed resume (empty response recovery)
+        onSdkSessionIdCleared: () => {
+          managed.sdkSessionId = undefined
+          sessionLog.info(`SDK session ID cleared for ${managed.id} (resume recovery)`)
+          // Persist immediately to prevent repeated resume attempts
+          this.persistSession(managed)
+          sessionPersistenceQueue.flush(managed.id)
+        },
+        // Called to get recent messages for recovery context when resume fails.
+        // Returns last 6 messages (3 exchanges) of user/assistant content.
+        getRecoveryMessages: () => {
+          const relevantMessages = managed.messages
+            .filter(m => m.role === 'user' || m.role === 'assistant')
+            .filter(m => !m.isIntermediate)  // Skip intermediate assistant messages
+            .slice(-6);  // Last 6 messages (3 exchanges)
+
+          return relevantMessages.map(m => ({
+            type: m.role as 'user' | 'assistant',
+            content: m.content,
+          }));
         },
         // Debug mode - enables log file path injection into system prompt
         debugMode: isDebugMode ? {

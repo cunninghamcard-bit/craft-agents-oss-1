@@ -1313,7 +1313,7 @@ bash scripts/build-dmg.sh x64
 **What the script does:**
 1. Downloads pinned Bun runtime (v1.3.5) with SHA256 checksum verification
 2. Copies SDK from root `node_modules` (monorepo hoisting workaround)
-3. Copies `cache-ttl-interceptor.ts` for cache TTL patching
+3. Copies `network-interceptor.ts` for API error capture and MCP schema injection
 4. Builds the Electron app (`bun run electron:build`)
 5. Packages with `electron-packager` (no ASAR for subprocess compatibility)
 6. Creates compressed DMG via `hdiutil`
