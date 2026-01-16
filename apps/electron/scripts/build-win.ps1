@@ -72,15 +72,28 @@ try {
     }
     Write-Host "Checksum verified successfully" -ForegroundColor Green
 
-    # Extract and install
+    # Extract and install using robocopy for better file handle management
     Write-Host "Extracting Bun..."
     Expand-Archive -Path "$TempDir\$BunDownload.zip" -DestinationPath $TempDir -Force
-    Copy-Item "$TempDir\$BunDownload\bun.exe" "$ElectronDir\vendor\bun\"
 
-    # Unblock the file
+    # Unblock in temp first (before copy)
+    Unblock-File -Path "$TempDir\$BunDownload\bun.exe" -ErrorAction SilentlyContinue
+
+    # Use robocopy with retries - handles transient file locks better than Copy-Item
+    # /R:5 = 5 retries, /W:3 = 3 second wait between retries, /NP = no progress, /NFL /NDL = quiet
+    Write-Host "Copying bun.exe with robocopy..."
+    $robocopyResult = robocopy "$TempDir\$BunDownload" "$ElectronDir\vendor\bun" "bun.exe" /R:5 /W:3 /NP /NFL /NDL
+    # Robocopy exit codes: 0-7 are success, 8+ are errors
+    if ($LASTEXITCODE -ge 8) {
+        throw "robocopy failed with exit code $LASTEXITCODE"
+    }
+
     $BunExePath = "$ElectronDir\vendor\bun\bun.exe"
-    Unblock-File -Path $BunExePath -ErrorAction SilentlyContinue
     Write-Host "Bun extracted to: $BunExePath" -ForegroundColor Green
+
+    # Give Windows time to release any file handles from the copy
+    Write-Host "Waiting for file handles to release..."
+    Start-Sleep -Seconds 3
 } finally {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
