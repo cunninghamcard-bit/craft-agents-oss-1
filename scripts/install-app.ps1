@@ -106,7 +106,9 @@ try {
             if ($percent -ne $lastPercent) {
                 $downloadedMB = [math]::Round($totalRead / 1MB, 1)
                 $barWidth = 40
-                $filled = [math]::Floor($percent / (100 / $barWidth))
+                # Cap at 100% for display (actual download may exceed manifest size slightly)
+                $displayPercent = [math]::Min($percent, 100)
+                $filled = [math]::Min([math]::Floor($displayPercent / (100 / $barWidth)), $barWidth)
                 $bar = "[" + ("#" * $filled) + ("-" * ($barWidth - $filled)) + "]"
                 Write-Host -NoNewline ("`r  $bar $percent% ($downloadedMB / $fileSizeMB MB)   ")
                 $lastPercent = $percent
