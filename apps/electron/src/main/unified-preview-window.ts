@@ -179,7 +179,12 @@ export class UnifiedPreviewWindowManager {
     })
 
     // Load the unified preview renderer
-    const query = { sessionId, previewId }
+    // Pass resolvedTheme from the main window to ensure the preview uses the same theme
+    // as the user's app preference, not re-evaluating system preference when mode='system'
+    const query: Record<string, string> = { sessionId, previewId }
+    if (data.resolvedTheme) {
+      query.theme = data.resolvedTheme
+    }
 
     if (VITE_DEV_SERVER_URL) {
       const params = new URLSearchParams(query).toString()

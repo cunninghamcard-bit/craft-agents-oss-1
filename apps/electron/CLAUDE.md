@@ -1158,10 +1158,12 @@ Permission requests for bash commands are handled by the `PermissionRequest` com
 
 ## Background Tasks
 
-The app supports running long-running tasks (tests, builds, agents) in the background:
+The app has infrastructure for running long-running tasks (tests, builds, agents) in the background.
 
-**Components:**
-- `ActiveOptionBadges.tsx` - Displays active options including background tasks bar
+**⚠️ UI DISABLED:** The background task badges UI is currently hidden because task tracking is not reliable. The underlying infrastructure is kept intact for future fixes.
+
+**Components (UI hidden):**
+- `ActiveOptionBadges.tsx` - Displays active options; background tasks bar rendering is commented out
 - `ActiveTasksBar.tsx` - Shows running tasks with elapsed time and actions
 - `TaskActionMenu.tsx` - Dropdown menu for task actions (view output, stop, copy ID)
 
@@ -1175,7 +1177,8 @@ The app supports running long-running tasks (tests, builds, agents) in the backg
 - `shell_backgrounded` - Bash shell backgrounded
 - `task_progress` - Elapsed time updates
 
-**Limitations:**
+**Known issues (why UI is disabled):**
+- Task tracking is unreliable - tasks don't always appear or disappear correctly
 - Task output retrieval not yet implemented (check main chat panel)
 - Agent task killing not available (no SDK API)
 

@@ -1394,7 +1394,7 @@ function AppShellContent({
 
           {/* === MAIN CONTENT PANEL === */}
           <div className={cn(
-            "flex-1 overflow-hidden min-w-0 bg-foreground-1.5 shadow-middle",
+            "flex-1 overflow-hidden min-w-0 bg-foreground-2 shadow-middle",
             isFocusedMode ? "rounded-[14px]" : (isRightSidebarVisible ? "rounded-l-[10px] rounded-r-[10px]" : "rounded-l-[10px] rounded-r-[14px]")
           )}>
             <MainContentPanel isFocusedMode={isFocusedMode} />
@@ -1444,7 +1444,7 @@ function AppShellContent({
                     opacity: isRightSidebarVisible ? 1 : 0,
                   }}
                   transition={isResizing === 'right-sidebar' || skipRightSidebarAnimation ? { duration: 0 } : springTransition}
-                  className="h-full bg-foreground-1.5 shadow-middle rounded-l-[10px] rounded-r-[14px]"
+                  className="h-full bg-foreground-2 shadow-middle rounded-l-[10px] rounded-r-[14px]"
                   style={{ width: rightSidebarWidth }}
                 >
                   <RightSidebar
@@ -1479,7 +1479,7 @@ function AppShellContent({
                     transition={skipRightSidebarAnimation ? { duration: 0 } : springTransition}
                     className="fixed inset-y-0 right-0 w-[316px] h-screen z-overlay p-1.5"
                   >
-                    <div className="h-full bg-foreground-1.5 overflow-hidden shadow-strong rounded-[12px]">
+                    <div className="h-full bg-foreground-2 overflow-hidden shadow-strong rounded-[12px]">
                       <RightSidebar
                         panel={{ type: 'sessionMetadata' }}
                         sessionId={isChatsNavigation(navState) && navState.details ? navState.details.sessionId : undefined}

@@ -6,7 +6,7 @@
  * - Web session viewer (read-only mode)
  *
  * Key components:
- * - ChatView: Main session viewer with readonly/interactive modes
+ * - SessionViewer: Read-only session transcript viewer (used by web viewer)
  * - TurnCard: Email-like display for assistant turns
  * - Markdown: Customizable markdown renderer with syntax highlighting
  *
@@ -27,7 +27,7 @@ export {
 
 // Chat components
 export {
-  ChatView,
+  SessionViewer,
   TurnCard,
   TurnCardActionsMenu,
   ResponseCard,
@@ -36,8 +36,8 @@ export {
   FileTypeIcon,
   getFileTypeLabel,
   FullscreenOverlay,
-  type ChatViewProps,
-  type ChatViewMode,
+  type SessionViewerProps,
+  type SessionViewerMode,
   type TurnCardProps,
   type TurnCardActionsMenuProps,
   type ResponseCardProps,

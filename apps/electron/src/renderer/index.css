@@ -205,16 +205,6 @@
 
 }
 
-/* Theme color transitions - smooth preview when hovering over themes in settings */
-:root,
-.dark {
-  transition:
-    background-color 500ms linear,
-    color 500ms linear,
-    border-color 500ms linear,
-    box-shadow 500ms linear;
-}
-
 /* Dark Mode */
 .dark {
   /* === 6 BASE COLORS === */
@@ -279,7 +269,6 @@ html[data-theme-override]::before {
   background: color-mix(in srgb, var(--background) 50%, transparent);
   z-index: -1;
   pointer-events: none;
-  transition: background 500ms linear;
 }
 
 /* Theme Mismatch - Solid background when theme doesn't support current mode
@@ -291,7 +280,6 @@ html[data-theme-mismatch]::before {
   background: var(--foreground-10);
   z-index: -1;
   pointer-events: none;
-  transition: background 500ms linear;
 }
 
 /* =============================================================================

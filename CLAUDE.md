@@ -9,7 +9,8 @@ Craft Agent is a Claude Code-like interface for managing Craft documents using t
 ```
 craft-agent/
 ├── apps/
-│   └── electron/    # Desktop GUI (primary interface)
+│   ├── electron/    # Desktop GUI (primary interface)
+│   └── viewer/      # Web viewer for session transcripts
 └── packages/
     ├── core/        # @craft-agent/core - Shared types
     └── shared/      # @craft-agent/shared - Business logic
@@ -25,6 +26,7 @@ craft-agent/
 bun install                  # Install deps
 bun run electron:dev         # Hot reload dev mode
 bun run electron:start       # Build & run Electron
+bun run viewer:dev           # Web viewer at http://localhost:5174
 bun run typecheck:all        # Type check all packages
 ```
 

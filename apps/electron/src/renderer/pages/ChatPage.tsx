@@ -201,7 +201,8 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   const hasUnreadMessages = sessionMeta
     ? !!(sessionMeta.lastFinalMessageId && sessionMeta.lastFinalMessageId !== sessionMeta.lastReadMessageId)
     : false
-  const isRegeneratingTitle = session?.isRegeneratingTitle || sessionMeta?.isRegeneratingTitle || false
+  // Use isAsyncOperationOngoing for shimmer effect (sharing, updating share, revoking, title regeneration)
+  const isAsyncOperationOngoing = session?.isAsyncOperationOngoing || sessionMeta?.isAsyncOperationOngoing || false
 
   // Session action handlers
   const handleRename = React.useCallback(() => {
@@ -299,7 +300,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
       return (
         <div className="h-full flex flex-col">
-          <PanelHeader  title={displayTitle} titleMenu={titleMenu} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isRegeneratingTitle} />
+          <PanelHeader  title={displayTitle} titleMenu={titleMenu} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
           <div className="flex-1 flex flex-col min-h-0">
             <ChatDisplay
               session={skeletonSession}
@@ -348,7 +349,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
 
   return (
     <div className="h-full flex flex-col">
-      <PanelHeader  title={displayTitle} titleMenu={titleMenu} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isRegeneratingTitle} />
+      <PanelHeader  title={displayTitle} titleMenu={titleMenu} rightSidebarButton={rightSidebarButton} isRegeneratingTitle={isAsyncOperationOngoing} />
       <div className="flex-1 flex flex-col min-h-0">
         <ChatDisplay
           session={session}

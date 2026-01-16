@@ -168,6 +168,9 @@ interface ManagedSession {
   model?: string
   // Role/type of the last message (for badge display without loading messages)
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
+  // Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration)
+  // Used for shimmer effect on session title
+  isAsyncOperationOngoing?: boolean
   // Preview of first user message (for sidebar display fallback)
   preview?: string
   // Message queue for handling new messages while processing
@@ -578,6 +581,9 @@ export class SessionManager {
             messageQueue: [],
             backgroundShellCommands: new Map(),
             messagesLoaded: false,  // Mark as not loaded
+            // Shared viewer state - loaded from metadata for persistence across restarts
+            sharedUrl: meta.sharedUrl,
+            sharedId: meta.sharedId,
           }
 
           this.sessions.set(meta.id, managed)
@@ -1464,6 +1470,10 @@ export class SessionManager {
       return { success: false, error: 'Session not found' }
     }
 
+    // Signal async operation start for shimmer effect
+    managed.isAsyncOperationOngoing = true
+    this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
+
     try {
       // Load session directly from disk (already in correct format)
       const storedSession = loadStoredSession(managed.workspace.rootPath, sessionId)
@@ -1501,6 +1511,10 @@ export class SessionManager {
     } catch (error) {
       sessionLog.error('Share error:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    } finally {
+      // Signal async operation end
+      managed.isAsyncOperationOngoing = false
+      this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 
@@ -1516,6 +1530,10 @@ export class SessionManager {
     if (!managed.sharedId) {
       return { success: false, error: 'Session not shared' }
     }
+
+    // Signal async operation start for shimmer effect
+    managed.isAsyncOperationOngoing = true
+    this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
 
     try {
       // Load session directly from disk (already in correct format)
@@ -1541,6 +1559,10 @@ export class SessionManager {
     } catch (error) {
       sessionLog.error('Update share error:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    } finally {
+      // Signal async operation end
+      managed.isAsyncOperationOngoing = false
+      this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 
@@ -1556,6 +1578,10 @@ export class SessionManager {
     if (!managed.sharedId) {
       return { success: false, error: 'Session not shared' }
     }
+
+    // Signal async operation start for shimmer effect
+    managed.isAsyncOperationOngoing = true
+    this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
 
     try {
       const { VIEWER_URL } = await import('@craft-agent/shared/branding')
@@ -1585,6 +1611,10 @@ export class SessionManager {
     } catch (error) {
       sessionLog.error('Revoke error:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
+    } finally {
+      // Signal async operation end
+      managed.isAsyncOperationOngoing = false
+      this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 
@@ -1744,6 +1774,9 @@ export class SessionManager {
     sessionLog.info(`refreshTitle: Calling regenerateSessionTitle...`)
 
     // Notify renderer that title regeneration has started (for shimmer effect)
+    managed.isAsyncOperationOngoing = true
+    this.sendEvent({ type: 'async_operation', sessionId, isOngoing: true }, managed.workspace.id)
+    // Keep legacy event for backward compatibility
     this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: true }, managed.workspace.id)
 
     try {
@@ -1766,6 +1799,10 @@ export class SessionManager {
       const message = error instanceof Error ? error.message : 'Unknown error'
       sessionLog.error(`Failed to refresh title for session ${sessionId}:`, error)
       return { success: false, error: message }
+    } finally {
+      // Signal async operation end
+      managed.isAsyncOperationOngoing = false
+      this.sendEvent({ type: 'async_operation', sessionId, isOngoing: false }, managed.workspace.id)
     }
   }
 

@@ -33,13 +33,15 @@ const MESSAGE_STYLES: Record<SystemMessageType, {
   bgStyle?: CSSProperties
 }> = {
   error: {
-    className: 'text-[var(--destructive)] shadow-tinted',
+    // Uses -text variant (mixed with foreground) for better text contrast
+    className: 'text-[var(--destructive-text)] shadow-tinted',
     useTintedShadow: true,
     shadowColor: 'var(--destructive-rgb)',
     bgStyle: { backgroundColor: 'oklch(from var(--destructive) l c h / 0.03)' },
   },
   warning: {
-    className: 'text-[var(--info)] shadow-tinted',
+    // Uses -text variant (mixed with foreground) for better text contrast
+    className: 'text-[var(--info-text)] shadow-tinted',
     useTintedShadow: true,
     shadowColor: 'var(--info-rgb)',
     bgStyle: { backgroundColor: 'oklch(from var(--info) l c h / 0.03)' },

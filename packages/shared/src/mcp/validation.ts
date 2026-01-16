@@ -205,6 +205,7 @@ export async function validateMcpConnection(
         // Connection successful - now validate tool schemas
         // Use direct MCP client to fetch tools (SDK already validated connection)
         const mcpClient = new CraftMcpClient({
+          transport: 'http',
           url: mcpUrl,
           headers: config.mcpAccessToken
             ? { Authorization: `Bearer ${config.mcpAccessToken}` }

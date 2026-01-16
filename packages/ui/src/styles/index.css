@@ -44,6 +44,11 @@
   --info-rgb: 180, 120, 40;                 /* RGB for shadow-tinted */
   --success-rgb: 34, 120, 60;               /* RGB for shadow-tinted */
 
+  /* === TEXT VARIANTS (mixed toward foreground for better contrast) === */
+  --success-text: color-mix(in oklab, var(--success) 50%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 50%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 50%, var(--foreground));
+
   /* === SHADOW OPACITY (light mode = subtle, dark mode = stronger) === */
   --shadow-border-opacity: 0.08;            /* Border ring opacity */
   --shadow-blur-opacity: 0.06;              /* Blur layers opacity */
@@ -112,6 +117,11 @@
   --destructive-rgb: 200, 80, 70;            /* RGB for shadow-tinted */
   --info-rgb: 200, 140, 60;                  /* RGB for shadow-tinted */
   --success-rgb: 50, 140, 80;                /* RGB for shadow-tinted */
+
+  /* === TEXT VARIANTS (mixed toward foreground for better contrast) === */
+  --success-text: color-mix(in oklab, var(--success) 50%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 50%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 50%, var(--foreground));
 
   /* === SHADOW OPACITY (stronger in dark mode) === */
   --shadow-border-opacity: 0.15;

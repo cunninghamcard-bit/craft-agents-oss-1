@@ -1,12 +1,10 @@
 /**
- * ChatView - Main session viewer component
+ * SessionViewer - Read-only session transcript viewer
  *
- * Platform-agnostic session viewer that works in both Electron and web.
- * Renders a session's messages as turn cards with optional input.
+ * Platform-agnostic component for viewing session transcripts.
+ * Used by the web viewer app. For interactive chat, Electron uses ChatDisplay.
  *
- * Modes:
- * - 'interactive': Full features (used in Electron)
- * - 'readonly': Read-only display (used in web viewer)
+ * Renders a session's messages as turn cards with gradient fade at top/bottom.
  */
 
 import type { ReactNode } from 'react'
@@ -25,13 +23,13 @@ import {
   type ActivityItem,
 } from './turn-utils'
 
-export type ChatViewMode = 'interactive' | 'readonly'
+export type SessionViewerMode = 'interactive' | 'readonly'
 
-export interface ChatViewProps {
+export interface SessionViewerProps {
   /** Session data to display */
   session: StoredSession
   /** View mode - 'readonly' for web viewer, 'interactive' for Electron */
-  mode?: ChatViewMode
+  mode?: SessionViewerMode
   /** Platform-specific actions (file opening, URL handling, etc.) */
   platformActions?: PlatformActions
   /** Additional className for the container */
@@ -70,9 +68,9 @@ function CraftAgentLogo({ className }: { className?: string }) {
 }
 
 /**
- * ChatView - Main session viewer component
+ * SessionViewer - Read-only session transcript viewer component
  */
-export function ChatView({
+export function SessionViewer({
   session,
   mode = 'readonly',
   platformActions = {},
@@ -82,7 +80,7 @@ export function ChatView({
   defaultExpanded = false,
   header,
   footer,
-}: ChatViewProps) {
+}: SessionViewerProps) {
   // Convert StoredMessage[] to Message[] and group into turns
   const turns = useMemo(
     () => groupMessagesByTurn(session.messages.map(storedToMessage)),
@@ -143,9 +141,16 @@ export function ChatView({
           </div>
         )}
 
-        {/* Messages area */}
-        <div className="flex-1 overflow-y-auto bg-foreground-2">
-          <div className={cn(CHAT_LAYOUT.maxWidth, "mx-auto", CHAT_LAYOUT.containerPadding, CHAT_LAYOUT.messageSpacing)}>
+        {/* Messages area with gradient fade mask at top/bottom */}
+        <div
+          className="flex-1 min-h-0"
+          style={{
+            maskImage: 'linear-gradient(to bottom, transparent 0%, black 32px, black calc(100% - 32px), transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, transparent 0%, black 32px, black calc(100% - 32px), transparent 100%)'
+          }}
+        >
+          <div className="h-full overflow-y-auto">
+            <div className={cn(CHAT_LAYOUT.maxWidth, "mx-auto", CHAT_LAYOUT.containerPadding, CHAT_LAYOUT.messageSpacing)}>
             {turns.map((turn) => {
               if (turn.type === 'user') {
                 return (
@@ -210,6 +215,7 @@ export function ChatView({
             {/* Bottom branding */}
             <div className={CHAT_CLASSES.brandingContainer}>
               <CraftAgentLogo className="w-8 h-8 text-[#9570BE]/40" />
+            </div>
             </div>
           </div>
         </div>

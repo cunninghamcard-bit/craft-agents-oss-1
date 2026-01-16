@@ -745,8 +745,10 @@ export class CraftAgent {
         return;
       }
 
-      // Block SDK's plan mode tools (we don't use them - safe mode is user-controlled)
-      const disallowedTools: string[] = ['EnterPlanMode', 'ExitPlanMode'];
+      // Block SDK tools that require UI we don't have:
+      // - EnterPlanMode/ExitPlanMode: We use safe mode instead (user-controlled via UI)
+      // - AskUserQuestion: Requires interactive UI to show question options to user
+      const disallowedTools: string[] = ['EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion'];
 
       // Build MCP servers config - always use HTTP (SDK handles sources efficiently)
       // Filter out stdio servers if local MCP is disabled
@@ -1553,9 +1555,12 @@ export class CraftAgent {
               receivedAssistantContent = true;
             }
           }
-          // Also track text_delta events as assistant content
-          if ('type' in message && message.type === 'content_block_delta') {
-            receivedAssistantContent = true;
+          // Also track text_delta events as assistant content (nested in stream_event)
+          if ('type' in message && message.type === 'stream_event' && 'event' in message) {
+            const event = (message as { event: { type: string } }).event;
+            if (event.type === 'content_block_delta' || event.type === 'message_start') {
+              receivedAssistantContent = true;
+            }
           }
 
           // Capture session ID for conversation continuity (only when it changes)
@@ -1676,13 +1681,24 @@ export class CraftAgent {
           const reason = this.lastAbortReason;
           this.lastAbortReason = null;  // Clear for next time
 
-          // If interrupted before receiving any assistant content, clear session ID
-          // This prevents broken resume state where SDK session file is empty/invalid
-          // Next message will start fresh instead of trying to resume empty session
+          // If interrupted before receiving any assistant content AND this was the first message,
+          // clear session ID to prevent broken resume state where SDK session file is empty/invalid.
+          // For later messages (messageCount > 0), keep the session ID to preserve conversation history.
+          // The SDK session file should have valid previous turns we can resume from.
           if (!receivedAssistantContent && this.sessionId) {
-            debug('[SESSION_DEBUG] Interrupt before assistant content - clearing sdkSessionId:', this.sessionId);
-            this.sessionId = null;
-            this.config.onSdkSessionIdCleared?.();
+            // Check if there are previous messages (completed turns) in this session
+            // If yes, keep the session ID to preserve history on resume
+            const hasCompletedTurns = this.config.getRecoveryMessages && this.config.getRecoveryMessages().length > 0;
+
+            if (!hasCompletedTurns) {
+              // First message was interrupted before any response - SDK session is empty/corrupt
+              debug('[SESSION_DEBUG] First message interrupted before assistant content - clearing sdkSessionId:', this.sessionId);
+              this.sessionId = null;
+              this.config.onSdkSessionIdCleared?.();
+            } else {
+              // Later message interrupted - SDK session has valid history, keep it for resume
+              debug('[SESSION_DEBUG] Later message interrupted - keeping sdkSessionId for history preservation:', this.sessionId);
+            }
           }
 
           // Only emit "Interrupted" status for user-initiated stops
@@ -2155,10 +2171,10 @@ Please continue the conversation naturally from where we left off.
       parts.push(workingDirContext);
     }
 
-    // Add file attachments with stored path info
+    // Add file attachments with stored path info (agent uses Read tool to access content)
+    // Text files are NOT embedded inline to prevent context overflow from large files
     if (attachments) {
       for (const attachment of attachments) {
-        // Always include path info for files with storedPath
         if (attachment.storedPath) {
           let pathInfo = `[Attached file: ${attachment.name}]`;
           pathInfo += `\n[Stored at: ${attachment.storedPath}]`;
@@ -2166,11 +2182,6 @@ Please continue the conversation naturally from where we left off.
             pathInfo += `\n[Markdown version: ${attachment.markdownPath}]`;
           }
           parts.push(pathInfo);
-        }
-
-        // Also include inline content for text files
-        if (attachment.type === 'text' && attachment.text) {
-          parts.push(`\`\`\`\n${attachment.text}\n\`\`\``);
         }
       }
     }
@@ -2216,7 +2227,8 @@ Please continue the conversation naturally from where we left off.
       contentBlocks.push({ type: 'text', text: workingDirContextSdk });
     }
 
-    // Add attachments with stored path info
+    // Add attachments - images/PDFs are uploaded inline, text files are path-only
+    // Text files are NOT embedded to prevent context overflow; agent uses Read tool
     if (attachments) {
       for (const attachment of attachments) {
         // Add path info text block so the agent knows where the file is stored
@@ -2232,6 +2244,7 @@ Please continue the conversation naturally from where we left off.
           });
         }
 
+        // Only images and PDFs are uploaded inline (agent cannot read these with Read tool)
         if (attachment.type === 'image' && attachment.base64) {
           const mediaType = this.mapImageMediaType(attachment.mimeType);
           if (mediaType) {
@@ -2253,25 +2266,8 @@ Please continue the conversation naturally from where we left off.
               data: attachment.base64,
             },
           });
-        } else if (attachment.type === 'text' && attachment.text) {
-          // Send text files as document blocks (not inline text) to:
-          // - Avoid context overflow for large files
-          // - Enable citation support (char_location)
-          // - Consistent handling with PDFs
-          // Include stored path in title for reference
-          const titleWithPath = attachment.storedPath
-            ? `${attachment.name} (stored at: ${attachment.storedPath})`
-            : attachment.name;
-          contentBlocks.push({
-            type: 'document',
-            source: {
-              type: 'text',
-              media_type: 'text/plain',
-              data: attachment.text,
-            },
-            title: titleWithPath,
-          });
         }
+        // Text files: path info already added above, agent uses Read tool to access content
       }
     }
 

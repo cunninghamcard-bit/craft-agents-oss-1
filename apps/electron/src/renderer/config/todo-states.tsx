@@ -25,7 +25,7 @@ export interface TodoStateConfig {
  */
 const DEFAULT_STATUS_COLORS: Record<string, string> = {
   'backlog': 'text-foreground/50',   // Muted - not yet planned
-  'todo': 'text-foreground',         // Solid - ready to work on
+  'todo': 'text-foreground/50',       // Muted - ready to work on
   'in-progress': 'text-success',     // Green - active work (kept for existing configs)
   'needs-review': 'text-info',       // Amber - attention needed
   'done': 'text-accent',             // Purple - completed
