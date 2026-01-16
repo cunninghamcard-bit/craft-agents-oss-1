@@ -1,6 +1,7 @@
 appId: com.lukilabs.craft-agent
 productName: Craft Agent
 copyright: Copyright © 2025 Luki Labs
+homepage: https://agents.craft.do
 
 electronVersion: "39.2.7"
 

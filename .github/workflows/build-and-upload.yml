@@ -212,10 +212,17 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
       # Windows builds
-      - name: Disable Windows Defender real-time monitoring
+      - name: Configure Windows Defender exclusions
         if: steps.check-artifact.outputs.skip != 'true' && matrix.platform == 'win32'
-        run: Set-MpPreference -DisableRealtimeMonitoring $true
         shell: powershell
+        run: |
+          # Add exclusions for build directories to prevent file locking
+          $workDir = "${{ github.workspace }}"
+          Add-MpPreference -ExclusionPath "$workDir" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath "$workDir\apps\electron\vendor" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionPath "$workDir\apps\electron\release" -ErrorAction SilentlyContinue
+          Add-MpPreference -ExclusionProcess "bun.exe" -ErrorAction SilentlyContinue
+          Write-Host "Added Defender exclusions for build directories"
 
       - name: Build Electron app (Windows)
         if: steps.check-artifact.outputs.skip != 'true' && matrix.platform == 'win32'
