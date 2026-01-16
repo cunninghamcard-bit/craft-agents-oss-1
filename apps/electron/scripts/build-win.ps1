@@ -12,12 +12,29 @@ $BunVersion = "bun-v1.3.5"  # Pinned version for reproducible builds
 
 Write-Host "=== Building Craft Agent Windows Installer using electron-builder ===" -ForegroundColor Cyan
 
-# 1. Clean previous build artifacts
+# 1. Clean previous build artifacts (with retry for locked files)
 Write-Host "Cleaning previous builds..."
-if (Test-Path "$ElectronDir\vendor") { Remove-Item -Recurse -Force "$ElectronDir\vendor" }
-if (Test-Path "$ElectronDir\node_modules\@anthropic-ai") { Remove-Item -Recurse -Force "$ElectronDir\node_modules\@anthropic-ai" }
-if (Test-Path "$ElectronDir\packages") { Remove-Item -Recurse -Force "$ElectronDir\packages" }
-if (Test-Path "$ElectronDir\release") { Remove-Item -Recurse -Force "$ElectronDir\release" }
+$foldersToClean = @(
+    "$ElectronDir\vendor",
+    "$ElectronDir\node_modules\@anthropic-ai",
+    "$ElectronDir\packages",
+    "$ElectronDir\release"
+)
+foreach ($folder in $foldersToClean) {
+    if (Test-Path $folder) {
+        $retries = 3
+        for ($i = 1; $i -le $retries; $i++) {
+            try {
+                Remove-Item -Recurse -Force $folder -ErrorAction Stop
+                break
+            } catch {
+                if ($i -eq $retries) { throw }
+                Write-Host "  Retrying cleanup of $folder (attempt $i)..." -ForegroundColor Yellow
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+}
 
 # 2. Install dependencies
 Write-Host "Installing dependencies..."
@@ -59,6 +76,14 @@ try {
     Write-Host "Extracting Bun..."
     Expand-Archive -Path "$TempDir\$BunDownload.zip" -DestinationPath $TempDir -Force
     Copy-Item "$TempDir\$BunDownload\bun.exe" "$ElectronDir\vendor\bun\"
+
+    # Unblock the file and verify it's not locked
+    $BunExePath = "$ElectronDir\vendor\bun\bun.exe"
+    Unblock-File -Path $BunExePath -ErrorAction SilentlyContinue
+
+    # Verify we can read the file (ensures no lock)
+    Write-Host "Verifying bun.exe is accessible..."
+    $null = [System.IO.File]::OpenRead($BunExePath).Close()
 } finally {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
@@ -167,14 +192,35 @@ try {
     Pop-Location
 }
 
-# 7. Package with electron-builder
+# 7. Package with electron-builder (with retry for file locking issues)
 Write-Host "Packaging app with electron-builder..."
 Push-Location $ElectronDir
-try {
-    npx electron-builder --win --x64
-} finally {
-    Pop-Location
+$maxRetries = 3
+$retryCount = 0
+$success = $false
+
+while (-not $success -and $retryCount -lt $maxRetries) {
+    try {
+        $retryCount++
+        if ($retryCount -gt 1) {
+            Write-Host "Retry attempt $retryCount of $maxRetries..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 10
+        }
+        npx electron-builder --win --x64
+        if ($LASTEXITCODE -eq 0) {
+            $success = $true
+        } else {
+            throw "electron-builder exited with code $LASTEXITCODE"
+        }
+    } catch {
+        Write-Host "Build attempt failed: $_" -ForegroundColor Yellow
+        if ($retryCount -ge $maxRetries) {
+            Pop-Location
+            throw "electron-builder failed after $maxRetries attempts"
+        }
+    }
 }
+Pop-Location
 
 # 8. Verify the installer was built
 $InstallerPath = Get-ChildItem -Path "$ElectronDir\release" -Filter "*.exe" | Select-Object -First 1
