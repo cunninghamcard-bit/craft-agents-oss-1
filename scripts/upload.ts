@@ -1,4 +1,4 @@
-import { S3Client, DeleteObjectsCommand, ListObjectsV2Command, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
 import { readFileSync, readdirSync, existsSync, statSync } from 'fs';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
@@ -40,28 +40,37 @@ const s3 = new S3Client({
 });
 
 
-async function deleteFolder(prefix: string) {
-  console.log(`Deleting ${prefix}...`);
-  // List all objects with the prefix
-  const listResponse = await s3.send(new ListObjectsV2Command({
-    Bucket: BUCKET,
-    Prefix: prefix,
-  }));
+type ManifestBinary = { url: string; sha256: string; size: number; filename: string };
+type Manifest = {
+  version: string;
+  build_time: string;
+  binaries: Record<string, ManifestBinary>;
+};
 
-  if (!listResponse.Contents || listResponse.Contents.length === 0) {
-    console.log(`  No existing files found`);
-    return;
+/**
+ * Fetch existing manifest from S3, or return null if it doesn't exist
+ */
+async function fetchExistingManifest(version: string): Promise<Manifest | null> {
+  const manifestKey = `electron/${version}/manifest.json`;
+  try {
+    const response = await s3.send(new GetObjectCommand({
+      Bucket: BUCKET,
+      Key: manifestKey,
+    }));
+    const body = await response.Body?.transformToString();
+    if (body) {
+      console.log(`  Found existing manifest for ${version}`);
+      return JSON.parse(body) as Manifest;
+    }
+  } catch (error: unknown) {
+    // NoSuchKey error means manifest doesn't exist yet
+    if (error && typeof error === 'object' && 'name' in error && error.name === 'NoSuchKey') {
+      console.log(`  No existing manifest for ${version}, creating new one`);
+    } else {
+      console.warn(`  Warning: Failed to fetch existing manifest:`, error);
+    }
   }
-
-  // Delete all objects
-  const deleteResponse = await s3.send(new DeleteObjectsCommand({
-    Bucket: BUCKET,
-    Delete: {
-      Objects: listResponse.Contents.map(obj => ({ Key: obj.Key })),
-    },
-  }));
-
-  console.log(`  Deleted ${deleteResponse.Deleted?.length || 0} files`);
+  return null;
 }
 
 function computeSha256(filePath: string): string {
@@ -125,20 +134,17 @@ async function uploadElectronBuilds(version: string) {
     process.exit(1);
   }
 
-  // Build manifest for Electron
-  const electronManifest: {
-    version: string;
-    build_time: string;
-    binaries: Record<string, { url: string; sha256: string; size: number; filename: string }>;
-  } = {
+  // Fetch existing manifest to merge with (preserves other platforms' binaries)
+  const existingManifest = await fetchExistingManifest(version);
+
+  // Build manifest - start with existing binaries or empty
+  const electronManifest: Manifest = {
     version,
     build_time: new Date().toISOString(),
-    binaries: {},
+    binaries: existingManifest?.binaries || {},
   };
 
-  // Delete existing electron version folder
-  const electronVersionPrefix = `electron/${version}/`;
-  await deleteFolder(electronVersionPrefix);
+  console.log(`  Existing platforms: ${Object.keys(electronManifest.binaries).join(', ') || 'none'}`);
 
   // Upload each installer file
   for (const installerFile of installerFiles) {
@@ -178,7 +184,7 @@ async function uploadElectronBuilds(version: string) {
     };
   }
 
-  // Upload manifest
+  // Upload merged manifest
   const manifestKey = `electron/${version}/manifest.json`;
   await s3.send(new PutObjectCommand({
     Bucket: BUCKET,
@@ -188,6 +194,7 @@ async function uploadElectronBuilds(version: string) {
     CacheControl: 'no-cache, no-store, must-revalidate',
   }));
   console.log(`  ✓ ${manifestKey}`);
+  console.log(`  Final platforms in manifest: ${Object.keys(electronManifest.binaries).join(', ')}`);
 
   // If --latest, update electron/latest
   if (isLatest) {
