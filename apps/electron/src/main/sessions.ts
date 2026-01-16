@@ -527,11 +527,12 @@ export class SessionManager {
 
       // On Windows, configure Bun to use writable directories for temp/cache.
       // This allows the app to be installed in Program Files (which is read-only).
+      // All Bun data goes under userData (%LOCALAPPDATA%\Craft Agent\).
       if (process.platform === 'win32') {
-        const bunCacheDir = join(app.getPath('userData'), 'bun-cache')
-        process.env.BUN_INSTALL_CACHE_DIR = bunCacheDir
-        process.env.BUN_TMPDIR = app.getPath('temp')
-        sessionLog.info('Configured Bun env for Windows:', { BUN_INSTALL_CACHE_DIR: bunCacheDir, BUN_TMPDIR: app.getPath('temp') })
+        const bunDataDir = join(app.getPath('userData'), 'bun')
+        process.env.BUN_INSTALL_CACHE_DIR = join(bunDataDir, 'cache')
+        process.env.BUN_TMPDIR = join(bunDataDir, 'tmp')
+        sessionLog.info('Configured Bun env for Windows:', { BUN_INSTALL_CACHE_DIR: process.env.BUN_INSTALL_CACHE_DIR, BUN_TMPDIR: process.env.BUN_TMPDIR })
       }
     } else if (process.platform === 'win32') {
       // On Windows in development, use 'node' instead of 'bun' as bun may crash
