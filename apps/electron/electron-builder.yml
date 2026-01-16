@@ -109,7 +109,9 @@ nsis:
   oneClick: false
   # Force per-user install to %LOCALAPPDATA%\Programs\ (not Program Files).
   # Bun subprocess cannot read/write files in Program Files due to Windows permissions.
+  # allowElevation: false removes the "all users" vs "only me" selection screen.
   perMachine: false
+  allowElevation: false
   allowToChangeInstallationDirectory: false
   deleteAppDataOnUninstall: true
 
