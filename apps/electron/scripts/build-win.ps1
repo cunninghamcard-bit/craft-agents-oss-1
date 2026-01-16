@@ -77,33 +77,10 @@ try {
     Expand-Archive -Path "$TempDir\$BunDownload.zip" -DestinationPath $TempDir -Force
     Copy-Item "$TempDir\$BunDownload\bun.exe" "$ElectronDir\vendor\bun\"
 
-    # Unblock the file and verify it's not locked
+    # Unblock the file
     $BunExePath = "$ElectronDir\vendor\bun\bun.exe"
     Unblock-File -Path $BunExePath -ErrorAction SilentlyContinue
-
-    # Wait for Windows Defender to finish scanning the executable
-    # This prevents EBUSY errors when electron-builder tries to copy it later
-    Write-Host "Waiting for antivirus scan to complete..."
-    $maxWaitAttempts = 12  # 12 attempts * 5 seconds = 60 seconds max
-    $waitAttempt = 0
-    $fileAccessible = $false
-
-    while (-not $fileAccessible -and $waitAttempt -lt $maxWaitAttempts) {
-        $waitAttempt++
-        Start-Sleep -Seconds 5
-        try {
-            $stream = [System.IO.File]::Open($BunExePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-            $stream.Close()
-            $fileAccessible = $true
-            Write-Host "  bun.exe is accessible (attempt $waitAttempt)" -ForegroundColor Green
-        } catch {
-            Write-Host "  Waiting... (attempt $waitAttempt/$maxWaitAttempts)" -ForegroundColor Yellow
-        }
-    }
-
-    if (-not $fileAccessible) {
-        Write-Host "WARNING: bun.exe may still be locked after $maxWaitAttempts attempts" -ForegroundColor Yellow
-    }
+    Write-Host "Bun extracted to: $BunExePath" -ForegroundColor Green
 } finally {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
 }
@@ -212,35 +189,13 @@ try {
     Pop-Location
 }
 
-# 7. Package with electron-builder (with retry for file locking issues)
+# 7. Package with electron-builder
 Write-Host "Packaging app with electron-builder..."
 Push-Location $ElectronDir
-$maxRetries = 3
-$retryCount = 0
-$success = $false
-
-while (-not $success -and $retryCount -lt $maxRetries) {
-    try {
-        $retryCount++
-        if ($retryCount -gt 1) {
-            Write-Host "Retry attempt $retryCount of $maxRetries..." -ForegroundColor Yellow
-            # Wait for file locks to release (source file vendor/bun/bun.exe may be locked)
-            Write-Host "  Waiting 30s for file locks to release..."
-            Start-Sleep -Seconds 30
-        }
-        npx electron-builder --win --x64
-        if ($LASTEXITCODE -eq 0) {
-            $success = $true
-        } else {
-            throw "electron-builder exited with code $LASTEXITCODE"
-        }
-    } catch {
-        Write-Host "Build attempt failed: $_" -ForegroundColor Yellow
-        if ($retryCount -ge $maxRetries) {
-            Pop-Location
-            throw "electron-builder failed after $maxRetries attempts"
-        }
-    }
+npx electron-builder --win --x64
+if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "electron-builder failed with exit code $LASTEXITCODE"
 }
 Pop-Location
 

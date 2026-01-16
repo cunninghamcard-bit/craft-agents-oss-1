@@ -209,6 +209,11 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
       # Windows builds
+      - name: Disable Windows Defender real-time monitoring
+        if: steps.check-artifact.outputs.skip != 'true' && matrix.platform == 'win32'
+        run: Set-MpPreference -DisableRealtimeMonitoring $true
+        shell: powershell
+
       - name: Build Electron app (Windows)
         if: steps.check-artifact.outputs.skip != 'true' && matrix.platform == 'win32'
         run: powershell -ExecutionPolicy Bypass -File apps/electron/scripts/build-win.ps1
