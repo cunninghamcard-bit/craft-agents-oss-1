@@ -3,6 +3,21 @@ name: Build and Upload
 on:
   workflow_dispatch:
     inputs:
+      build_macos:
+        description: 'Build macOS (arm64 + x64 DMG)'
+        required: false
+        type: boolean
+        default: true
+      build_windows:
+        description: 'Build Windows (x64 EXE)'
+        required: false
+        type: boolean
+        default: true
+      build_linux:
+        description: 'Build Linux (x64 + arm64 AppImage)'
+        required: false
+        type: boolean
+        default: true
       isLatest:
         description: 'Also upload to /latest folder'
         required: false
@@ -23,8 +38,69 @@ permissions:
   contents: write
 
 jobs:
-  build-electron:
-    runs-on: macos-latest
+  # Prepare job to compute build matrix
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+      version: ${{ steps.get-version.outputs.version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get version from app
+        id: get-version
+        run: |
+          VERSION=$(grep -o 'APP_VERSION = "[^"]*"' packages/shared/src/version/app-version.ts | cut -d'"' -f2)
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Compute build matrix
+        id: set-matrix
+        run: |
+          MATRIX='{"include":['
+          FIRST=true
+
+          # macOS arm64
+          if [ "${{ inputs.build_macos }}" = "true" ]; then
+            if [ "$FIRST" = true ]; then FIRST=false; else MATRIX+=','; fi
+            MATRIX+='{"os":"macos-14","platform":"darwin","arch":"arm64","script":"build-dmg.sh","ext":"dmg"}'
+          fi
+
+          # macOS x64
+          if [ "${{ inputs.build_macos }}" = "true" ]; then
+            if [ "$FIRST" = true ]; then FIRST=false; else MATRIX+=','; fi
+            MATRIX+='{"os":"macos-13","platform":"darwin","arch":"x64","script":"build-dmg.sh","ext":"dmg"}'
+          fi
+
+          # Windows x64
+          if [ "${{ inputs.build_windows }}" = "true" ]; then
+            if [ "$FIRST" = true ]; then FIRST=false; else MATRIX+=','; fi
+            MATRIX+='{"os":"windows-latest","platform":"win32","arch":"x64","script":"build-win.ps1","ext":"exe"}'
+          fi
+
+          # Linux x64
+          if [ "${{ inputs.build_linux }}" = "true" ]; then
+            if [ "$FIRST" = true ]; then FIRST=false; else MATRIX+=','; fi
+            MATRIX+='{"os":"ubuntu-latest","platform":"linux","arch":"x64","script":"build-linux.sh","ext":"AppImage"}'
+          fi
+
+          # Linux arm64
+          if [ "${{ inputs.build_linux }}" = "true" ]; then
+            if [ "$FIRST" = true ]; then FIRST=false; else MATRIX+=','; fi
+            MATRIX+='{"os":"ubuntu-24.04-arm64","platform":"linux","arch":"arm64","script":"build-linux.sh","ext":"AppImage"}'
+          fi
+
+          MATRIX+=']}'
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "Build matrix: $MATRIX"
+
+  # Build jobs run in parallel
+  build:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,8 +116,10 @@ jobs:
       - name: Sync versions
         run: bun run scripts/sync-version.ts
 
-      - name: Build Electron app (arm64)
-        run: bash apps/electron/scripts/build-dmg.sh arm64
+      # macOS builds
+      - name: Build Electron app (macOS)
+        if: matrix.platform == 'darwin'
+        run: bash apps/electron/scripts/build-dmg.sh ${{ matrix.arch }}
         env:
           # OAuth credentials (baked into build)
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
@@ -56,29 +134,64 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
-      - name: Build Electron app (x64)
-        run: bash apps/electron/scripts/build-dmg.sh x64
+      # Windows builds
+      - name: Build Electron app (Windows)
+        if: matrix.platform == 'win32'
+        run: powershell -ExecutionPolicy Bypass -File apps/electron/scripts/build-win.ps1
         env:
-          # OAuth credentials (baked into build)
           GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
           GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
           SLACK_OAUTH_CLIENT_SECRET: ${{ secrets.SLACK_OAUTH_CLIENT_SECRET }}
           MICROSOFT_OAUTH_CLIENT_ID: ${{ secrets.MICROSOFT_OAUTH_CLIENT_ID }}
           MICROSOFT_OAUTH_CLIENT_SECRET: ${{ secrets.MICROSOFT_OAUTH_CLIENT_SECRET }}
-          # Code signing
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
 
-      - name: Get version from app
-        id: version
-        run: |
-          VERSION=$(grep -o 'APP_VERSION = "[^"]*"' packages/shared/src/version/app-version.ts | cut -d'"' -f2)
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+      # Linux builds
+      - name: Build Electron app (Linux)
+        if: matrix.platform == 'linux'
+        run: bash apps/electron/scripts/build-linux.sh ${{ matrix.arch }}
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
+          SLACK_OAUTH_CLIENT_SECRET: ${{ secrets.SLACK_OAUTH_CLIENT_SECRET }}
+          MICROSOFT_OAUTH_CLIENT_ID: ${{ secrets.MICROSOFT_OAUTH_CLIENT_ID }}
+          MICROSOFT_OAUTH_CLIENT_SECRET: ${{ secrets.MICROSOFT_OAUTH_CLIENT_SECRET }}
 
-      - name: Upload Electron builds to S3
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.platform }}-${{ matrix.arch }}
+          path: apps/electron/release/Craft-Agent-${{ matrix.arch }}.${{ matrix.ext }}
+          retention-days: 7
+
+  # Upload all builds to S3 and create GitHub release
+  upload:
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: apps/electron/release
+          pattern: build-*
+          merge-multiple: true
+
+      - name: List downloaded artifacts
+        run: ls -la apps/electron/release/
+
+      - name: Upload builds to S3
         env:
           S3_VERSIONS_BUCKET_ENDPOINT: ${{ secrets.S3_VERSIONS_BUCKET_ENDPOINT }}
           S3_VERSIONS_BUCKET_ACCESS_KEY_ID: ${{ secrets.S3_VERSIONS_BUCKET_ACCESS_KEY_ID }}
@@ -91,22 +204,25 @@ jobs:
           if [ "${{ inputs.uploadScript }}" = "true" ]; then
             FLAGS="$FLAGS --script"
           fi
-          bun run scripts/upload.ts $FLAGS
+          bun run scripts/upload.ts "$FLAGS"
 
-      - name: Create GitHub Release with DMG
+      - name: Create GitHub Release
         if: ${{ inputs.createRelease }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
+          VERSION="${{ needs.prepare.outputs.version }}"
           # Check if release already exists
           if gh release view "v${VERSION}" &>/dev/null; then
-            # Upload DMG to existing release
-            gh release upload "v${VERSION}" apps/electron/release/*.dmg --clobber
+            # Upload all installers to existing release
+            gh release upload "v${VERSION}" apps/electron/release/*.dmg apps/electron/release/*.exe apps/electron/release/*.AppImage --clobber 2>/dev/null || true
           else
-            # Create new release with DMG
+            # Create new release with all installers
             gh release create "v${VERSION}" \
               --title "v${VERSION}" \
               --generate-notes \
-              apps/electron/release/*.dmg
+              apps/electron/release/*.dmg apps/electron/release/*.exe apps/electron/release/*.AppImage 2>/dev/null || \
+            gh release create "v${VERSION}" \
+              --title "v${VERSION}" \
+              --generate-notes
           fi

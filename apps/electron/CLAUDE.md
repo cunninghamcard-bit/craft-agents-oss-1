@@ -1296,9 +1296,11 @@ Native OS notifications and dock badge for session activity:
 - Dock badge shows unread count
 - User preference to enable/disable
 
-## Building for macOS Distribution
+## Building for Distribution
 
-Build a distributable DMG for macOS using the `build-dmg.sh` script:
+Build distributable installers for all platforms using the build scripts:
+
+### macOS
 
 ```bash
 # From apps/electron directory
@@ -1310,25 +1312,43 @@ bash scripts/build-dmg.sh arm64
 bash scripts/build-dmg.sh x64
 ```
 
-**What the script does:**
+**Output:** `apps/electron/release/Craft-Agent-{arch}.dmg`
+
+### Windows
+
+```bash
+# From PowerShell
+powershell -ExecutionPolicy Bypass -File scripts/build-win.ps1
+```
+
+**Output:** `apps/electron/release/Craft-Agent-x64.exe`
+
+### Linux
+
+```bash
+bash scripts/build-linux.sh x64
+bash scripts/build-linux.sh arm64
+```
+
+**Output:** `apps/electron/release/Craft-Agent-{arch}.AppImage`
+
+### What the build scripts do
+
 1. Downloads pinned Bun runtime (v1.3.5) with SHA256 checksum verification
 2. Copies SDK from root `node_modules` (monorepo hoisting workaround)
 3. Copies `cache-ttl-interceptor.ts` for cache TTL patching
 4. Builds the Electron app (`bun run electron:build`)
-5. Packages with `electron-packager` (no ASAR for subprocess compatibility)
-6. Creates compressed DMG via `hdiutil`
-
-**Output:** `apps/electron/release/Craft-Agent-{arch}.dmg` (~318MB)
+5. Packages with `electron-builder` for the target platform
 
 **Requirements:**
-- macOS (uses `hdiutil` for DMG creation)
+- Platform-specific tools (hdiutil for macOS, NSIS for Windows, AppImage tools for Linux)
 - Bun installed (for build step)
 - Run `bun install` from repo root first
 
 **Build artifacts (gitignored):**
 - `vendor/` - Bundled Bun runtime
 - `packages/` - Copied interceptor
-- `release/` - Packaged app and DMG
+- `release/` - Packaged app and installers
 - `node_modules/@anthropic-ai/` - Copied SDK
 
 **Architecture:**
@@ -1336,14 +1356,10 @@ bash scripts/build-dmg.sh x64
 Development:
   system bun → cli.js (root node_modules) → interceptor (packages/shared)
 
-Packaged DMG:
+Packaged App:
   vendor/bun/bun → cli.js (bundled) → interceptor (bundled)
                       ↑                     ↑
                app.getAppPath()/...   app.getAppPath()/...
 ```
 
 The packaged app uses `app.isPackaged` to detect runtime environment and resolves paths via `app.getAppPath()` instead of `process.cwd()`.
-
-## Current Limitations
-
-1. No Windows/Linux distribution builds yet (macOS only)
