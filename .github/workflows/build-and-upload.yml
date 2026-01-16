@@ -113,6 +113,7 @@ jobs:
       # Check if artifact already exists in S3 (skip build if it does)
       - name: Check if artifact exists
         id: check-artifact
+        shell: bash
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           ARTIFACT_NAME="Craft-Agent-${{ matrix.arch }}.${{ matrix.ext }}"
@@ -133,6 +134,7 @@ jobs:
 
       - name: Download existing artifact
         if: steps.check-artifact.outputs.skip == 'true'
+        shell: bash
         run: |
           VERSION="${{ needs.prepare.outputs.version }}"
           ARTIFACT_NAME="Craft-Agent-${{ matrix.arch }}.${{ matrix.ext }}"
