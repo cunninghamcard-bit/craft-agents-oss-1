@@ -4,14 +4,15 @@
  * Handles checking for updates, downloading, and triggering installation.
  * Uses the custom manifest system at https://agents.craft.do/electron/
  *
- * Currently only supports macOS. Windows and Linux support planned for future.
+ * Supports macOS, Windows, and Linux (AppImage only).
  */
 
 import { app } from 'electron'
-import { createWriteStream, existsSync, mkdirSync, unlinkSync } from 'fs'
+import { createWriteStream, createReadStream, existsSync, mkdirSync, unlinkSync } from 'fs'
 import { join } from 'path'
 import { spawn } from 'child_process'
 import { createHash } from 'crypto'
+import { pipeline } from 'stream/promises'
 import { mainLog } from './logger'
 import {
   getElectronLatestVersion,
@@ -20,6 +21,13 @@ import {
   getPlatformKey,
   getAppVersion,
 } from '@craft-agent/shared/version'
+import {
+  getDismissedUpdateVersion,
+  clearDismissedUpdateVersion,
+  getPendingUpdate,
+  setPendingUpdate,
+  clearPendingUpdate,
+} from '@craft-agent/shared/config'
 import type { VersionManifest, BinaryInfo } from '@craft-agent/shared/version/manifest'
 import type { UpdateInfo } from '../shared/types'
 import type { WindowManager } from './window-manager'
@@ -130,12 +138,6 @@ export async function checkForUpdates(options: CheckOptions = {}): Promise<Updat
  */
 async function doCheckForUpdates(autoDownload: boolean): Promise<UpdateInfo> {
   mainLog.info('[auto-update] Checking for updates...')
-
-  // Only support macOS for now
-  if (process.platform !== 'darwin') {
-    mainLog.info('[auto-update] Auto-update only supported on macOS')
-    return updateInfo
-  }
 
   const currentVersion = getAppVersion()
   updateInfo = { ...updateInfo, currentVersion }
@@ -280,8 +282,11 @@ async function doDownloadUpdate(): Promise<void> {
       mkdirSync(tempDir, { recursive: true })
     }
 
-    // Download file
-    const installerPath = join(tempDir, `Craft-Agent-${latestVersion}.dmg`)
+    // Download file - use correct extension per platform
+    const extension = process.platform === 'darwin' ? 'dmg' :
+                      process.platform === 'win32' ? 'exe' :
+                      'AppImage'
+    const installerPath = join(tempDir, `Craft-Agent-${latestVersion}.${extension}`)
 
     // Remove existing file if present
     if (existsSync(installerPath)) {
@@ -349,8 +354,30 @@ async function doDownloadUpdate(): Promise<void> {
     downloadedInstallerPath = installerPath
     updateInfo = { ...updateInfo, downloadState: 'ready', downloadProgress: 100 }
     broadcastUpdateInfo()
+
+    // Save pending update for auto-install on next launch
+    setPendingUpdate({
+      version: latestVersion,
+      installerPath,
+      sha256: binaryInfo.sha256,
+    })
+
+    // Update menu to show "Install Update..."
+    const { rebuildMenu } = await import('./menu')
+    rebuildMenu()
   } catch (error) {
     mainLog.error('[auto-update] Download failed:', error)
+
+    // Clean up partial download on failure
+    if (installerPath && existsSync(installerPath)) {
+      try {
+        unlinkSync(installerPath)
+        mainLog.info('[auto-update] Cleaned up partial download')
+      } catch (cleanupError) {
+        mainLog.warn('[auto-update] Failed to clean up partial download:', cleanupError)
+      }
+    }
+
     updateInfo = {
       ...updateInfo,
       downloadState: 'error',
@@ -363,7 +390,7 @@ async function doDownloadUpdate(): Promise<void> {
 
 /**
  * Install the downloaded update and restart the app
- * Currently only supports macOS
+ * Supports macOS, Windows, and Linux (AppImage only)
  *
  * Uses a flag to prevent concurrent installations
  */
@@ -378,20 +405,31 @@ export async function installUpdate(): Promise<void> {
     throw new Error('No update ready to install')
   }
 
-  // Only support macOS for now
-  if (process.platform !== 'darwin') {
-    throw new Error('Auto-update installation only supported on macOS. Please download and install manually.')
+  // Check platform support
+  if (process.platform === 'linux' && !process.env.APPIMAGE) {
+    throw new Error('Auto-update only supported for AppImage on Linux. Please download and install the new version manually.')
   }
 
   isInstalling = true
-  mainLog.info('[auto-update] Starting macOS installation...')
+  mainLog.info(`[auto-update] Starting ${process.platform} installation...`)
 
   updateInfo = { ...updateInfo, downloadState: 'installing' }
   broadcastUpdateInfo()
 
+  // Clear dismissed version on successful update start
+  clearDismissedUpdateVersion()
+
   try {
-    await installMacOS()
-    // Note: if installMacOS succeeds, app.quit() is called and we never reach here
+    if (process.platform === 'darwin') {
+      await installMacOS()
+    } else if (process.platform === 'win32') {
+      await installWindows()
+    } else if (process.platform === 'linux') {
+      await installLinux()
+    } else {
+      throw new Error(`Unsupported platform: ${process.platform}`)
+    }
+    // Note: if install succeeds, app.quit() is called and we never reach here
   } catch (error) {
     // Reset flag so user can retry
     isInstalling = false
@@ -439,23 +477,231 @@ async function installMacOS(): Promise<void> {
   })
 
   child.unref()
+
+  // Clear pending update since install script is now running
+  clearPendingUpdate()
+
   mainLog.info('[auto-update] Quitting app for macOS update...')
   app.quit()
 }
 
 /**
- * Schedule update check after app startup
- * Delays check by a few seconds to not slow down startup
- *
- * Skipped in debug mode (dev builds) to allow manual testing via Debug menu
+ * Windows: Use PowerShell script to run NSIS installer silently
+ * The script handles:
+ * - Waiting for app to quit
+ * - Running NSIS installer with /S (silent) flag
+ * - Relaunching the app
  */
-export function scheduleUpdateCheck(delayMs = 5000): void {
-  // Only schedule on macOS
-  if (process.platform !== 'darwin') {
-    mainLog.info('[auto-update] Skipping update check - not on macOS')
+async function installWindows(): Promise<void> {
+  if (!downloadedInstallerPath) throw new Error('No installer path')
+
+  const scriptPath = app.isPackaged
+    ? join(process.resourcesPath, 'self-update.ps1')
+    : join(__dirname, '../scripts/self-update.ps1')
+
+  if (!existsSync(scriptPath)) {
+    mainLog.warn('[auto-update] Self-update script not found, opening installer manually')
+    const { shell } = await import('electron')
+    await shell.openPath(downloadedInstallerPath)
     return
   }
 
+  const child = spawn('powershell.exe', [
+    '-ExecutionPolicy', 'Bypass',
+    '-File', scriptPath,
+    '-InstallerPath', downloadedInstallerPath,
+    '-AppPath', app.getPath('exe'),
+  ], {
+    detached: true,
+    stdio: 'ignore',
+  })
+
+  child.unref()
+
+  // Clear pending update since install script is now running
+  clearPendingUpdate()
+
+  mainLog.info('[auto-update] Quitting app for Windows update...')
+  app.quit()
+}
+
+/**
+ * Linux: Replace AppImage with new version
+ * The script handles:
+ * - Waiting for app to quit
+ * - Making new AppImage executable
+ * - Atomic replacement with backup/rollback
+ * - Relaunching the app
+ */
+async function installLinux(): Promise<void> {
+  if (!downloadedInstallerPath) throw new Error('No installer path')
+
+  const currentAppImage = process.env.APPIMAGE
+  if (!currentAppImage) {
+    throw new Error('Not running as AppImage - cannot auto-update')
+  }
+
+  const scriptPath = app.isPackaged
+    ? join(process.resourcesPath, 'self-update-linux.sh')
+    : join(__dirname, '../scripts/self-update-linux.sh')
+
+  if (!existsSync(scriptPath)) {
+    mainLog.warn('[auto-update] Self-update script not found, opening file location')
+    const { shell } = await import('electron')
+    await shell.showItemInFolder(downloadedInstallerPath)
+    return
+  }
+
+  const child = spawn('bash', [
+    scriptPath,
+    downloadedInstallerPath,
+    currentAppImage,
+  ], {
+    detached: true,
+    stdio: 'ignore',
+    env: {
+      ...process.env,
+      CRAFT_UPDATE_APPIMAGE: downloadedInstallerPath,
+      CRAFT_CURRENT_APPIMAGE: currentAppImage,
+    },
+  })
+
+  child.unref()
+
+  // Clear pending update since install script is now running
+  clearPendingUpdate()
+
+  mainLog.info('[auto-update] Quitting app for Linux update...')
+  app.quit()
+}
+
+/**
+ * Result of update check on launch
+ */
+export interface UpdateOnLaunchResult {
+  action: 'none' | 'skipped' | 'ready' | 'downloading'
+  reason?: string
+  version?: string | null
+}
+
+/**
+ * Compute SHA256 hash of a file using streams (memory-efficient for large files)
+ */
+async function computeFileHashStreaming(filePath: string): Promise<string> {
+  const hash = createHash('sha256')
+  const stream = createReadStream(filePath)
+
+  await pipeline(stream, hash)
+  return hash.digest('hex')
+}
+
+/**
+ * Check for a pending update from previous session and auto-install if valid.
+ * Call this early in app startup, before creating windows.
+ *
+ * @returns true if auto-installing (app will quit), false otherwise
+ */
+export async function checkPendingUpdateAndInstall(): Promise<boolean> {
+  const pending = getPendingUpdate()
+
+  if (!pending) {
+    return false
+  }
+
+  mainLog.info(`[auto-update] Found pending update: v${pending.version} at ${pending.installerPath}`)
+
+  // Check if installer file still exists
+  if (!existsSync(pending.installerPath)) {
+    mainLog.warn('[auto-update] Pending installer file not found, clearing')
+    clearPendingUpdate()
+    return false
+  }
+
+  // Verify checksum using streaming to avoid loading large files into memory
+  try {
+    const hash = await computeFileHashStreaming(pending.installerPath)
+
+    if (hash !== pending.sha256) {
+      mainLog.error('[auto-update] Pending installer checksum mismatch, clearing')
+      clearPendingUpdate()
+      unlinkSync(pending.installerPath)
+      return false
+    }
+  } catch (error) {
+    mainLog.error('[auto-update] Failed to verify pending installer:', error)
+    clearPendingUpdate()
+    return false
+  }
+
+  mainLog.info('[auto-update] Pending update verified, auto-installing...')
+
+  // Set up state for installation
+  downloadedInstallerPath = pending.installerPath
+  updateInfo = {
+    ...updateInfo,
+    available: true,
+    latestVersion: pending.version,
+    downloadState: 'ready',
+  }
+
+  // NOTE: Pending update is cleared inside the platform-specific install functions
+  // right before app.quit(). This ensures we only clear after successful script spawn.
+  // If install throws before spawning the script, we preserve the pending state
+  // to allow retry on next launch.
+
+  // Trigger installation
+  try {
+    await installUpdate()
+    // Note: If we reach here, app.quit() was called and this line won't execute.
+    // The clearPendingUpdate() is done inside installMacOS/Windows/Linux before quit.
+    return true
+  } catch (error) {
+    mainLog.error('[auto-update] Auto-install failed:', error)
+    // DON'T clear pending update - allow retry on next launch
+    mainLog.info('[auto-update] Pending update preserved for retry on next launch')
+    return false
+  }
+}
+
+/**
+ * Check for updates on app launch
+ * - Runs immediately (no delay)
+ * - If update already downloaded, returns 'ready' for immediate prompt
+ * - If update available but not downloaded, starts silent download
+ * - Respects dismissed version (skips notification but still allows manual check)
+ */
+export async function checkForUpdatesOnLaunch(): Promise<UpdateOnLaunchResult> {
+  mainLog.info('[auto-update] Checking for updates on launch...')
+
+  // Check for update
+  const info = await checkForUpdates({ autoDownload: true })
+
+  if (!info.available) {
+    return { action: 'none' }
+  }
+
+  // Check if this version was dismissed
+  const dismissedVersion = getDismissedUpdateVersion()
+  if (dismissedVersion === info.latestVersion) {
+    mainLog.info(`[auto-update] Update ${info.latestVersion} was dismissed, skipping notification`)
+    return { action: 'skipped', reason: 'dismissed', version: info.latestVersion }
+  }
+
+  if (info.downloadState === 'ready') {
+    return { action: 'ready', version: info.latestVersion }
+  }
+
+  // Download in progress or starting - will notify when ready
+  return { action: 'downloading', version: info.latestVersion }
+}
+
+/**
+ * Schedule update check after app startup
+ * @deprecated Use checkForUpdatesOnLaunch() instead for immediate check
+ *
+ * Skipped in debug mode (dev builds) to allow manual testing via Debug menu.
+ */
+export function scheduleUpdateCheck(delayMs = 5000): void {
   // Skip auto-update in debug mode - use Debug menu to test manually
   if (!app.isPackaged) {
     mainLog.info('[auto-update] Skipping auto-update check in debug mode (use Debug menu to test)')

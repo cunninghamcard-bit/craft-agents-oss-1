@@ -7,9 +7,8 @@ import { randomUUID } from 'crypto'
 import { SessionManager } from './sessions'
 import { ipcLog, windowLog } from './logger'
 import { WindowManager } from './window-manager'
-import { UnifiedPreviewWindowManager } from './unified-preview-window'
 import { registerOnboardingHandlers } from './onboarding'
-import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AuthType, type BillingMethodInfo, type SendMessageOptions, type PreviewData } from '../shared/types'
+import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AuthType, type BillingMethodInfo, type SendMessageOptions } from '../shared/types'
 import { readFileAttachment, perf, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getAuthType, setAuthType, getPreferencesPath, getModel, setModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getDefaultPermissionMode, setDefaultPermissionMode, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, type Workspace } from '@craft-agent/shared/config'
 import { getSessionAttachmentsPath } from '@craft-agent/shared/sessions'
@@ -112,7 +111,7 @@ async function validateFilePath(filePath: string): Promise<string> {
   return realPath
 }
 
-export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager, unifiedPreviewWindowManager: UnifiedPreviewWindowManager): void {
+export function registerIpcHandlers(sessionManager: SessionManager, windowManager: WindowManager): void {
   // Get all sessions
   ipcMain.handle(IPC_CHANNELS.GET_SESSIONS, async () => {
     const end = perf.start('ipc.getSessions')
@@ -651,6 +650,18 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     return installUpdate()
   })
 
+  // Dismiss update for this version (persists across restarts)
+  ipcMain.handle(IPC_CHANNELS.UPDATE_DISMISS, async (_event, version: string) => {
+    const { setDismissedUpdateVersion } = await import('@craft-agent/shared/config')
+    setDismissedUpdateVersion(version)
+  })
+
+  // Get dismissed version
+  ipcMain.handle(IPC_CHANNELS.UPDATE_GET_DISMISSED, async () => {
+    const { getDismissedUpdateVersion } = await import('@craft-agent/shared/config')
+    return getDismissedUpdateVersion()
+  })
+
   // Shell operations - open URL in external browser (or handle craftagents:// internally)
   ipcMain.handle(IPC_CHANNELS.OPEN_URL, async (_event, url: string) => {
     ipcLog.info('[OPEN_URL] Received request:', url)
@@ -902,17 +913,16 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       permissionMode: config?.defaults?.permissionMode,
       workingDirectory: config?.defaults?.workingDirectory,
       localMcpEnabled: config?.localMcpServers?.enabled ?? true,
-      tutorialsEnabled: config?.tutorialsEnabled ?? true,
     }
   })
 
   // Update a workspace setting
-  // Valid keys: 'name', 'model', 'enabledSourceSlugs', 'permissionMode', 'workingDirectory', 'localMcpEnabled', 'tutorialsEnabled'
+  // Valid keys: 'name', 'model', 'enabledSourceSlugs', 'permissionMode', 'workingDirectory', 'localMcpEnabled'
   ipcMain.handle(IPC_CHANNELS.WORKSPACE_SETTINGS_UPDATE, async (_event, workspaceId: string, key: string, value: unknown) => {
     const workspace = getWorkspaceOrThrow(workspaceId)
 
     // Validate key is a known workspace setting
-    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'workingDirectory', 'localMcpEnabled', 'tutorialsEnabled']
+    const validKeys = ['name', 'model', 'enabledSourceSlugs', 'permissionMode', 'workingDirectory', 'localMcpEnabled']
     if (!validKeys.includes(key)) {
       throw new Error(`Invalid workspace setting key: ${key}. Valid keys: ${validKeys.join(', ')}`)
     }
@@ -930,9 +940,6 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       // Store in localMcpServers.enabled (top-level, not in defaults)
       config.localMcpServers = config.localMcpServers || { enabled: true }
       config.localMcpServers.enabled = Boolean(value)
-    } else if (key === 'tutorialsEnabled') {
-      // Store as top-level config property
-      config.tutorialsEnabled = Boolean(value)
     } else {
       // Update the setting in defaults
       config.defaults = config.defaults || {}
@@ -1061,37 +1068,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     }
   })
 
-  // ============================================================
-  // Unified Preview Window (all modes: markdown, view, diff, multi-diff, terminal)
-  // ============================================================
-
-  // Open unified preview window
-  ipcMain.handle(IPC_CHANNELS.PREVIEW_OPEN, async (_event, data: PreviewData) => {
-    await unifiedPreviewWindowManager.openPreview(data)
-  })
-
-  // Get data for preview (called from preview window on mount)
-  ipcMain.handle(IPC_CHANNELS.PREVIEW_GET_DATA, async (_event, sessionId: string, previewId: string) => {
-    return unifiedPreviewWindowManager.getData(sessionId, previewId)
-  })
-
-  // Save content (for markdown readWrite mode)
-  ipcMain.handle(IPC_CHANNELS.PREVIEW_SAVE, async (_event, sessionId: string, previewId: string, content: string) => {
-    await unifiedPreviewWindowManager.save(sessionId, previewId, content)
-  })
-
-  // Read a file for preview (full file view)
-  ipcMain.handle(IPC_CHANNELS.PREVIEW_READ_FILE, async (_event, filePath: string) => {
-    try {
-      const absolutePath = resolve(filePath)
-      const validPath = await validateFilePath(absolutePath)
-      const content = await readFile(validPath, 'utf-8')
-      return content
-    } catch (err) {
-      ipcLog.error('Error reading file for preview:', err)
-      return null
-    }
-  })
+  // Preview windows removed - now using in-app overlays (see ChatDisplay.tsx)
 
   // ============================================================
   // Sources
@@ -1211,6 +1188,27 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     }
   })
 
+  // Get permissions config for a workspace (raw format for UI display)
+  ipcMain.handle(IPC_CHANNELS.WORKSPACE_GET_PERMISSIONS, async (_event, workspaceId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) return null
+
+    // Load raw JSON file (not normalized) for UI display
+    const { existsSync, readFileSync } = await import('fs')
+    const { getWorkspacePermissionsPath } = await import('@craft-agent/shared/agent')
+    const path = getWorkspacePermissionsPath(workspace.rootPath)
+
+    if (!existsSync(path)) return null
+
+    try {
+      const content = readFileSync(path, 'utf-8')
+      return JSON.parse(content)
+    } catch (error) {
+      ipcLog.error('Error reading workspace permissions config:', error)
+      return null
+    }
+  })
+
   // Get MCP tools for a source with permission status
   ipcMain.handle(IPC_CHANNELS.SOURCES_GET_MCP_TOOLS, async (_event, workspaceId: string, sourceSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
@@ -1235,35 +1233,24 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         return { success: false, error: 'Source has not been tested yet' }
       }
 
-      // Fetch tools based on transport type
-      let tools: Array<{ name: string; description?: string }>
+      // Create unified MCP client for both stdio and HTTP transports
+      const { CraftMcpClient } = await import('@craft-agent/shared/mcp')
+      let client: InstanceType<typeof CraftMcpClient>
 
       if (source.config.mcp.transport === 'stdio') {
-        // Validate command exists before spawning
+        // Stdio transport - spawn local MCP server process
         if (!source.config.mcp.command) {
           return { success: false, error: 'Stdio MCP source is missing required "command" field' }
         }
-
-        // Stdio transport - spawn process and list tools
         ipcLog.info(`Fetching MCP tools via stdio: ${source.config.mcp.command}`)
-        const { validateStdioMcpConnection } = await import('@craft-agent/shared/mcp')
-
-        const result = await validateStdioMcpConnection({
+        client = new CraftMcpClient({
+          transport: 'stdio',
           command: source.config.mcp.command,
           args: source.config.mcp.args,
           env: source.config.mcp.env,
-          timeout: 10000,
         })
-
-        if (!result.success) {
-          return { success: false, error: result.error || 'Failed to connect to stdio MCP server' }
-        }
-
-        // validateStdioMcpConnection only returns tool names, not descriptions
-        // For now, we'll just use the names
-        tools = (result.tools || []).map(name => ({ name }))
       } else {
-        // HTTP/SSE transport - use HTTP client
+        // HTTP/SSE transport - connect to remote MCP server
         if (!source.config.mcp.url) {
           return { success: false, error: 'MCP source URL is required for HTTP/SSE transport' }
         }
@@ -1279,15 +1266,16 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         }
 
         ipcLog.info(`Fetching MCP tools from ${source.config.mcp.url}`)
-        const { CraftMcpClient } = await import('@craft-agent/shared/mcp')
-        const client = new CraftMcpClient({
+        client = new CraftMcpClient({
+          transport: 'http',
           url: source.config.mcp.url,
           headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
         })
-
-        tools = await client.listTools()
-        await client.close()
       }
+
+      // Both transports now return full Tool[] with descriptions
+      const tools = await client.listTools()
+      await client.close()
 
       // Load permissions patterns
       const { loadSourcePermissionsConfig, permissionsConfigCache } = await import('@craft-agent/shared/agent')

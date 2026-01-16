@@ -20,17 +20,8 @@ import { useOnboarding } from '@/hooks/useOnboarding'
 import { useNotifications } from '@/hooks/useNotifications'
 import { useSession } from '@/hooks/useSession'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
-import { UpdateBanner } from '@/components/update/UpdateBanner'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
-import {
-  TutorialProvider,
-  TutorialOverlay,
-  TutorialPrompt,
-  TutorialComplete,
-  registerTutorial,
-  sourceCreationTutorial,
-} from '@/tutorial'
 import { initRendererPerf } from './lib/perf'
 import { DEFAULT_MODEL } from '@config/models'
 import {
@@ -49,9 +40,6 @@ import { skillsAtom } from '@/atoms/skills'
 import { extractBadges } from '@/lib/mentions'
 import { getDefaultStore } from 'jotai'
 import { ShikiThemeProvider } from '@craft-agent/ui'
-
-// Register tutorials at module load
-registerTutorial(sourceCreationTutorial)
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'ready'
 
@@ -208,7 +196,7 @@ export default function App() {
   // Notifications enabled state (from app settings)
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
 
-  // Sources and skills for tutorial trigger condition and badge extraction
+  // Sources and skills for badge extraction
   const sources = useAtomValue(sourcesAtom)
   const skills = useAtomValue(skillsAtom)
 
@@ -414,7 +402,8 @@ export default function App() {
   useEffect(() => {
     // Handoff events signal end of streaming - need to sync back to React state
     // Also includes todo_state_changed so status updates immediately reflect in sidebar
-    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'todo_state_changed', 'title_generated'])
+    // async_operation included so shimmer effect on session titles updates in real-time
+    const handoffEventTypes = new Set(['complete', 'error', 'interrupted', 'typed_error', 'todo_state_changed', 'title_generated', 'async_operation'])
 
     // Helper to handle side effects (same logic for both paths)
     const handleEffects = (effects: Effect[], sessionId: string, eventType: string) => {
@@ -1190,46 +1179,30 @@ export default function App() {
           onInputChange={handleInputChange}
           isReady={appState === 'ready'}
         >
-          <TutorialProvider workspaceId={windowWorkspaceId} sourcesCount={sources.length}>
-            {/* Splash screen overlay - fades out when fully ready */}
-            {showSplash && (
-              <SplashScreen
-                isExiting={splashExiting}
-                onExitComplete={handleSplashExitComplete}
-              />
-            )}
+          {/* Splash screen overlay - fades out when fully ready */}
+          {showSplash && (
+            <SplashScreen
+              isExiting={splashExiting}
+              onExitComplete={handleSplashExitComplete}
+            />
+          )}
 
-            {/* Main UI - always rendered, splash fades away to reveal it */}
-            <div className="h-full flex flex-col text-foreground">
-              {/* Auto-update banner */}
-              <UpdateBanner
-                updateAvailable={updateChecker.updateAvailable}
-                latestVersion={updateChecker.updateInfo?.latestVersion ?? null}
-                isReadyToInstall={updateChecker.isReadyToInstall}
-                onInstall={updateChecker.installUpdate}
-                onDismiss={updateChecker.dismissUpdate}
-                isDismissed={updateChecker.isDismissed}
-              />
-              <div className="flex-1 min-h-0">
-                <AppShell
-                  contextValue={appShellContextValue}
-                  defaultLayout={[20, 32, 48]}
-                  menuNewChatTrigger={menuNewChatTrigger}
-                  isFocusedMode={isFocusedMode}
-                />
-              </div>
-              <ResetConfirmationDialog
-                open={showResetDialog}
-                onConfirm={executeReset}
-                onCancel={() => setShowResetDialog(false)}
+          {/* Main UI - always rendered, splash fades away to reveal it */}
+          <div className="h-full flex flex-col text-foreground">
+            <div className="flex-1 min-h-0">
+              <AppShell
+                contextValue={appShellContextValue}
+                defaultLayout={[20, 32, 48]}
+                menuNewChatTrigger={menuNewChatTrigger}
+                isFocusedMode={isFocusedMode}
               />
             </div>
-
-            {/* Tutorial system overlays */}
-            <TutorialOverlay />
-            <TutorialPrompt />
-            <TutorialComplete />
-          </TutorialProvider>
+            <ResetConfirmationDialog
+              open={showResetDialog}
+              onConfirm={executeReset}
+              onCancel={() => setShowResetDialog(false)}
+            />
+          </div>
         </NavigationProvider>
         </TooltipProvider>
       </FocusProvider>

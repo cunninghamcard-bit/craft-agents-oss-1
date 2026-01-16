@@ -12,6 +12,7 @@ export {
   SettingsNavigator,
   AppSettingsPage,
   WorkspaceSettingsPage,
+  PermissionsSettingsPage,
   ShortcutsPage,
   PreferencesPage,
 } from './settings'

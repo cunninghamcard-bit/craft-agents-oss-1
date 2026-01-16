@@ -12,6 +12,14 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import type { BackgroundTask } from './ActiveTasksBar'
 
+/** Terminal data for overlay display */
+export interface TerminalOverlayData {
+  command: string
+  output: string
+  description?: string
+  toolType: 'bash' | 'grep' | 'glob'
+}
+
 /** Format elapsed time in a compact way */
 function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds}s`
@@ -39,6 +47,8 @@ export interface TaskActionMenuProps {
   onKillTask: (taskId: string) => void
   /** Callback to insert message into input field */
   onInsertMessage?: (text: string) => void
+  /** Callback to show terminal output overlay */
+  onShowTerminalOverlay?: (data: TerminalOverlayData) => void
   /** Additional class name */
   className?: string
 }
@@ -47,11 +57,10 @@ export interface TaskActionMenuProps {
  * TaskActionMenu - Dropdown menu for background task actions
  *
  * Provides contextual actions for background tasks:
- * - View Output: Opens task output in terminal preview window
+ * - View Output: Opens task output in terminal overlay
  * - Stop Task: Kills shell tasks (agent tasks show warning)
- * - Copy Task ID: Copies ID to clipboard
  */
-export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, className }: TaskActionMenuProps) {
+export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, onShowTerminalOverlay, className }: TaskActionMenuProps) {
   const [open, setOpen] = React.useState(false)
 
   // Local timer for shell tasks (since they don't get task_progress events)
@@ -76,21 +85,21 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, c
   const displayElapsed = task.type === 'shell' ? localElapsed : task.elapsedSeconds
 
   const handleViewOutput = async () => {
+    if (!onShowTerminalOverlay) {
+      toast.error('Terminal overlay not available')
+      return
+    }
+
     try {
       // Fetch task output via IPC
       const output = await window.electronAPI.getTaskOutput(task.id)
 
-      // Open terminal preview window
-      window.electronAPI.openPreview({
-        mode: 'terminal',
-        sessionId,
-        previewId: `task-${task.id}`,
-        terminal: {
-          command: task.intent || `${task.type} task`,
-          output: output || 'No output available yet',
-          description: task.intent,
-          toolType: 'bash', // Use 'bash' for both shell and agent tasks
-        },
+      // Show terminal output in overlay
+      onShowTerminalOverlay({
+        command: task.intent || `${task.type} task`,
+        output: output || 'No output available yet',
+        description: task.intent,
+        toolType: 'bash', // Use 'bash' for both shell and agent tasks
       })
       setOpen(false)
     } catch (err) {

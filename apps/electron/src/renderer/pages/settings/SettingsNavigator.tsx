@@ -71,6 +71,23 @@ const KeyboardIcon = ({ className }: { className?: string }) => (
     />
   </svg>
 )
+
+/** Shield icon for permissions */
+const ShieldIcon = ({ className }: { className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    xmlns="http://www.w3.org/2000/svg"
+    className={className}
+  >
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M12 2L4 5V11.09C4 16.14 7.41 20.85 12 22C16.59 20.85 20 16.14 20 11.09V5L12 2ZM10.94 15.54L7.4 12L8.81 10.59L10.94 12.71L15.17 8.48L16.58 9.9L10.94 15.54Z"
+      fill="currentColor"
+    />
+  </svg>
+)
 import { cn } from '@/lib/utils'
 import { Separator } from '@/components/ui/separator'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
@@ -106,7 +123,13 @@ const settingsItems: SettingsItem[] = [
     id: 'workspace',
     label: 'Workspace',
     icon: WorkspaceIcon,
-    description: 'Model, permissions, advanced',
+    description: 'Model, mode cycling, advanced',
+  },
+  {
+    id: 'permissions',
+    label: 'Permissions',
+    icon: ShieldIcon,
+    description: 'Allowed commands in Explore mode',
   },
   {
     id: 'shortcuts',

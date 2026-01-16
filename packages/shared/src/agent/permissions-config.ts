@@ -13,54 +13,23 @@
 
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { z } from 'zod';
 import { debug } from '../utils/debug.ts';
 import { getSourcePath } from '../sources/storage.ts';
-import { SAFE_MODE_CONFIG } from './mode-manager.ts';
+import {
+  SAFE_MODE_CONFIG,
+  PermissionsConfigSchema,
+  type ApiEndpointRule,
+  type PermissionsConfigFile,
+  type CompiledApiEndpointRule,
+} from './mode-types.ts';
 
-// ============================================================
-// Zod Schemas
-// ============================================================
-
-/**
- * API endpoint rule - method + path pattern
- */
-const ApiEndpointRuleSchema = z.object({
-  method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']),
-  path: z.string().describe('Regex pattern for API path'),
-  comment: z.string().optional(),
-});
-
-export type ApiEndpointRule = z.infer<typeof ApiEndpointRuleSchema>;
-
-/**
- * Pattern with optional comment
- */
-const PatternSchema = z.union([
-  z.string(),
-  z.object({
-    pattern: z.string(),
-    comment: z.string().optional(),
-  }),
-]);
-
-/**
- * Permissions JSON configuration schema
- */
-export const PermissionsConfigSchema = z.object({
-  /** Additional tools to block */
-  blockedTools: z.array(z.string()).optional(),
-  /** Bash command patterns to allow (regex strings) */
-  allowedBashPatterns: z.array(PatternSchema).optional(),
-  /** MCP tool patterns to allow (regex strings) */
-  allowedMcpPatterns: z.array(PatternSchema).optional(),
-  /** API endpoint rules - method + path pattern */
-  allowedApiEndpoints: z.array(ApiEndpointRuleSchema).optional(),
-  /** File paths to allow writes in Explore mode (glob patterns) */
-  allowedWritePaths: z.array(PatternSchema).optional(),
-});
-
-export type PermissionsConfigFile = z.infer<typeof PermissionsConfigSchema>;
+// Re-export types from mode-types for external consumers
+export {
+  PermissionsConfigSchema,
+  type ApiEndpointRule,
+  type PermissionsConfigFile,
+  type CompiledApiEndpointRule,
+};
 
 // ============================================================
 // Types
@@ -80,14 +49,6 @@ export interface PermissionsCustomConfig {
   allowedApiEndpoints: ApiEndpointRule[];
   /** File paths to allow writes in Explore mode (glob pattern strings) */
   allowedWritePaths: string[];
-}
-
-/**
- * Compiled API endpoint rule for runtime
- */
-export interface CompiledApiEndpointRule {
-  method: string;
-  pathPattern: RegExp;
 }
 
 /**

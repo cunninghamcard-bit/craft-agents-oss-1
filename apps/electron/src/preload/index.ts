@@ -80,6 +80,8 @@ const api: ElectronAPI = {
   checkForUpdates: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_CHECK),
   getUpdateInfo: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_GET_INFO),
   installUpdate: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_INSTALL),
+  dismissUpdate: (version: string) => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_DISMISS, version),
+  getDismissedUpdateVersion: () => ipcRenderer.invoke(IPC_CHANNELS.UPDATE_GET_DISMISSED),
   onUpdateAvailable: (callback: (info: import('../shared/types').UpdateInfo) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, info: import('../shared/types').UpdateInfo) => {
       callback(info)
@@ -178,23 +180,6 @@ const api: ElectronAPI = {
   readPreferences: () => ipcRenderer.invoke(IPC_CHANNELS.PREFERENCES_READ),
   writePreferences: (content: string) => ipcRenderer.invoke(IPC_CHANNELS.PREFERENCES_WRITE, content),
 
-  // Unified preview window (all modes: markdown, view, diff, multi-diff, terminal)
-  openPreview: (data: import('../shared/types').PreviewData) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_OPEN, data),
-  getPreviewData: (sessionId: string, previewId: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_GET_DATA, sessionId, previewId),
-  savePreview: (sessionId: string, previewId: string, content: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_SAVE, sessionId, previewId, content),
-  onPreviewFileSaved: (callback: (data: { filePath: string }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: { filePath: string }) => {
-      callback(data)
-    }
-    ipcRenderer.on(IPC_CHANNELS.PREVIEW_FILE_SAVED, handler)
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.PREVIEW_FILE_SAVED, handler)
-  },
-  readFileForPreview: (filePath: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.PREVIEW_READ_FILE, filePath),
-
   // Session Drafts (persisted input text)
   getDraft: (sessionId: string) => ipcRenderer.invoke(IPC_CHANNELS.DRAFTS_GET, sessionId),
   setDraft: (sessionId: string, text: string) => ipcRenderer.invoke(IPC_CHANNELS.DRAFTS_SET, sessionId, text),
@@ -218,6 +203,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.SOURCES_SAVE_CREDENTIALS, workspaceId, sourceSlug, credential),
   getSourcePermissionsConfig: (workspaceId: string, sourceSlug: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET_PERMISSIONS, workspaceId, sourceSlug),
+  getWorkspacePermissionsConfig: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.WORKSPACE_GET_PERMISSIONS, workspaceId),
   getMcpTools: (workspaceId: string, sourceSlug: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET_MCP_TOOLS, workspaceId, sourceSlug),
 

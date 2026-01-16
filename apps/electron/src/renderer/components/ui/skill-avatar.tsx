@@ -8,7 +8,7 @@
  * - xs: 14x14 (compact)
  * - sm: 16x16 (sidebar)
  * - md: 20x20 (default)
- * - lg: 24x24 (info panels)
+ * - lg: fills container (info panels)
  */
 
 import * as React from 'react'
@@ -32,11 +32,12 @@ interface SkillAvatarProps {
 }
 
 // Size configurations
+// lg uses h-full w-full to fill parent container (e.g., Info_Page.Hero)
 const SIZE_CONFIG: Record<SkillAvatarSize, string> = {
   xs: 'h-3.5 w-3.5',
   sm: 'h-4 w-4',
   md: 'h-5 w-5',
-  lg: 'h-6 w-6',
+  lg: 'h-full w-full',
 }
 
 /**

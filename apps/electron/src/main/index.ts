@@ -10,7 +10,6 @@ import { SessionManager } from './sessions'
 import { registerIpcHandlers } from './ipc'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
-import { UnifiedPreviewWindowManager } from './unified-preview-window'
 import { loadWindowState, saveWindowState } from './window-state'
 import { getWorkspaces } from '@craft-agent/shared/config'
 import { initializeDocs } from '@craft-agent/shared/docs'
@@ -18,7 +17,7 @@ import { handleDeepLink } from './deep-link'
 import log, { isDebugMode, mainLog, getLogFilePath } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { initNotificationService, clearBadgeCount, initBadgeIcon } from './notifications'
-import { scheduleUpdateCheck, setWindowManager as setAutoUpdateWindowManager } from './auto-update'
+import { checkForUpdatesOnLaunch, checkPendingUpdateAndInstall, setWindowManager as setAutoUpdateWindowManager } from './auto-update'
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -35,7 +34,6 @@ const DEEPLINK_SCHEME = 'craftagents'
 
 let windowManager: WindowManager | null = null
 let sessionManager: SessionManager | null = null
-let unifiedPreviewWindowManager: UnifiedPreviewWindowManager | null = null
 
 // Store pending deep link if app not ready yet (cold start)
 let pendingDeepLink: string | null = null
@@ -145,6 +143,14 @@ app.whenReady().then(async () => {
   // Initialize bundled docs
   initializeDocs()
 
+  // Check for pending update and auto-install if available
+  // This must happen early, before creating windows
+  const isAutoInstalling = await checkPendingUpdateAndInstall()
+  if (isAutoInstalling) {
+    // App will quit and install update - don't proceed with startup
+    return
+  }
+
   // Application menu is created after windowManager initialization (see below)
 
   // Set dock icon on macOS (required for dev mode, bundled apps use Info.plist)
@@ -164,10 +170,6 @@ app.whenReady().then(async () => {
     // Create the application menu (needs windowManager for New Window action)
     createApplicationMenu(windowManager)
 
-    // Initialize unified preview window manager (all preview types)
-    unifiedPreviewWindowManager = new UnifiedPreviewWindowManager()
-    unifiedPreviewWindowManager.setWindowManager(windowManager)
-
     // Initialize session manager
     sessionManager = new SessionManager()
     sessionManager.setWindowManager(windowManager)
@@ -176,7 +178,7 @@ app.whenReady().then(async () => {
     initNotificationService(windowManager)
 
     // Register IPC handlers (must happen before window creation)
-    registerIpcHandlers(sessionManager, windowManager, unifiedPreviewWindowManager)
+    registerIpcHandlers(sessionManager, windowManager)
 
     // Create initial windows (restores from saved state or opens first workspace)
     await createInitialWindows()
@@ -184,9 +186,11 @@ app.whenReady().then(async () => {
     // Initialize auth (must happen after window creation for error reporting)
     await sessionManager.initialize()
 
-    // Initialize auto-update (check for updates after startup)
+    // Initialize auto-update (check immediately on launch)
     setAutoUpdateWindowManager(windowManager)
-    scheduleUpdateCheck(5000)  // Check 5 seconds after startup
+    checkForUpdatesOnLaunch().catch(err => {
+      mainLog.error('[auto-update] Launch check failed:', err)
+    })
 
     // Process pending deep link from cold start
     if (pendingDeepLink) {

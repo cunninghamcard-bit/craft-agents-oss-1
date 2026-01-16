@@ -68,10 +68,11 @@ function TableRow({ className, ...props }: React.ComponentProps<'tr'>) {
 }
 
 function TableHead({ className, ...props }: React.ComponentProps<'th'>) {
+  // Use bg-card for sticky headers - it's always opaque unlike bg-background which may have transparency in scenic mode
   return (
     <th
       className={cn(
-        'relative p-1.5 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0 sticky top-0 bg-background z-10 shadow-[inset_0_-1.5px_0_var(--color-border)]',
+        'relative p-1.5 text-left align-middle font-medium whitespace-nowrap [&:has([role=checkbox])]:pr-0 sticky top-0 z-10 shadow-[inset_0_-1.5px_0_var(--color-border)] bg-card',
         className
       )}
       {...props}

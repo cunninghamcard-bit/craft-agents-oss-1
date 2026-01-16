@@ -25,7 +25,7 @@ import {
   type ToolRow,
 } from '@/components/info'
 import type { LoadedSource, McpToolWithPermission } from '../../shared/types'
-import type { PermissionsConfigFile } from '@craft-agent/shared/agent'
+import type { PermissionsConfigFile } from '@craft-agent/shared/agent/modes'
 
 interface SourceInfoPageProps {
   sourceSlug: string
@@ -170,6 +170,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
   const [mcpToolsLoading, setMcpToolsLoading] = useState(false)
   const [mcpToolsError, setMcpToolsError] = useState<string | null>(null)
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
+
 
   // Load source data
   useEffect(() => {
@@ -324,23 +325,13 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     }
   }, [source])
 
-  // Handle editing guide.md in Monaco markdown editor
+  // Handle editing guide.md - opens in system default text editor
   const handleEditGuide = useCallback(async () => {
     if (!source) return
 
     const guidePath = `${source.folderPath}/guide.md`
-
-    await window.electronAPI.openPreview({
-      mode: 'markdown',
-      sessionId: 'workspace',
-      previewId: `source-guide:${sourceSlug}`,
-      markdown: {
-        mode: 'readWrite',
-        filePath: guidePath,
-        title: `${source.config.name} - guide.md`,
-      },
-    })
-  }, [source, sourceSlug])
+    await window.electronAPI.openFile(guidePath)
+  }, [source])
 
   // Handle deleting source
   const handleDelete = useCallback(async () => {

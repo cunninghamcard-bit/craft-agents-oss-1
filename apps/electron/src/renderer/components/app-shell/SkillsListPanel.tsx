@@ -101,7 +101,7 @@ function SkillItem({ skill, isSelected, isFirst, workspaceId, onClick, onDelete 
         <ContextMenuTrigger asChild>
           <div className="skill-content relative group select-none pl-2 mr-2">
         {/* Skill Avatar - positioned absolutely */}
-        <div className="absolute left-4 top-3.5 z-10 flex items-center justify-center">
+        <div className="absolute left-[18px] top-3.5 z-10 flex items-center justify-center">
           <SkillAvatar skill={skill} size="sm" workspaceId={workspaceId} />
         </div>
         {/* Main content button */}
@@ -117,7 +117,7 @@ function SkillItem({ skill, isSelected, isFirst, workspaceId, onClick, onDelete 
           {/* Spacer for avatar */}
           <div className="w-5 h-5 shrink-0" />
           {/* Content column */}
-          <div className="flex flex-col gap-1.5 min-w-0 flex-1">
+          <div className="flex flex-col gap-1 min-w-0 flex-1">
             {/* Title - skill name */}
             <div className="flex items-start gap-2 w-full pr-6 min-w-0">
               <div className="font-medium font-sans line-clamp-2 min-w-0 -mb-[2px]">

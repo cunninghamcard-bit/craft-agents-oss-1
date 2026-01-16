@@ -169,7 +169,7 @@ function SourceItem({ source, isSelected, isFirst, localMcpEnabled, onClick, onD
         <ContextMenuTrigger asChild>
           <div className="source-content relative group select-none pl-2 mr-2">
         {/* Source Avatar - positioned absolutely, like todo icon */}
-        <div className="absolute left-4 top-3.5 z-10 flex items-center justify-center">
+        <div className="absolute left-[18px] top-3.5 z-10 flex items-center justify-center">
           <SourceAvatar source={source} size="sm" />
         </div>
         {/* Main content button */}

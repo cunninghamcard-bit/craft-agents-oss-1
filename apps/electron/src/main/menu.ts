@@ -3,12 +3,49 @@ import { IPC_CHANNELS } from '../shared/types'
 import type { WindowManager } from './window-manager'
 import { mainLog } from './logger'
 
+// Store reference for rebuilding menu
+let cachedWindowManager: WindowManager | null = null
+
 /**
  * Creates and sets the application menu for macOS.
  * Includes only relevant items for the Craft Agents app.
+ *
+ * Call rebuildMenu() when update state changes to refresh the menu.
  */
 export function createApplicationMenu(windowManager: WindowManager): void {
+  cachedWindowManager = windowManager
+  rebuildMenu()
+}
+
+/**
+ * Rebuilds the application menu with current update state.
+ * Call this when update availability changes.
+ */
+export async function rebuildMenu(): Promise<void> {
+  if (!cachedWindowManager) return
+
+  const windowManager = cachedWindowManager
   const isMac = process.platform === 'darwin'
+
+  // Get current update state
+  const { getUpdateInfo, installUpdate, checkForUpdates } = await import('./auto-update')
+  const updateInfo = getUpdateInfo()
+  const updateReady = updateInfo.available && updateInfo.downloadState === 'ready'
+
+  // Build the update menu item based on state
+  const updateMenuItem: Electron.MenuItemConstructorOptions = updateReady
+    ? {
+        label: `Install Update…\t【${updateInfo.latestVersion}】`,
+        click: async () => {
+          await installUpdate()
+        }
+      }
+    : {
+        label: 'Check for Updates…',
+        click: async () => {
+          await checkForUpdates({ autoDownload: true })
+        }
+      }
 
   const template: Electron.MenuItemConstructorOptions[] = [
     // App menu (macOS only)
@@ -16,6 +53,7 @@ export function createApplicationMenu(windowManager: WindowManager): void {
       label: 'Craft Agents',
       submenu: [
         { role: 'about' as const, label: 'About Craft Agents' },
+        updateMenuItem,
         { type: 'separator' as const },
         {
           label: 'Settings...',
@@ -107,19 +145,6 @@ export function createApplicationMenu(windowManager: WindowManager): void {
     ...(!app.isPackaged ? [{
       label: 'Debug',
       submenu: [
-        {
-          label: 'Reset Onboarding Tutorial',
-          click: async () => {
-            const win = BrowserWindow.getFocusedWindow()
-            if (win && !win.isDestroyed()) {
-              await win.webContents.executeJavaScript(
-                `localStorage.removeItem('craft-tutorial-progress')`
-              )
-              win.reload()
-            }
-          }
-        },
-        { type: 'separator' as const },
         {
           label: 'Check for Updates',
           click: async () => {

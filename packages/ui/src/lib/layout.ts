@@ -2,7 +2,7 @@
  * Shared layout constants for chat UI
  *
  * These values ensure visual consistency between Electron and web viewer.
- * Import and use these in both ChatDisplay (Electron) and ChatView (UI package).
+ * Import and use these in both ChatDisplay (Electron) and SessionViewer (UI package).
  */
 
 /**
@@ -11,7 +11,8 @@
  */
 export const OVERLAY_LAYOUT = {
   /** Minimum viewport width for modal display (below this = fullscreen) */
-  modalBreakpoint: 1200,
+  /** Set very high to always use fullscreen mode */
+  modalBreakpoint: 99999,
   /** Modal max width */
   modalMaxWidth: 1100,
   /** Modal max height as percentage of viewport */

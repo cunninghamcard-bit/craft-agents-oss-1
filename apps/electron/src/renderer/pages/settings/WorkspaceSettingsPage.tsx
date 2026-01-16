@@ -59,7 +59,6 @@ export default function WorkspaceSettingsPage() {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('ask')
   const [workingDirectory, setWorkingDirectory] = useState('')
   const [localMcpEnabled, setLocalMcpEnabled] = useState(true)
-  const [tutorialsEnabled, setTutorialsEnabled] = useState(true)
   const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(true)
 
   // Mode cycling state
@@ -98,7 +97,6 @@ export default function WorkspaceSettingsPage() {
           setPermissionMode(settings.permissionMode || 'ask')
           setWorkingDirectory(settings.workingDirectory || '')
           setLocalMcpEnabled(settings.localMcpEnabled ?? true)
-          setTutorialsEnabled(settings.tutorialsEnabled ?? true)
         }
 
         // Try to load workspace icon (check common extensions)
@@ -246,14 +244,6 @@ export default function WorkspaceSettingsPage() {
     async (enabled: boolean) => {
       setLocalMcpEnabled(enabled)
       await updateWorkspaceSetting('localMcpEnabled', enabled)
-    },
-    [updateWorkspaceSetting]
-  )
-
-  const handleTutorialsEnabledChange = useCallback(
-    async (enabled: boolean) => {
-      setTutorialsEnabled(enabled)
-      await updateWorkspaceSetting('tutorialsEnabled', enabled)
     },
     [updateWorkspaceSetting]
   )
@@ -495,12 +485,6 @@ export default function WorkspaceSettingsPage() {
                   description="Enable stdio subprocess servers"
                   checked={localMcpEnabled}
                   onCheckedChange={handleLocalMcpEnabledChange}
-                />
-                <SettingsToggle
-                  label="Show tutorials"
-                  description="Display interactive tutorials when setting up new sources"
-                  checked={tutorialsEnabled}
-                  onCheckedChange={handleTutorialsEnabledChange}
                 />
               </SettingsCard>
             </SettingsSection>

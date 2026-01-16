@@ -272,7 +272,10 @@ export interface Session {
   model?: string
   // Role/type of the last message (for badge display without loading messages)
   lastMessageRole?: 'user' | 'assistant' | 'plan' | 'tool' | 'error'
-  // Whether title is currently being regenerated (for shimmer effect)
+  // Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration)
+  // Used for shimmer effect on session title in sidebar and panel header
+  isAsyncOperationOngoing?: boolean
+  /** @deprecated Use isAsyncOperationOngoing instead */
   isRegeneratingTitle?: boolean
   // Current status for ProcessingIndicator (e.g., compacting)
   currentStatus?: {
@@ -317,6 +320,8 @@ export type SessionEvent =
   | { type: 'info'; sessionId: string; message: string; statusType?: 'compaction_complete'; level?: 'info' | 'warning' | 'error' | 'success' }
   | { type: 'title_generated'; sessionId: string; title: string }
   | { type: 'title_regenerating'; sessionId: string; isRegenerating: boolean }
+  // Generic async operation state (sharing, updating share, revoking, title regeneration)
+  | { type: 'async_operation'; sessionId: string; isOngoing: boolean }
   | { type: 'working_directory_changed'; sessionId: string; workingDirectory: string }
   | { type: 'permission_request'; sessionId: string; request: PermissionRequest }
   | { type: 'credential_request'; sessionId: string; request: CredentialRequest }
@@ -451,6 +456,8 @@ export const IPC_CHANNELS = {
   UPDATE_CHECK: 'update:check',
   UPDATE_GET_INFO: 'update:getInfo',
   UPDATE_INSTALL: 'update:install',
+  UPDATE_DISMISS: 'update:dismiss',  // Dismiss update for this version (persists across restarts)
+  UPDATE_GET_DISMISSED: 'update:getDismissed',  // Get dismissed version
   UPDATE_AVAILABLE: 'update:available',  // main → renderer broadcast
   UPDATE_DOWNLOAD_PROGRESS: 'update:downloadProgress',  // main → renderer broadcast
 
@@ -516,6 +523,8 @@ export const IPC_CHANNELS = {
   
   // Source permissions config
   SOURCES_GET_PERMISSIONS: 'sources:getPermissions',
+  // Workspace permissions config (for Explore mode)
+  WORKSPACE_GET_PERMISSIONS: 'workspace:getPermissions',
   // MCP tools listing
   SOURCES_GET_MCP_TOOLS: 'sources:getMcpTools',
 
@@ -537,13 +546,6 @@ export const IPC_CHANNELS = {
   // Generic workspace image loading/saving (for icons, etc.)
   WORKSPACE_READ_IMAGE: 'workspace:readImage',
   WORKSPACE_WRITE_IMAGE: 'workspace:writeImage',
-
-  // Unified preview window (all modes: markdown, view, diff, multi-diff, terminal)
-  PREVIEW_OPEN: 'preview:open',
-  PREVIEW_GET_DATA: 'preview:getData',
-  PREVIEW_SAVE: 'preview:save',
-  PREVIEW_FILE_SAVED: 'preview:fileSaved', // Broadcast: { filePath: string }
-  PREVIEW_READ_FILE: 'preview:readFile',
 
   // Workspace settings (per-workspace configuration)
   WORKSPACE_SETTINGS_GET: 'workspaceSettings:get',
@@ -578,164 +580,6 @@ export const IPC_CHANNELS = {
   WINDOW_FOCUS_STATE: 'window:focusState',  // Broadcast: boolean (isFocused)
   WINDOW_GET_FOCUS_STATE: 'window:getFocusState',
 } as const
-
-/**
- * Data for terminal preview (Bash/Grep/Glob tools)
- */
-export interface TerminalPreviewData {
-  command: string
-  output: string
-  /** Optional description of what the command does */
-  description?: string
-  /** Exit status if available */
-  exitCode?: number
-  /** Tool type for badge display */
-  toolType?: 'bash' | 'grep' | 'glob'
-}
-
-/**
- * A single file change (Edit or Write) for the session diff view
- */
-export interface FileChange {
-  /** Unique ID for this change */
-  id: string
-  /** Absolute file path */
-  filePath: string
-  /** Tool type: Edit or Write */
-  toolType: 'Edit' | 'Write'
-  /** For Edit: the old_string; For Write: empty or previous content if available */
-  original: string
-  /** For Edit: the new_string; For Write: the written content */
-  modified: string
-  /** Error message if the operation failed */
-  error?: string
-}
-
-// ============================================
-// Unified Preview Types
-// ============================================
-
-/**
- * View mode data - for Read/Write tool results
- */
-export interface FilePreviewViewData {
-  filePath: string
-  content: string
-  language?: string
-  /** 'read' for Read tool, 'write' for Write tool */
-  toolType: 'read' | 'write'
-  /** File metadata from Read tool */
-  startLine?: number
-  numLines?: number
-  totalLines?: number
-  /** Error message if the operation failed */
-  error?: string
-}
-
-/**
- * Diff mode data - for single Edit tool result
- */
-export interface FilePreviewDiffData {
-  filePath: string
-  original: string
-  modified: string
-  language?: string
-  /** Error message if the edit failed */
-  error?: string
-}
-
-/**
- * Multi-diff mode data - for multiple edits/writes in a turn
- */
-export interface FilePreviewMultiDiffData {
-  turnId: string
-  changes: FileChange[]
-  /** If true (default), group changes by file. If false, show each change separately */
-  consolidated?: boolean
-  /** ID of the change to auto-focus (only used when consolidated=false) */
-  focusedChangeId?: string
-}
-
-/**
- * Data for markdown preview window
- * - readOnly mode: view-only, no save button
- * - readWrite mode: editable with save functionality (requires filePath)
- */
-export type MarkdownPreviewData =
-  | {
-      /** Read-only mode - content from memory (no save) */
-      mode: 'readOnly'
-      /** Raw markdown content to display */
-      content: string
-      /** Optional title for the window */
-      title?: string
-    }
-  | {
-      /** Read-only mode - content from file (no save) */
-      mode: 'readOnly'
-      /** File path to read content from */
-      filePath: string
-      /** Optional title for the window */
-      title?: string
-    }
-  | {
-      /** Read-write mode - editable with save to file */
-      mode: 'readWrite'
-      /** File path to read from and save to */
-      filePath: string
-      /** Optional title for the window */
-      title?: string
-    }
-
-// ============================================
-// Unified Preview Window Types
-// ============================================
-
-/**
- * Unified preview data - supports all preview modes in a single window
- * Uses discriminated union for type-safe mode handling
- */
-export type PreviewData =
-  | {
-      /** Markdown preview - view or edit markdown content */
-      mode: 'markdown'
-      sessionId: string
-      previewId: string
-      markdown: MarkdownPreviewData
-    }
-  | {
-      /** Code view - Read/Write tool results */
-      mode: 'view'
-      sessionId: string
-      previewId: string
-      view: FilePreviewViewData
-    }
-  | {
-      /** Diff view - single Edit tool result */
-      mode: 'diff'
-      sessionId: string
-      previewId: string
-      diff: FilePreviewDiffData
-    }
-  | {
-      /** Multi-diff view - multiple edits/writes in a turn */
-      mode: 'multi-diff'
-      sessionId: string
-      previewId: string
-      multiDiff: FilePreviewMultiDiffData
-    }
-  | {
-      /** Terminal view - Bash/Grep/Glob tool output */
-      mode: 'terminal'
-      sessionId: string
-      previewId: string
-      terminal: TerminalPreviewData
-    }
-
-/**
- * Preview mode type for discriminated union
- */
-export type PreviewMode = PreviewData['mode']
 
 // Re-import types for ElectronAPI
 import type { Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@craft-agent/core/types';
@@ -793,6 +637,8 @@ export interface ElectronAPI {
   checkForUpdates(): Promise<UpdateInfo>
   getUpdateInfo(): Promise<UpdateInfo>
   installUpdate(): Promise<void>
+  dismissUpdate(version: string): Promise<void>
+  getDismissedUpdateVersion(): Promise<string | null>
   onUpdateAvailable(callback: (info: UpdateInfo) => void): () => void
   onUpdateDownloadProgress(callback: (progress: number) => void): () => void
 
@@ -852,13 +698,6 @@ export interface ElectronAPI {
   readPreferences(): Promise<{ content: string; exists: boolean }>
   writePreferences(content: string): Promise<{ success: boolean; error?: string }>
 
-  // Unified preview window (all modes: markdown, view, diff, multi-diff, terminal)
-  openPreview(data: PreviewData): Promise<void>
-  getPreviewData(sessionId: string, previewId: string): Promise<PreviewData | null>
-  savePreview(sessionId: string, previewId: string, content: string): Promise<void>
-  onPreviewFileSaved(callback: (data: { filePath: string }) => void): () => void
-  readFileForPreview(filePath: string): Promise<string | null>
-
   // Session Drafts (persisted input text)
   getDraft(sessionId: string): Promise<string | null>
   setDraft(sessionId: string, text: string): Promise<void>
@@ -877,6 +716,7 @@ export interface ElectronAPI {
   startSourceOAuth(workspaceId: string, sourceSlug: string): Promise<{ success: boolean; error?: string; accessToken?: string }>
   saveSourceCredentials(workspaceId: string, sourceSlug: string, credential: string): Promise<void>
   getSourcePermissionsConfig(workspaceId: string, sourceSlug: string): Promise<import('@craft-agent/shared/agent').PermissionsConfigFile | null>
+  getWorkspacePermissionsConfig(workspaceId: string): Promise<import('@craft-agent/shared/agent').PermissionsConfigFile | null>
   getMcpTools(workspaceId: string, sourceSlug: string): Promise<McpToolsResult>
 
   // Sources change listener (live updates when sources are added/removed)
@@ -984,8 +824,6 @@ export interface WorkspaceSettings {
   workingDirectory?: string
   /** Whether local (stdio) MCP servers are enabled */
   localMcpEnabled?: boolean
-  /** Whether interactive tutorials are enabled */
-  tutorialsEnabled?: boolean
 }
 
 /**
@@ -1029,7 +867,7 @@ export type ChatFilter =
 /**
  * Settings subpage options
  */
-export type SettingsSubpage = 'app' | 'workspace' | 'shortcuts' | 'preferences'
+export type SettingsSubpage = 'app' | 'workspace' | 'permissions' | 'shortcuts' | 'preferences'
 
 /**
  * Chats navigation state - shows SessionList in navigator
