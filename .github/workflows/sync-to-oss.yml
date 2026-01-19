@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: true
+      force:
+        description: 'Skip unmerged contribution check (use after cherry-picking OSS contributions)'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -57,8 +62,14 @@ jobs:
           # Use HTTPS with OSS_REPO_TOKEN for cross-repo authentication
           TARGET_REPO="https://x-access-token:${{ secrets.OSS_REPO_TOKEN }}@github.com/lukilabs/craft-agents-oss.git"
 
+          # Build command with optional --force flag
+          FORCE_FLAG=""
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            FORCE_FLAG="--force"
+          fi
+
           # Run sync in non-interactive mode
-          if bash scripts/sync-to-oss.sh --target "$TARGET_REPO" --branch "${{ inputs.branch }}" --yes; then
+          if bash scripts/sync-to-oss.sh --target "$TARGET_REPO" --branch "${{ inputs.branch }}" --yes $FORCE_FLAG; then
             echo "synced=true" >> $GITHUB_OUTPUT
           else
             echo "synced=false" >> $GITHUB_OUTPUT
