@@ -353,16 +353,22 @@ jobs:
           VERSION="${{ needs.prepare.outputs.version }}"
           TAG="v${VERSION}"
 
-          # Check if tag already exists
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            echo "Tag $TAG already exists, skipping"
+          # Check if tag already exists on remote (not just locally)
+          if git ls-remote --tags origin | grep -q "refs/tags/${TAG}$"; then
+            echo "Tag $TAG already exists on remote, skipping"
           else
             echo "Creating tag $TAG"
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            echo "Tag $TAG created and pushed"
+
+            # Push and verify success
+            if git push origin "$TAG"; then
+              echo "Tag $TAG created and pushed successfully"
+            else
+              echo "ERROR: Failed to push tag $TAG"
+              exit 1
+            fi
           fi
 
       - name: Create GitHub Release
