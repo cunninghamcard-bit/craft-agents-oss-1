@@ -1,9 +1,46 @@
-# Craft Agent
+# Craft Agents
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 [![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
 
-A Claude Code-like agent for Craft documents using the Anthropic Claude Agent SDK and Craft MCP servers.
+A powerful AI assistant desktop app built on the Anthropic Claude Agent SDK. Manage documents, connect to external services, and automate workflows — all through natural conversation with Claude.
+
+## Installation
+
+### One-Line Install (Recommended)
+
+**macOS / Linux:**
+```bash
+curl -fsSL https://agents.craft.do/install-app.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://agents.craft.do/install-app.ps1 | iex
+```
+
+### Direct Download
+
+Download the latest release for your platform:
+
+| Platform | Download |
+|----------|----------|
+| macOS (Apple Silicon) | [Craft-Agent-arm64.dmg](https://agents.craft.do/electron/latest/Craft-Agent-arm64.dmg) |
+| macOS (Intel) | [Craft-Agent-x64.dmg](https://agents.craft.do/electron/latest/Craft-Agent-x64.dmg) |
+| Windows | [Craft-Agent-x64.exe](https://agents.craft.do/electron/latest/Craft-Agent-x64.exe) |
+| Linux (x64) | [Craft-Agent-x64.AppImage](https://agents.craft.do/electron/latest/Craft-Agent-x64.AppImage) |
+| Linux (ARM64) | [Craft-Agent-arm64.AppImage](https://agents.craft.do/electron/latest/Craft-Agent-arm64.AppImage) |
+
+Or browse all versions at [agents.craft.do/electron/](https://agents.craft.do/electron/)
+
+### Build from Source
+
+```bash
+git clone https://github.com/lukilabs/craft-agents.git
+cd craft-agents
+bun install
+bun run electron:start
+```
 
 ## Features
 
@@ -19,30 +56,12 @@ A Claude Code-like agent for Craft documents using the Anthropic Claude Agent SD
 - **Skills**: Specialized agent instructions stored per-workspace
 - **File Attachments**: Drag-drop images, PDFs, Office documents with auto-conversion
 
-## Installation
-
-### Desktop App (Recommended)
-
-Download from releases or build from source:
-
-```bash
-# Clone the repository
-git clone https://github.com/lukilabs/craft-terminal-agent.git
-cd craft-agent
-
-# Install dependencies
-bun install
-
-# Build and run the Electron app
-bun run electron:start
-```
-
 ## Quick Start
 
-1. **Launch the app**: `bun run electron:start`
-2. **Sign in with Craft**: OAuth flow to connect your Craft account
-3. **Select a workspace**: Choose or create a Craft space to connect
-4. **Choose billing**: Craft Credits, Claude Max, or your own API key
+1. **Launch the app** after installation
+2. **Choose billing**: Use your own Anthropic API key or Claude Max subscription
+3. **Create a workspace**: Set up a workspace to organize your sessions
+4. **Connect sources** (optional): Add MCP servers, REST APIs, or local filesystems
 5. **Start chatting**: Create sessions and interact with Claude
 
 ## Desktop App Features
@@ -125,20 +144,6 @@ bun run typecheck:all
 # Logs are automatically enabled in development
 ```
 
-### Multi-Instance Development
-
-Run multiple instances simultaneously by cloning to numbered folders:
-
-```bash
-git clone ... craft-tui-agent-1
-git clone ... craft-tui-agent-2
-
-cd craft-tui-agent-1 && bun run electron:dev  # Port 1173, config ~/.craft-agent-1/
-cd craft-tui-agent-2 && bun run electron:dev  # Port 2173, config ~/.craft-agent-2/
-```
-
-Each instance auto-detects from folder name and uses separate ports, config directories, and displays a dock badge to identify the instance.
-
 ### Environment Variables
 
 OAuth integrations require credentials. Set up via 1Password CLI:
@@ -198,11 +203,13 @@ craftagents://action/new-chat             # Create new chat
 
 ## Releasing
 
-Via [GitHub Actions](https://github.com/lukilabs/craft-terminal-agent/actions/workflows/build-and-upload.yml):
+Via [GitHub Actions](https://github.com/lukilabs/craft-agents/actions/workflows/build-and-upload.yml):
 
 1. Go to Actions → "Build and Upload" → Run workflow
-2. Check "upload to /latest" if desired
-3. Builds macOS DMG for both arm64 and x64 architectures
+2. Select platforms to build (macOS, Windows, Linux)
+3. Check "upload to /latest" to update the download links above
+
+Builds are uploaded to `agents.craft.do/electron/{version}/`
 
 ## Tech Stack
 
