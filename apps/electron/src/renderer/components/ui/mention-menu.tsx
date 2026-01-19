@@ -79,8 +79,8 @@ function filterSections(sections: MentionSection[], filter: string): MentionSect
   // Collect all matching items across sections
   const allItems = sections.flatMap(section => section.items)
   const matchingItems = allItems.filter(item =>
-    item.label.toLowerCase().includes(lowerFilter) ||
-    item.id.toLowerCase().includes(lowerFilter) ||
+    item.label?.toLowerCase().includes(lowerFilter) ||
+    item.id?.toLowerCase().includes(lowerFilter) ||
     item.description?.toLowerCase().includes(lowerFilter)
   )
 
@@ -367,13 +367,15 @@ export function useInlineMention({
       result.push({
         id: 'sources',
         label: 'Sources',
-        items: sources.map(source => ({
-          id: source.config.slug,
-          type: 'source' as const,
-          label: source.config.name,
-          description: source.config.tagline,
-          source,
-        })),
+        items: sources
+          .filter(source => source.config.slug && source.config.name)
+          .map(source => ({
+            id: source.config.slug,
+            type: 'source' as const,
+            label: source.config.name,
+            description: source.config.tagline,
+            source,
+          })),
       })
     }
 
