@@ -25,6 +25,9 @@ jobs:
       - name: Build marketing site
         run: bun run marketing:build
 
+      - name: Install wrangler
+        run: bun add -g wrangler
+
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
         with:
@@ -32,3 +35,4 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_MARKETING_PAGES_ACCOUNT_ID }}
           workingDirectory: apps/marketing
           command: pages deploy dist --project-name=craft-agents-marketing
+          wranglerVersion: ''
