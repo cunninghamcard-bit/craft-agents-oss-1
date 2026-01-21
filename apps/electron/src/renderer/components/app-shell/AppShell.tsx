@@ -93,6 +93,7 @@ import { SourcesListPanel } from "./SourcesListPanel"
 import { SkillsListPanel } from "./SkillsListPanel"
 import { PanelHeader } from "./PanelHeader"
 import { EditPopover, getEditConfig } from "@/components/ui/EditPopover"
+import { HelpPopover } from "@/components/ui/HelpPopover"
 import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import { RightSidebar } from "./RightSidebar"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
@@ -1415,31 +1416,37 @@ function AppShellContent({
                       </StyledDropdownMenuContent>
                     </DropdownMenu>
                   )}
-                  {/* Add Source button (only for sources mode) */}
+                  {/* Add Source button and Help (only for sources mode) */}
                   {isSourcesNavigation(navState) && activeWorkspace && (
-                    <EditPopover
-                      trigger={
-                        <HeaderIconButton
-                          icon={<Plus className="h-4 w-4" />}
-                          tooltip="Add Source"
-                          data-tutorial="add-source-button"
-                        />
-                      }
-                      {...getEditConfig('add-source', activeWorkspace.rootPath)}
-                    />
+                    <>
+                      <EditPopover
+                        trigger={
+                          <HeaderIconButton
+                            icon={<Plus className="h-4 w-4" />}
+                            tooltip="Add Source"
+                            data-tutorial="add-source-button"
+                          />
+                        }
+                        {...getEditConfig('add-source', activeWorkspace.rootPath)}
+                      />
+                      <HelpPopover feature="sources" />
+                    </>
                   )}
-                  {/* Add Skill button (only for skills mode) */}
+                  {/* Add Skill button and Help (only for skills mode) */}
                   {isSkillsNavigation(navState) && activeWorkspace && (
-                    <EditPopover
-                      trigger={
-                        <HeaderIconButton
-                          icon={<Plus className="h-4 w-4" />}
-                          tooltip="Add Skill"
-                          data-tutorial="add-skill-button"
-                        />
-                      }
-                      {...getEditConfig('add-skill', activeWorkspace.rootPath)}
-                    />
+                    <>
+                      <EditPopover
+                        trigger={
+                          <HeaderIconButton
+                            icon={<Plus className="h-4 w-4" />}
+                            tooltip="Add Skill"
+                            data-tutorial="add-skill-button"
+                          />
+                        }
+                        {...getEditConfig('add-skill', activeWorkspace.rootPath)}
+                      />
+                      <HelpPopover feature="skills" />
+                    </>
                   )}
                 </>
               }
