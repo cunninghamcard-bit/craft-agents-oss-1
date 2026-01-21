@@ -119,6 +119,40 @@ function syncAllPackageJsons(version: string): number {
   return updated;
 }
 
+async function ensureMainBranch(): Promise<void> {
+  // Check current branch
+  const branch = (await $`git rev-parse --abbrev-ref HEAD`.text()).trim();
+  if (branch !== 'main') {
+    console.error(`Error: --tag requires being on the 'main' branch`);
+    console.error(`  Current branch: ${branch}`);
+    console.error(`  Run: git checkout main`);
+    process.exit(1);
+  }
+
+  // Fetch latest from origin
+  await $`git fetch origin main`.quiet();
+
+  // Check if local main is up to date with origin/main
+  const local = (await $`git rev-parse HEAD`.text()).trim();
+  const remote = (await $`git rev-parse origin/main`.text()).trim();
+
+  if (local !== remote) {
+    // Check if we're behind, ahead, or diverged
+    const mergeBase = (await $`git merge-base HEAD origin/main`.text()).trim();
+    if (mergeBase === local) {
+      console.error(`Error: Local 'main' is behind origin/main`);
+      console.error(`  Run: git pull origin main`);
+    } else if (mergeBase === remote) {
+      console.error(`Error: Local 'main' has unpushed commits`);
+      console.error(`  Run: git push origin main`);
+    } else {
+      console.error(`Error: Local 'main' has diverged from origin/main`);
+      console.error(`  Run: git pull --rebase origin main`);
+    }
+    process.exit(1);
+  }
+}
+
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({
     args: process.argv.slice(2),
@@ -140,6 +174,11 @@ async function main(): Promise<void> {
 
   const dryRun = values['dry-run'] ?? false;
   const ossOnly = values['oss-only'] ?? false;
+
+  // Enforce main branch when creating tags
+  if (values.tag && !dryRun) {
+    await ensureMainBranch();
+  }
 
   const currentVersion = getCurrentVersion();
   console.log(`Current version: ${currentVersion}`);
