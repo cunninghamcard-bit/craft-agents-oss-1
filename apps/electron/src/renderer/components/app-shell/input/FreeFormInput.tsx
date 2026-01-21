@@ -1158,7 +1158,7 @@ export function FreeFormInput({
                     }}
                   >
                     {sources.length === 0 ? (
-                      <div className="text-xs text-muted-foreground p-3">
+                      <div className="text-xs text-muted-foreground p-3 select-none">
                         No sources configured.
                         <br />
                         Add sources in Settings.
@@ -1174,7 +1174,7 @@ export function FreeFormInput({
                             value={sourceFilter}
                             onValueChange={setSourceFilter}
                             placeholder="Search sources..."
-                            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                            className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground placeholder:select-none"
                           />
                         </div>
                         <CommandPrimitive.List className="max-h-[240px] overflow-y-auto p-1">
@@ -1248,7 +1248,7 @@ export function FreeFormInput({
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors data-[state=open]:bg-foreground/5"
+                    className="inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors data-[state=open]:bg-foreground/5 select-none"
                   >
                     {getModelShortName(currentModel)}
                     <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />
@@ -1320,7 +1320,7 @@ export function FreeFormInput({
               {contextStatus?.inputTokens != null && contextStatus.inputTokens > 0 && (
                 <>
                   <StyledDropdownMenuSeparator className="my-1" />
-                  <div className="px-2 py-1.5">
+                  <div className="px-2 py-1.5 select-none">
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>Context</span>
                       <span className="flex items-center gap-1.5">
@@ -1577,7 +1577,7 @@ function WorkingDirectoryBadge({
                 value={filter}
                 onValueChange={setFilter}
                 placeholder="Filter folders..."
-                className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50"
+                className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground/50 placeholder:select-none"
               />
             </div>
           )}
