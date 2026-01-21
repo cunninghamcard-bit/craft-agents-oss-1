@@ -29,6 +29,9 @@ module.exports = async function afterPack(context) {
   const resourcesDir = path.join(appPath, 'Craft Agent.app', 'Contents', 'Resources');
   const precompiledAssets = path.join(context.packager.projectDir, 'resources', 'Assets.car');
 
+  console.log(`afterPack: projectDir=${context.packager.projectDir}`);
+  console.log(`afterPack: looking for Assets.car at ${precompiledAssets}`);
+
   // Check if pre-compiled Assets.car exists
   if (!fs.existsSync(precompiledAssets)) {
     console.log('Warning: Pre-compiled Assets.car not found in resources/');
@@ -38,6 +41,12 @@ module.exports = async function afterPack(context) {
 
   // Copy pre-compiled Assets.car to the app bundle
   const destAssetsCar = path.join(resourcesDir, 'Assets.car');
-  fs.copyFileSync(precompiledAssets, destAssetsCar);
-  console.log(`Liquid Glass icon copied: ${destAssetsCar}`);
+  try {
+    fs.copyFileSync(precompiledAssets, destAssetsCar);
+    console.log(`Liquid Glass icon copied: ${destAssetsCar}`);
+  } catch (err) {
+    // Don't fail the build if Assets.car can't be copied - app will use fallback icon.icns
+    console.log(`Warning: Could not copy Assets.car: ${err.message}`);
+    console.log('The app will use the fallback icon.icns on all macOS versions');
+  }
 };
