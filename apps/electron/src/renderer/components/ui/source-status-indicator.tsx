@@ -16,7 +16,7 @@ import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
-} from '@/components/ui/tooltip'
+} from '@craft-agent/ui'
 import type { SourceConnectionStatus } from '../../../shared/types'
 
 export interface SourceStatusIndicatorProps {

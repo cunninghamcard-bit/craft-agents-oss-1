@@ -16,6 +16,8 @@ files:
   - "!dist/renderer/src/**"
   - "!**/*.map"
   - package.json
+  # Documentation assets loaded at runtime by packages/shared/src/docs/index.ts
+  - dist/assets/docs/**/*
   # Include SDK for subprocess execution
   - node_modules/@anthropic-ai/claude-agent-sdk/**/*
   # Include network interceptor for API error capture and MCP schema injection

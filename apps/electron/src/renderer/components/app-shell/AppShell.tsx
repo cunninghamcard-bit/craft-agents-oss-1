@@ -34,7 +34,7 @@ import { cn, isHexColor } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { HeaderIconButton } from "@/components/ui/HeaderIconButton"
 import { Separator } from "@/components/ui/separator"
-import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@/components/ui/tooltip"
+import { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from "@craft-agent/ui"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -100,6 +100,7 @@ import SettingsNavigator from "@/pages/settings/SettingsNavigator"
 import { RightSidebar } from "./RightSidebar"
 import type { RichTextInputHandle } from "@/components/ui/rich-text-input"
 import { hasOpenOverlay } from "@/lib/overlay-detection"
+import { clearSourceIconCaches } from "@/lib/icon-cache"
 
 /**
  * AppShellProps - Minimal props interface for AppShell component

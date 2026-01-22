@@ -69,7 +69,7 @@ export function formatPreferencesForPrompt(): string {
     return '';
   }
 
-  const lines: string[] = ['## User Preferences', ''];
+  const lines: string[] = ['## User Preferences - User has explicitly set these preferences, so adhere to them', ''];
 
   if (prefs.name) {
     lines.push(`- Name: ${prefs.name}`);

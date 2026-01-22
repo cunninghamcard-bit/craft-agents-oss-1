@@ -29,7 +29,7 @@ import {
 } from '@/components/ui/mention-menu'
 import { parseMentions } from '@/lib/mentions'
 import { RichTextInput, type RichTextInputHandle } from '@/components/ui/rich-text-input'
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@craft-agent/ui'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -566,11 +566,13 @@ export function FreeFormInput({
   }, [optimisticSourceSlugs, onSourcesChange])
 
   // Inline mention hook (for skills and sources only)
+  // Pass workspaceId so skills are inserted with fully-qualified names
   const inlineMention = useInlineMention({
     inputRef: richInputRef,
     skills,
     sources,
     onSelect: handleMentionSelect,
+    workspaceId,
   })
 
   // NOTE: Mentions are now rendered inline in RichTextInput, no separate badge row needed

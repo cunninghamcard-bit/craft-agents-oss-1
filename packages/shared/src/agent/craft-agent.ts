@@ -1063,6 +1063,30 @@ export class CraftAgent {
                 }
               }
 
+              // ============================================================
+              // SKILL QUALIFICATION: Ensure skill names are fully-qualified (workspaceId:slug)
+              // The SDK requires fully-qualified names to resolve skills. If the agent
+              // calls a skill with just the short slug, we prefix it here.
+              // Phase 1 (UI layer) should already inject the full name in rawText, but this
+              // provides defense-in-depth for edge cases where agent calls Skill directly.
+              // ============================================================
+              if (input.tool_name === 'Skill') {
+                const toolInput = input.tool_input as { skill?: string; args?: string };
+                if (toolInput.skill && !toolInput.skill.includes(':')) {
+                  // Short name detected - prepend workspaceId
+                  const workspaceId = this.config.workspace.id;
+                  const qualifiedSkill = `${workspaceId}:${toolInput.skill}`;
+                  this.onDebug?.(`Skill tool: qualified "${toolInput.skill}" → "${qualifiedSkill}"`);
+                  return {
+                    continue: true,
+                    hookSpecificOutput: {
+                      hookEventName: 'PreToolUse' as const,
+                      updatedInput: { ...toolInput, skill: qualifiedSkill },
+                    },
+                  };
+                }
+              }
+
               // Built-in SDK tools (don't extract _intent from these)
               const builtInTools = new Set([
                 'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep',
@@ -1441,24 +1465,10 @@ export class CraftAgent {
         // Skip resume on retry (after session expiry) to start fresh
         ...(!_isRetry && this.sessionId ? { resume: this.sessionId } : {}),
         mcpServers,
-        // Custom permission handler for Bash commands
-        canUseTool: async (toolName, input, toolOptions) => {
-          // Debug: show what tools are being called
-          this.onDebug?.(`canUseTool: ${toolName}`);
-
-          // Bash commands require user permission
-          if (toolName === 'Bash') {
-            const result = await this.checkToolPermission(toolName, input as Record<string, unknown>, toolOptions.toolUseID);
-            if (result.allowed) {
-              return { behavior: 'allow' as const, updatedInput: result.updatedInput };
-            } else {
-              return { behavior: 'deny' as const, message: 'User denied permission' };
-            }
-          }
-
-          // Auto-approve MCP tools and other allowed tools
-          // Note: SDK plan mode tools (EnterPlanMode/ExitPlanMode) are blocked via disallowedTools
-          // We use safe mode instead, which is user-controlled via UI (not agent-controlled)
+        // NOTE: This callback is NOT called by the SDK because we set `permissionMode: 'bypassPermissions'` above.
+        // All permission logic is handled via the PreToolUse hook instead (see hooks.PreToolUse above).
+        // Skill qualification and Bash permission logic are in PreToolUse where they actually execute.
+        canUseTool: async (_toolName, input) => {
           return { behavior: 'allow' as const, updatedInput: input as Record<string, unknown> };
         },
         // Selectively disable tools - file tools are disabled (use MCP), web/code controlled by settings

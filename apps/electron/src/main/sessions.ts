@@ -2187,11 +2187,10 @@ export class SessionManager {
         sessionLog.info('Attachments:', attachments.length)
       }
 
-      // Skills mentioned via @mentions are handled by the Agent SDK's Skill tool
-      // The @skill-name text remains in the message for the agent to process
-      if (options?.skillSlugs?.length) {
-        sessionLog.info(`Message contains ${options.skillSlugs.length} skill mention(s): ${options.skillSlugs.join(', ')}`)
-      }
+      // Skills mentioned via @mentions are handled by the SDK's Skill tool.
+      // The UI layer (extractBadges in mentions.ts) injects fully-qualified names
+      // in the rawText, and canUseTool in craft-agent.ts provides a fallback
+      // to qualify short names. No transformation needed here.
 
       sendSpan.mark('chat.starting')
       const chatIterator = agent.chat(message, attachments)

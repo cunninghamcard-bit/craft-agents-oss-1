@@ -1460,7 +1460,7 @@ export function getSessionState(sessionId: string): { permissionMode: Permission
 
 /**
  * Format session state as a lightweight XML block for injection into user messages.
- * When in safe mode, includes the plans folder path so agent knows where to write plans.
+ * Always includes the plans folder path so agent knows where plans are stored.
  */
 export function formatSessionState(
   sessionId: string,
@@ -1470,158 +1470,11 @@ export function formatSessionState(
 
   let result = `<session_state>\nsessionId: ${sessionId}\npermissionMode: ${mode}`;
 
-  // Include plans folder path when in safe mode so agent knows where to write plans
-  if (mode === 'safe' && options?.plansFolderPath) {
+  // Always include plans folder path so agent knows where plans are stored
+  if (options?.plansFolderPath) {
     result += `\nplansFolderPath: ${options.plansFolderPath}`;
   }
 
   result += '\n</session_state>';
   return result;
-}
-
-// ============================================================
-// System Prompt Documentation
-// ============================================================
-
-/**
- * Generate the permission modes documentation section for the system prompt.
- * Uses PERMISSION_MODE_CONFIG for display names to stay in sync with UI.
- */
-export function getPermissionModesDocumentation(): string {
-  const blockedTools = Array.from(SAFE_MODE_CONFIG.blockedTools).join(', ');
-
-  return `## Permission Modes
-
-Craft Agent has three permission modes that control tool execution. The user can cycle through modes with SHIFT+TAB.
-
-| Mode | Color | Description |
-|------|-------|-------------|
-| **${PERMISSION_MODE_CONFIG['safe'].displayName}** | Grey | ${PERMISSION_MODE_CONFIG['safe'].description} |
-| **${PERMISSION_MODE_CONFIG['ask'].displayName}** | Amber | ${PERMISSION_MODE_CONFIG['ask'].description} |
-| **${PERMISSION_MODE_CONFIG['allow-all'].displayName}** | Purple | ${PERMISSION_MODE_CONFIG['allow-all'].description} |
-
-You will know the current mode from the \`<session_state>\` block in your context:
-\`\`\`
-<session_state>
-sessionId: abc123
-permissionMode: safe
-plansFolderPath: /path/to/plans
-</session_state>
-\`\`\`
-
-### ${PERMISSION_MODE_CONFIG['safe'].displayName} (permissionMode: safe)
-
-Read-only exploration mode. You can read, search, and explore but cannot make changes.
-
-| Operation | Allowed? | Notes |
-|-----------|----------|-------|
-| Read MCP sources | ✅ | search, list, get operations |
-| File exploration | ✅ | Read, Glob, Grep |
-| Web search/fetch | ✅ | WebSearch, WebFetch |
-| API GET requests | ✅ | Read-only API calls |
-| **Plans folder** | ✅ | Write/Edit allowed to session plans folder |
-| **Read-only Bash** | ✅ | See list below |
-| File writes/edits | ❌ | ${blockedTools} blocked (except plans folder) |
-| MCP mutations | ❌ | create, update, delete operations blocked |
-| API mutations | ❌ | POST, PUT, DELETE blocked |
-
-**Read-only Bash commands allowed in Explore mode:**
-- **File exploration**: ls, tree, cat, head, tail, file, stat, wc, du, df
-- **Search**: find, grep, rg, ag, fd, locate, which
-- **Git**: git status, git log, git diff, git show, git branch, git blame, git history, git reflog
-- **GitHub CLI**: gh pr view/list, gh issue view/list, gh repo view
-- **Package managers**: npm ls/list/outdated, yarn list, pip list, cargo tree
-- **System info**: pwd, whoami, env, ps, uname, hostname, date
-- **Text processing**: jq, yq, sort, uniq, cut, column
-- **Network diagnostics**: ping, dig, nslookup, netstat
-- **Version checks**: node --version, python --version, etc.
-
-**Blocked shell constructs:** Even allowed commands are blocked if they contain dangerous shell constructs:
-- **Command chaining**: \`&&\`, \`||\`, \`;\`, \`|\`, \`&\` - could chain to dangerous commands
-- **Redirects**: \`>\`, \`>>\` - could overwrite files
-- **Substitution**: \`$()\`, backticks, \`<()\`, \`>()\` - execute embedded commands
-- **Control chars**: newlines, carriage returns - act as command separators
-
-Example: \`git status && rm -rf /\` is blocked because \`&&\` allows command chaining. Run commands separately instead.
-
-**When ready to implement:** After gathering context, proactively move the conversation forward according to these guidelines:
-- **Be decisive** - When you've gathered enough context, write and submit the plan directly. If you're going to ask whether to proceed, always present your current thinking about the approach first — never ask without context. When uncertain about scope, share your understanding then ask "Ready for a plan?"
-- **Don't suggest manual mode switching** - Don't tell users to press SHIFT+TAB. When you submit a plan, the user sees an "Accept Plan" button that handles the mode transition automatically. Presenting a plan → one-click accept is the smoothest workflow.
-
-### ${PERMISSION_MODE_CONFIG['ask'].displayName} (permissionMode: ask)
-
-Default interactive mode. Prompts before edits, but read-only operations run freely.
-
-| Operation | Allowed? | Notes |
-|-----------|----------|-------|
-| All file operations | ✅ | Write, Edit, Read, etc. |
-| All MCP operations | ✅ | search, list, create, update, etc. |
-| All API operations | ✅ | GET, POST, PUT, DELETE |
-| Read-only Bash | ✅ | ls, git status, grep, etc. (same as ${PERMISSION_MODE_CONFIG['safe'].displayName}) |
-| Other Bash commands | ⚠️ | Prompts for approval (can click "Always allow") |
-| Dangerous Bash | ⚠️ | rm, sudo, git push - always prompts, no auto-allow |
-
-Read-only Bash commands (the same ones allowed in ${PERMISSION_MODE_CONFIG['safe'].displayName} mode) run without prompting. Other commands prompt for permission with an "Always allow this session" option. Dangerous commands always require explicit approval.
-
-### ${PERMISSION_MODE_CONFIG['allow-all'].displayName} (permissionMode: allow-all)
-
-Full autonomous mode. Everything is allowed without prompts - use when you trust the agent to execute the plan.
-
-| Operation | Allowed? | Notes |
-|-----------|----------|-------|
-| All operations | ✅ | No restrictions, no prompts |
-
-This mode is ideal after reviewing and accepting a plan, as it allows uninterrupted execution.
-
-## Planning (Universal)
-
-You can create structured plans at any time using the \`SubmitPlan\` tool - this is not restricted to any mode.
-
-### When to Use Plans
-
-Create a plan when:
-- The task has multiple complex steps
-- You want to get user approval before making changes
-- The user asks for a plan first
-
-### Creating a Plan
-
-1. Write your plan to a markdown file using the \`Write\` tool
-2. Call \`SubmitPlan\` with the file path
-3. Wait for user feedback before proceeding
-
-### Plan Format
-
-\`\`\`markdown
-# Plan Title
-
-## Summary
-Brief description of what this plan accomplishes.
-
-## Steps
-1. **Step description** - Details and approach
-2. **Another step** - More details
-3. ...
-\`\`\`
-
-### ${PERMISSION_MODE_CONFIG['safe'].displayName} → Implementation Workflow
-
-When in ${PERMISSION_MODE_CONFIG['safe'].displayName} mode and ready to implement:
-1. Write your plan to a markdown file in the plans folder
-2. Call \`SubmitPlan\` with the file path
-3. The user can click "Accept Plan" to exit ${PERMISSION_MODE_CONFIG['safe'].displayName} mode and begin implementation
-4. Once accepted, proceed with the implementation steps
-
-This is the recommended way to transition from exploration to implementation.
-
-### Customizing Explore Mode Permissions
-
-You can customize Explore mode via \`permissions.json\` files - extend what's allowed (bash patterns, MCP tools, API endpoints) or block specific tools entirely.
-
-| Level | Path | Scope |
-|-------|------|-------|
-| Workspace | \`{workspaceRoot}/permissions.json\` | All sources in workspace |
-| Per-source | \`{workspaceRoot}/sources/{slug}/permissions.json\` | That source only (auto-scoped) |
-
-**Before editing**: Read \`~/.craft-agent/docs/permissions.md\` for the full schema and examples.`;
 }

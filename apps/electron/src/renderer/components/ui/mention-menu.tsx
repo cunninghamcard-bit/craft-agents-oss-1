@@ -319,6 +319,8 @@ export interface UseInlineMentionOptions {
   skills: LoadedSkill[]
   sources: LoadedSource[]
   onSelect: (item: MentionItem) => void
+  /** Workspace ID for fully-qualified skill names */
+  workspaceId?: string
 }
 
 export interface UseInlineMentionReturn {
@@ -336,6 +338,7 @@ export function useInlineMention({
   skills,
   sources,
   onSelect,
+  workspaceId,
 }: UseInlineMentionOptions): UseInlineMentionReturn {
   const [isOpen, setIsOpen] = React.useState(false)
   const [filter, setFilter] = React.useState('')
@@ -458,10 +461,14 @@ export function useInlineMention({
       const before = currentValue.slice(0, atStart)
       const after = currentValue.slice(cursorPosition)
 
-      // Build the mention text based on type using bracket syntax
+      // Build the mention text based on type using bracket syntax.
+      // Skills use fully-qualified names (workspaceId:slug) because the SDK's
+      // Skill tool requires this format to resolve workspace-scoped skills.
       let mentionText: string
       if (item.type === 'skill') {
-        mentionText = `[skill:${item.id}] `
+        // Use fully-qualified name for skills: [skill:workspaceId:slug]
+        const qualifiedName = workspaceId ? `${workspaceId}:${item.id}` : item.id
+        mentionText = `[skill:${qualifiedName}] `
       } else if (item.type === 'source') {
         mentionText = `[source:${item.id}] `
       } else {
@@ -476,7 +483,7 @@ export function useInlineMention({
     setIsOpen(false)
 
     return { value: result, cursorPosition: newCursorPosition }
-  }, [onSelect, atStart])
+  }, [onSelect, atStart, workspaceId])
 
   const close = React.useCallback(() => {
     setIsOpen(false)
