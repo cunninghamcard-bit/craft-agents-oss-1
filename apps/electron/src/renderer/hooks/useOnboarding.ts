@@ -2,9 +2,9 @@
  * useOnboarding Hook
  *
  * Manages the state machine for the onboarding wizard.
- * Simplified billing-only flow:
+ * Flow:
  * 1. Welcome
- * 2. Billing Method (API Key / Claude OAuth)
+ * 2. API Setup (API Key / Claude OAuth)
  * 3. Credentials (API Key or Claude OAuth)
  * 4. Complete
  */
@@ -14,7 +14,7 @@ import type {
   OnboardingStep,
   LoginStatus,
   CredentialStatus,
-  BillingMethod,
+  ApiSetupMethod,
 } from '@/components/onboarding'
 import type { ApiKeySubmitData } from '@/components/apisetup'
 import type { AuthType, SetupNeeds } from '../../shared/types'
@@ -24,6 +24,10 @@ interface UseOnboardingOptions {
   onComplete: () => void
   /** Initial setup needs from auth state check */
   initialSetupNeeds?: SetupNeeds
+  /** Start the wizard at a specific step (default: 'welcome') */
+  initialStep?: OnboardingStep
+  /** Called when user goes back from the initial step (dismisses the wizard) */
+  onDismiss?: () => void
 }
 
 interface UseOnboardingReturn {
@@ -34,8 +38,8 @@ interface UseOnboardingReturn {
   handleContinue: () => void
   handleBack: () => void
 
-  // Billing
-  handleSelectBillingMethod: (method: BillingMethod) => void
+  // API Setup
+  handleSelectApiSetupMethod: (method: ApiSetupMethod) => void
 
   // Credentials
   handleSubmitCredential: (data: ApiKeySubmitData) => void
@@ -58,8 +62,8 @@ interface UseOnboardingReturn {
   reset: () => void
 }
 
-// Map BillingMethod to AuthType
-function billingMethodToAuthType(method: BillingMethod): AuthType {
+// Map ApiSetupMethod to AuthType for backend persistence
+function apiSetupMethodToAuthType(method: ApiSetupMethod): AuthType {
   switch (method) {
     case 'api_key': return 'api_key'
     case 'claude_oauth': return 'oauth_token'
@@ -69,28 +73,30 @@ function billingMethodToAuthType(method: BillingMethod): AuthType {
 export function useOnboarding({
   onComplete,
   initialSetupNeeds,
+  initialStep = 'welcome',
+  onDismiss,
 }: UseOnboardingOptions): UseOnboardingReturn {
   // Main wizard state
   const [state, setState] = useState<OnboardingState>({
-    step: 'welcome',
+    step: initialStep,
     loginStatus: 'idle',
     credentialStatus: 'idle',
     completionStatus: 'saving',
-    billingMethod: null,
+    apiSetupMethod: null,
     isExistingUser: initialSetupNeeds?.needsBillingConfig ?? false,
   })
 
   // Save configuration
   const handleSaveConfig = useCallback(async (credential?: string, options?: { baseUrl?: string; customModel?: string }) => {
-    if (!state.billingMethod) {
-      console.log('[Onboarding] No billing method, returning early')
+    if (!state.apiSetupMethod) {
+      console.log('[Onboarding] No API setup method selected, returning early')
       return
     }
 
     setState(s => ({ ...s, completionStatus: 'saving' }))
 
     try {
-      const authType = billingMethodToAuthType(state.billingMethod)
+      const authType = apiSetupMethodToAuthType(state.apiSetupMethod)
       console.log('[Onboarding] Saving config with authType:', authType)
 
       const result = await window.electronAPI.saveOnboardingConfig({
@@ -118,16 +124,16 @@ export function useOnboarding({
         errorMessage: error instanceof Error ? error.message : 'Failed to save configuration',
       }))
     }
-  }, [state.billingMethod])
+  }, [state.apiSetupMethod])
 
   // Continue to next step
   const handleContinue = useCallback(async () => {
     switch (state.step) {
       case 'welcome':
-        setState(s => ({ ...s, step: 'billing-method' }))
+        setState(s => ({ ...s, step: 'api-setup' }))
         break
 
-      case 'billing-method':
+      case 'api-setup':
         setState(s => ({ ...s, step: 'credentials' }))
         break
 
@@ -139,26 +145,31 @@ export function useOnboarding({
         onComplete()
         break
     }
-  }, [state.step, state.billingMethod, onComplete])
+  }, [state.step, state.apiSetupMethod, onComplete])
 
-  // Go back to previous step
+  // Go back to previous step. If at the initial step, call onDismiss instead.
   const handleBack = useCallback(() => {
+    if (state.step === initialStep && onDismiss) {
+      onDismiss()
+      return
+    }
     switch (state.step) {
-      case 'billing-method':
+      case 'api-setup':
         setState(s => ({ ...s, step: 'welcome' }))
         break
       case 'credentials':
-        setState(s => ({ ...s, step: 'billing-method', credentialStatus: 'idle', errorMessage: undefined }))
+        setState(s => ({ ...s, step: 'api-setup', credentialStatus: 'idle', errorMessage: undefined }))
         break
     }
-  }, [state.step])
+  }, [state.step, initialStep, onDismiss])
 
-  // Select billing method
-  const handleSelectBillingMethod = useCallback((method: BillingMethod) => {
-    setState(s => ({ ...s, billingMethod: method }))
+  // Select API setup method
+  const handleSelectApiSetupMethod = useCallback((method: ApiSetupMethod) => {
+    setState(s => ({ ...s, apiSetupMethod: method }))
   }, [])
 
   // Submit credential (API key + optional endpoint config)
+  // Tests the connection first via /v1/messages before saving to catch issues early
   const handleSubmitCredential = useCallback(async (data: ApiKeySubmitData) => {
     setState(s => ({ ...s, credentialStatus: 'validating', errorMessage: undefined }))
 
@@ -168,6 +179,23 @@ export function useOnboarding({
           ...s,
           credentialStatus: 'error',
           errorMessage: 'Please enter a valid API key',
+        }))
+        return
+      }
+
+      // Validate connection before saving — tests auth, endpoint reachability,
+      // model existence, and tool support in one call
+      const testResult = await window.electronAPI.testApiConnection(
+        data.apiKey,
+        data.baseUrl,
+        data.customModel,
+      )
+
+      if (!testResult.success) {
+        setState(s => ({
+          ...s,
+          credentialStatus: 'error',
+          errorMessage: testResult.error || 'Connection test failed',
         }))
         return
       }
@@ -195,9 +223,9 @@ export function useOnboarding({
   // Two-step OAuth flow state
   const [isWaitingForCode, setIsWaitingForCode] = useState(false)
 
-  // Check for existing Claude token when reaching credentials step with oauth billing
+  // Check for existing Claude token when reaching credentials step with OAuth selected
   useEffect(() => {
-    if (state.step === 'credentials' && state.billingMethod === 'claude_oauth' && !claudeOAuthChecked) {
+    if (state.step === 'credentials' && state.apiSetupMethod === 'claude_oauth' && !claudeOAuthChecked) {
       const checkClaudeAuth = async () => {
         try {
           const [token, cliInstalled] = await Promise.all([
@@ -214,7 +242,7 @@ export function useOnboarding({
       }
       checkClaudeAuth()
     }
-  }, [state.step, state.billingMethod, claudeOAuthChecked])
+  }, [state.step, state.apiSetupMethod, claudeOAuthChecked])
 
   // Use existing Claude token (from keychain)
   const handleUseExistingClaudeToken = useCallback(async () => {
@@ -329,11 +357,11 @@ export function useOnboarding({
   // Reset onboarding to initial state (used after logout)
   const reset = useCallback(() => {
     setState({
-      step: 'welcome',
+      step: initialStep,
       loginStatus: 'idle',
       credentialStatus: 'idle',
       completionStatus: 'saving',
-      billingMethod: null,
+      apiSetupMethod: null,
       isExistingUser: false,
       errorMessage: undefined,
     })
@@ -347,7 +375,7 @@ export function useOnboarding({
     state,
     handleContinue,
     handleBack,
-    handleSelectBillingMethod,
+    handleSelectApiSetupMethod,
     handleSubmitCredential,
     handleStartOAuth,
     existingClaudeToken,

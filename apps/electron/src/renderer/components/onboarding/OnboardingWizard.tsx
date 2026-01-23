@@ -1,13 +1,13 @@
 import { cn } from "@/lib/utils"
 import { WelcomeStep } from "./WelcomeStep"
-import { BillingMethodStep, type BillingMethod } from "./BillingMethodStep"
+import { APISetupStep, type ApiSetupMethod } from "./APISetupStep"
 import { CredentialsStep, type CredentialStatus } from "./CredentialsStep"
 import { CompletionStep } from "./CompletionStep"
 import type { ApiKeySubmitData } from "../apisetup"
 
 export type OnboardingStep =
   | 'welcome'
-  | 'billing-method'
+  | 'api-setup'
   | 'credentials'
   | 'complete'
 
@@ -18,7 +18,7 @@ export interface OnboardingState {
   loginStatus: LoginStatus
   credentialStatus: CredentialStatus
   completionStatus: 'saving' | 'complete'
-  billingMethod: BillingMethod | null
+  apiSetupMethod: ApiSetupMethod | null
   isExistingUser: boolean
   errorMessage?: string
 }
@@ -30,7 +30,7 @@ interface OnboardingWizardProps {
   // Event handlers
   onContinue: () => void
   onBack: () => void
-  onSelectBillingMethod: (method: BillingMethod) => void
+  onSelectApiSetupMethod: (method: ApiSetupMethod) => void
   onSubmitCredential: (data: ApiKeySubmitData) => void
   onStartOAuth?: () => void
   onFinish: () => void
@@ -52,7 +52,7 @@ interface OnboardingWizardProps {
  *
  * Manages the step-by-step flow for setting up Craft Agent:
  * 1. Welcome
- * 2. Billing Method (choose: API Key / Claude OAuth)
+ * 2. API Setup (choose: API Key / Claude OAuth)
  * 3. Credentials (API Key or Claude OAuth)
  * 4. Completion
  */
@@ -60,7 +60,7 @@ export function OnboardingWizard({
   state,
   onContinue,
   onBack,
-  onSelectBillingMethod,
+  onSelectApiSetupMethod,
   onSubmitCredential,
   onStartOAuth,
   onFinish,
@@ -83,11 +83,11 @@ export function OnboardingWizard({
           />
         )
 
-      case 'billing-method':
+      case 'api-setup':
         return (
-          <BillingMethodStep
-            selectedMethod={state.billingMethod}
-            onSelect={onSelectBillingMethod}
+          <APISetupStep
+            selectedMethod={state.apiSetupMethod}
+            onSelect={onSelectApiSetupMethod}
             onContinue={onContinue}
             onBack={onBack}
           />
@@ -96,7 +96,7 @@ export function OnboardingWizard({
       case 'credentials':
         return (
           <CredentialsStep
-            billingMethod={state.billingMethod!}
+            apiSetupMethod={state.apiSetupMethod!}
             status={state.credentialStatus}
             errorMessage={state.errorMessage}
             onSubmit={onSubmitCredential}

@@ -1,6 +1,6 @@
 import type { ComponentEntry } from './types'
 import { WelcomeStep } from '@/components/onboarding/WelcomeStep'
-import { BillingMethodStep } from '@/components/onboarding/BillingMethodStep'
+import { APISetupStep } from '@/components/onboarding/APISetupStep'
 import { CredentialsStep } from '@/components/onboarding/CredentialsStep'
 import { CompletionStep } from '@/components/onboarding/CompletionStep'
 import { OnboardingWizard } from '@/components/onboarding/OnboardingWizard'
@@ -11,7 +11,7 @@ const createOnboardingState = (overrides: Partial<OnboardingState> = {}): Onboar
   loginStatus: 'idle',
   credentialStatus: 'idle',
   completionStatus: 'complete',
-  billingMethod: null,
+  apiSetupMethod: null,
   isExistingUser: false,
   ...overrides,
 })
@@ -42,15 +42,15 @@ export const onboardingComponents: ComponentEntry[] = [
     }),
   },
   {
-    id: 'billing-method-step',
-    name: 'BillingMethodStep',
+    id: 'api-setup-step',
+    name: 'APISetupStep',
     category: 'Onboarding',
     description: 'Choose payment method for AI usage',
-    component: BillingMethodStep,
+    component: APISetupStep,
     props: [
       {
         name: 'selectedMethod',
-        description: 'Currently selected billing method',
+        description: 'Currently selected API setup method',
         control: {
           type: 'select',
           options: [
@@ -102,13 +102,13 @@ export const onboardingComponents: ComponentEntry[] = [
       },
     ],
     variants: [
-      { name: 'Idle', props: { billingMethod: 'api_key', status: 'idle' } },
-      { name: 'Validating', props: { billingMethod: 'api_key', status: 'validating' } },
-      { name: 'Success', props: { billingMethod: 'api_key', status: 'success' } },
-      { name: 'Error', props: { billingMethod: 'api_key', status: 'error', errorMessage: 'Invalid API key. Please check and try again.' } },
+      { name: 'Idle', props: { apiSetupMethod: 'api_key', status: 'idle' } },
+      { name: 'Validating', props: { apiSetupMethod: 'api_key', status: 'validating' } },
+      { name: 'Success', props: { apiSetupMethod: 'api_key', status: 'success' } },
+      { name: 'Error', props: { apiSetupMethod: 'api_key', status: 'error', errorMessage: 'Invalid API key. Please check and try again.' } },
     ],
     mockData: () => ({
-      billingMethod: 'api_key',
+      apiSetupMethod: 'api_key',
       onSubmit: (data: { apiKey: string; baseUrl?: string; customModel?: string }) => console.log('[Playground] Submitted:', data),
       onStartOAuth: noopHandler,
       onBack: noopHandler,
@@ -149,17 +149,17 @@ export const onboardingComponents: ComponentEntry[] = [
       },
     ],
     variants: [
-      { name: 'Idle', props: { billingMethod: 'claude_oauth', status: 'idle' } },
-      { name: 'Idle (Existing Token)', props: { billingMethod: 'claude_oauth', status: 'idle', existingClaudeToken: 'sk-ant-abc123def456ghi789...' } },
-      { name: 'Waiting for Code', props: { billingMethod: 'claude_oauth', status: 'idle', isWaitingForCode: true } },
-      { name: 'Waiting for Code - Validating', props: { billingMethod: 'claude_oauth', status: 'validating', isWaitingForCode: true } },
-      { name: 'Waiting for Code - Error', props: { billingMethod: 'claude_oauth', status: 'error', isWaitingForCode: true, errorMessage: 'Invalid authorization code.' } },
-      { name: 'Validating', props: { billingMethod: 'claude_oauth', status: 'validating' } },
-      { name: 'Success', props: { billingMethod: 'claude_oauth', status: 'success' } },
-      { name: 'Error', props: { billingMethod: 'claude_oauth', status: 'error', errorMessage: 'Authentication failed. Please try again.' } },
+      { name: 'Idle', props: { apiSetupMethod: 'claude_oauth', status: 'idle' } },
+      { name: 'Idle (Existing Token)', props: { apiSetupMethod: 'claude_oauth', status: 'idle', existingClaudeToken: 'sk-ant-abc123def456ghi789...' } },
+      { name: 'Waiting for Code', props: { apiSetupMethod: 'claude_oauth', status: 'idle', isWaitingForCode: true } },
+      { name: 'Waiting for Code - Validating', props: { apiSetupMethod: 'claude_oauth', status: 'validating', isWaitingForCode: true } },
+      { name: 'Waiting for Code - Error', props: { apiSetupMethod: 'claude_oauth', status: 'error', isWaitingForCode: true, errorMessage: 'Invalid authorization code.' } },
+      { name: 'Validating', props: { apiSetupMethod: 'claude_oauth', status: 'validating' } },
+      { name: 'Success', props: { apiSetupMethod: 'claude_oauth', status: 'success' } },
+      { name: 'Error', props: { apiSetupMethod: 'claude_oauth', status: 'error', errorMessage: 'Authentication failed. Please try again.' } },
     ],
     mockData: () => ({
-      billingMethod: 'claude_oauth',
+      apiSetupMethod: 'claude_oauth',
       onSubmit: (data: { apiKey: string }) => console.log('[Playground] Submitted:', data),
       onStartOAuth: noopHandler,
       onBack: noopHandler,
@@ -218,25 +218,25 @@ export const onboardingComponents: ComponentEntry[] = [
       {
         name: 'Billing Method',
         props: {
-          state: createOnboardingState({ step: 'billing-method' }),
+          state: createOnboardingState({ step: 'api-setup' }),
         },
       },
       {
         name: 'Billing Method (Selected)',
         props: {
-          state: createOnboardingState({ step: 'billing-method', billingMethod: 'claude_oauth' }),
+          state: createOnboardingState({ step: 'api-setup', apiSetupMethod: 'claude_oauth' }),
         },
       },
       {
         name: 'Credentials - API Key',
         props: {
-          state: createOnboardingState({ step: 'credentials', billingMethod: 'api_key' }),
+          state: createOnboardingState({ step: 'credentials', apiSetupMethod: 'api_key' }),
         },
       },
       {
         name: 'Credentials - OAuth',
         props: {
-          state: createOnboardingState({ step: 'credentials', billingMethod: 'claude_oauth' }),
+          state: createOnboardingState({ step: 'credentials', apiSetupMethod: 'claude_oauth' }),
         },
       },
       {
@@ -260,7 +260,7 @@ export const onboardingComponents: ComponentEntry[] = [
       className: 'min-h-0 h-full',
       onContinue: noopHandler,
       onBack: noopHandler,
-      onSelectBillingMethod: (method: string) => console.log('[Playground] Selected billing:', method),
+      onSelectApiSetupMethod: (method: string) => console.log('[Playground] Selected method:', method),
       onSubmitCredential: (data: { apiKey: string; baseUrl?: string; customModel?: string }) => console.log('[Playground] Submitted:', data),
       onStartOAuth: noopHandler,
       onFinish: noopHandler,

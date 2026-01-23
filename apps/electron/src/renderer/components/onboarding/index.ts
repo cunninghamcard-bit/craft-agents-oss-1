@@ -11,7 +11,7 @@ export {
 
 // Individual steps
 export { WelcomeStep } from './WelcomeStep'
-export { BillingMethodStep, type BillingMethod } from './BillingMethodStep'
+export { APISetupStep, type ApiSetupMethod } from './APISetupStep'
 export { CredentialsStep, type CredentialStatus } from './CredentialsStep'
 export { CompletionStep } from './CompletionStep'
 export { ReauthScreen } from './ReauthScreen'
@@ -26,8 +26,8 @@ export type {
 } from './OnboardingWizard'
 
 export type {
-  BillingMethod as BillingMethodType,
-} from './BillingMethodStep'
+  ApiSetupMethod as ApiSetupMethodType,
+} from './APISetupStep'
 
 export type {
   CredentialStatus as CredentialStatusType,

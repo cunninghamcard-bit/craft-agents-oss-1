@@ -2,17 +2,17 @@ import { cn } from "@/lib/utils"
 import { Check, CreditCard, Key } from "lucide-react"
 import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
 
-export type BillingMethod = 'api_key' | 'claude_oauth'
+export type ApiSetupMethod = 'api_key' | 'claude_oauth'
 
-interface BillingOption {
-  id: BillingMethod
+interface ApiSetupOption {
+  id: ApiSetupMethod
   name: string
   description: string
   icon: React.ReactNode
   recommended?: boolean
 }
 
-const BILLING_OPTIONS: BillingOption[] = [
+const API_SETUP_OPTIONS: ApiSetupOption[] = [
   {
     id: 'claude_oauth',
     name: 'Claude Pro/Max',
@@ -28,26 +28,26 @@ const BILLING_OPTIONS: BillingOption[] = [
   },
 ]
 
-interface BillingMethodStepProps {
-  selectedMethod: BillingMethod | null
-  onSelect: (method: BillingMethod) => void
+interface APISetupStepProps {
+  selectedMethod: ApiSetupMethod | null
+  onSelect: (method: ApiSetupMethod) => void
   onContinue: () => void
   onBack: () => void
 }
 
 /**
- * BillingMethodStep - Choose how to connect your AI agents
+ * APISetupStep - Choose how to connect your AI agents
  *
  * Two options:
  * - Claude Pro/Max (recommended) - Uses Claude subscription
  * - API Key - Pay-as-you-go via Anthropic
  */
-export function BillingMethodStep({
+export function APISetupStep({
   selectedMethod,
   onSelect,
   onContinue,
   onBack
-}: BillingMethodStepProps) {
+}: APISetupStepProps) {
   return (
     <StepFormLayout
       title="Set Up API Connection"
@@ -61,7 +61,7 @@ export function BillingMethodStep({
     >
       {/* Options */}
       <div className="space-y-3">
-        {BILLING_OPTIONS.map((option) => {
+        {API_SETUP_OPTIONS.map((option) => {
           const isSelected = option.id === selectedMethod
 
           return (
@@ -92,7 +92,7 @@ export function BillingMethodStep({
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-sm">{option.name}</span>
                   {option.recommended && (
-                    <span className="bg-foreground/5 px-2 py-0.5 text-[11px] font-medium text-foreground/70">
+                    <span className="rounded-[4px] bg-background shadow-minimal px-2 py-0.5 text-[11px] font-medium text-foreground/70">
                       Recommended
                     </span>
                   )}

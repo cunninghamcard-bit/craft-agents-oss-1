@@ -6,7 +6,7 @@
  */
 
 import { ExternalLink, CheckCircle2 } from "lucide-react"
-import type { BillingMethod } from "./BillingMethodStep"
+import type { ApiSetupMethod } from "./APISetupStep"
 import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
 import {
   ApiKeyInput,
@@ -19,7 +19,7 @@ import {
 export type CredentialStatus = ApiKeyStatus | OAuthStatus
 
 interface CredentialsStepProps {
-  billingMethod: BillingMethod
+  apiSetupMethod: ApiSetupMethod
   status: CredentialStatus
   errorMessage?: string
   onSubmit: (data: ApiKeySubmitData) => void
@@ -36,7 +36,7 @@ interface CredentialsStepProps {
 }
 
 export function CredentialsStep({
-  billingMethod,
+  apiSetupMethod,
   status,
   errorMessage,
   onSubmit,
@@ -48,7 +48,7 @@ export function CredentialsStep({
   onSubmitAuthCode,
   onCancelOAuth,
 }: CredentialsStepProps) {
-  const isOAuth = billingMethod === 'claude_oauth'
+  const isOAuth = apiSetupMethod === 'claude_oauth'
 
   // --- OAuth flow ---
   if (isOAuth) {

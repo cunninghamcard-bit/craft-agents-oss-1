@@ -6,28 +6,20 @@
  * Settings:
  * - Appearance (Theme, Font)
  * - Notifications
- * - Billing (API Key, Claude Max)
+ * - API Connection (opens OnboardingWizard for editing)
  */
 
-import * as React from 'react'
 import { useState, useEffect, useCallback } from 'react'
 import { PanelHeader } from '@/components/app-shell/PanelHeader'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { useTheme } from '@/context/ThemeContext'
 import { routes } from '@/lib/navigate'
-import { cn } from '@/lib/utils'
-import {
-  Monitor,
-  Sun,
-  Moon,
-  ExternalLink,
-  CheckCircle2,
-} from 'lucide-react'
-import { Spinner } from '@craft-agent/ui'
+import { Monitor, Sun, Moon } from 'lucide-react'
+import { Spinner, FullscreenOverlayBase } from '@craft-agent/ui'
+import { useSetAtom } from 'jotai'
+import { fullscreenOverlayOpenAtom } from '@/atoms/overlay'
 import type { AuthType } from '../../../shared/types'
 import type { DetailsPageMeta } from '@/lib/navigation-registry'
 
@@ -37,299 +29,16 @@ import {
   SettingsRow,
   SettingsToggle,
   SettingsSegmentedControl,
-  SettingsMenuSelectRow,
   SettingsMenuSelect,
-  SettingsSecretInput,
-  SettingsInput,
 } from '@/components/settings'
 import { useUpdateChecker } from '@/hooks/useUpdateChecker'
+import { useOnboarding } from '@/hooks/useOnboarding'
+import { OnboardingWizard } from '@/components/onboarding'
 import type { PresetTheme } from '@config/theme'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from '@/components/ui/dialog'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
   slug: 'app',
-}
-
-// ============================================
-// Claude OAuth Dialog Content
-// ============================================
-
-interface ClaudeOAuthDialogBaseProps {
-  existingToken: string | null
-  isLoading: boolean
-  onUseExisting: () => void
-  onStartOAuth: () => void
-  onCancel: () => void
-  status: 'idle' | 'loading' | 'success' | 'error'
-  errorMessage?: string
-}
-
-type ClaudeOAuthDialogProps = ClaudeOAuthDialogBaseProps & (
-  | { isWaitingForCode: false }
-  | { isWaitingForCode: true; authCode: string; onAuthCodeChange: (code: string) => void; onSubmitAuthCode: (code: string) => void }
-)
-
-function ClaudeOAuthDialogContent(props: ClaudeOAuthDialogProps) {
-  const { existingToken, isLoading, onUseExisting, onStartOAuth, onCancel, status, errorMessage } = props
-
-  if (status === 'success') {
-    return (
-      <div className="space-y-4">
-        <div className="flex items-center gap-2 text-sm text-success">
-          <CheckCircle2 className="size-4" />
-          Connected to Claude
-        </div>
-      </div>
-    )
-  }
-
-  // Waiting for authorization code entry
-  if (props.isWaitingForCode) {
-    const { authCode, onAuthCodeChange, onSubmitAuthCode } = props
-    const trimmedCode = authCode.trim()
-
-    const handleSubmit = () => {
-      if (trimmedCode) {
-        onSubmitAuthCode(trimmedCode)
-      }
-    }
-
-    return (
-      <div className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Copy the authorization code from your browser and paste it below.
-        </p>
-        <div className="space-y-2">
-          <Label htmlFor="auth-code">Authorization Code</Label>
-          <div className="relative rounded-md shadow-minimal transition-colors bg-foreground-2 focus-within:bg-background">
-            <Input
-              id="auth-code"
-              type="text"
-              value={authCode}
-              onChange={(e) => onAuthCodeChange(e.target.value)}
-              placeholder="Paste your authorization code here"
-              className="border-0 bg-transparent shadow-none font-mono text-sm"
-              disabled={status === 'loading'}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  handleSubmit()
-                }
-              }}
-            />
-          </div>
-          {status === 'error' && errorMessage && (
-            <p className="text-sm text-destructive">{errorMessage}</p>
-          )}
-        </div>
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <Button
-            variant="ghost"
-            onClick={onCancel}
-            disabled={status === 'loading'}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleSubmit}
-            disabled={!trimmedCode || status === 'loading'}
-          >
-            {status === 'loading' ? (
-              <>
-                <Spinner className="mr-1.5" />
-                Connecting...
-              </>
-            ) : (
-              'Connect'
-            )}
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Use your Claude Pro or Max subscription for unlimited access.
-      </p>
-      <div className="flex items-center justify-end gap-2 pt-2">
-        {existingToken ? (
-          <Button
-            onClick={onUseExisting}
-            disabled={isLoading}
-          >
-            {status === 'loading' ? (
-              <>
-                <Spinner className="mr-1.5" />
-                Connecting...
-              </>
-            ) : (
-              <>
-                <CheckCircle2 className="size-3 mr-1.5" />
-                Use Existing Token
-              </>
-            )}
-          </Button>
-        ) : (
-          <Button
-            onClick={onStartOAuth}
-            disabled={isLoading}
-          >
-            {status === 'loading' ? (
-              <>
-                <Spinner className="mr-1.5" />
-                Starting...
-              </>
-            ) : (
-              <>
-                <ExternalLink className="size-3 mr-1.5" />
-                Sign in with Claude
-              </>
-            )}
-          </Button>
-        )}
-        <Button
-          variant="ghost"
-          onClick={onCancel}
-          disabled={isLoading}
-        >
-          Cancel
-        </Button>
-      </div>
-      {existingToken && (
-        <div className="text-center">
-          <Button
-            variant="link"
-            onClick={onStartOAuth}
-            disabled={isLoading}
-            className="text-muted-foreground hover:text-foreground"
-          >
-            Or sign in with a different account
-          </Button>
-        </div>
-      )}
-      {errorMessage && (
-        <p className="text-xs text-destructive">{errorMessage}</p>
-      )}
-    </div>
-  )
-}
-
-// ============================================
-// API Key Auto-Save Hook
-// ============================================
-
-const MIN_SAVE_DISPLAY_MS = 1500
-const DEBOUNCE_MS = 500
-
-function useApiKeyAutoSave({
-  apiKey,
-  baseUrl,
-  customModel,
-  authType,
-  hasCredential,
-  onSaveStart,
-  onSaveSuccess,
-  onSaveError,
-}: {
-  apiKey: string
-  baseUrl: string
-  customModel: string
-  authType: AuthType
-  hasCredential: boolean
-  onSaveStart?: () => void
-  onSaveSuccess?: () => void
-  onSaveError?: (error: string) => void
-}) {
-  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const lastSavedRef = React.useRef<string | null>(null)
-  const isInitialLoadRef = React.useRef(true)
-  const saveStartTimeRef = React.useRef<number>(0)
-
-  const serializeConfig = React.useCallback(() => {
-    return JSON.stringify({ apiKey, baseUrl, customModel })
-  }, [apiKey, baseUrl, customModel])
-
-  const doSave = React.useCallback(async () => {
-    if (authType !== 'api_key') return
-
-    const currentConfig = serializeConfig()
-    if (currentConfig === lastSavedRef.current) return
-
-    const trimmedKey = apiKey.trim()
-
-    saveStartTimeRef.current = Date.now()
-    onSaveStart?.()
-    try {
-      await window.electronAPI.updateBillingMethod(
-        'api_key',
-        trimmedKey,
-        baseUrl.trim() || null,
-        customModel.trim() || null
-      )
-      lastSavedRef.current = currentConfig
-
-      // Ensure saving indicator shows for at least MIN_SAVE_DISPLAY_MS
-      const elapsed = Date.now() - saveStartTimeRef.current
-      const remaining = MIN_SAVE_DISPLAY_MS - elapsed
-      if (remaining > 0) {
-        setTimeout(() => onSaveSuccess?.(), remaining)
-      } else {
-        onSaveSuccess?.()
-      }
-    } catch (error) {
-      const elapsed = Date.now() - saveStartTimeRef.current
-      const remaining = MIN_SAVE_DISPLAY_MS - elapsed
-      const errorMsg = error instanceof Error ? error.message : 'Failed to save'
-      if (remaining > 0) {
-        setTimeout(() => onSaveError?.(errorMsg), remaining)
-      } else {
-        onSaveError?.(errorMsg)
-      }
-    }
-  }, [authType, apiKey, baseUrl, customModel, serializeConfig, onSaveStart, onSaveSuccess, onSaveError])
-
-  const handleBlur = React.useCallback(() => {
-    if (isInitialLoadRef.current) return
-    doSave()
-  }, [doSave])
-
-  // Debounce auto-save on input change
-  React.useEffect(() => {
-    if (authType !== 'api_key') return
-    if (isInitialLoadRef.current) return
-
-    if (debounceRef.current) {
-      clearTimeout(debounceRef.current)
-    }
-
-    debounceRef.current = setTimeout(() => {
-      doSave()
-    }, DEBOUNCE_MS)
-
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current)
-    }
-  }, [authType, apiKey, baseUrl, customModel, doSave])
-
-  React.useEffect(() => {
-    if (authType === 'api_key' && isInitialLoadRef.current) {
-      lastSavedRef.current = serializeConfig()
-      setTimeout(() => {
-        isInitialLoadRef.current = false
-      }, 100)
-    }
-  }, [authType, hasCredential, serializeConfig])
-
-  return { handleBlur }
 }
 
 // ============================================
@@ -342,25 +51,11 @@ export default function AppSettingsPage() {
   // Preset themes state
   const [presetThemes, setPresetThemes] = useState<PresetTheme[]>([])
 
-  // Billing state
-  type PaymentMethod = 'oauth_token' | 'api_key'
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('api_key')
+  // API Connection state (read-only display — editing is done via OnboardingWizard overlay)
   const [authType, setAuthType] = useState<AuthType>('api_key')
-  const [expandedMethod, setExpandedMethod] = useState<AuthType | null>(null)
   const [hasCredential, setHasCredential] = useState(false)
-
-  // API Key state (with optional custom endpoint fields)
-  const [apiKeyValue, setApiKeyValue] = useState('')
-  const [baseUrlValue, setBaseUrlValue] = useState('')
-  const [customModelValue, setCustomModelValue] = useState('')
-  const [apiKeyError, setApiKeyError] = useState<string | undefined>()
-
-  // Claude OAuth state
-  const [existingClaudeToken, setExistingClaudeToken] = useState<string | null>(null)
-  const [claudeOAuthStatus, setClaudeOAuthStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [claudeOAuthError, setClaudeOAuthError] = useState<string | undefined>()
-  const [isWaitingForCode, setIsWaitingForCode] = useState(false)
-  const [authCode, setAuthCode] = useState('')
+  const [showApiSetup, setShowApiSetup] = useState(false)
+  const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
 
   // Notifications state
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
@@ -378,47 +73,24 @@ export default function AppSettingsPage() {
     }
   }, [updateChecker])
 
-  // API Key auto-save hook (with optional base URL + model override)
-  const { handleBlur } = useApiKeyAutoSave({
-    apiKey: apiKeyValue,
-    baseUrl: baseUrlValue,
-    customModel: customModelValue,
-    authType,
-    hasCredential,
-    onSaveSuccess: () => {
-      // Could show a success indicator here if needed
-    },
-    onSaveError: (error) => {
-      setApiKeyError(error)
-    },
-  })
-
-  // Load current billing method, notifications setting, and preset themes on mount
-  useEffect(() => {
-    const loadSettings = async () => {
-      if (!window.electronAPI) return
-      try {
-        const [billing, notificationsOn] = await Promise.all([
-          window.electronAPI.getBillingMethod(),
-          window.electronAPI.getNotificationsEnabled(),
-        ])
-        setAuthType(billing.authType)
-        setHasCredential(billing.hasCredential)
-        setNotificationsEnabled(notificationsOn)
-
-        if (billing.authType === 'oauth_token') {
-          setPaymentMethod('oauth_token')
-        } else {
-          setPaymentMethod('api_key')
-          setApiKeyValue(billing.apiKey || '')
-          setBaseUrlValue(billing.anthropicBaseUrl || '')
-          setCustomModelValue(billing.customModel || '')
-        }
-      } catch (error) {
-        console.error('Failed to load settings:', error)
-      }
+  // Load current API connection info and notifications on mount
+  const loadConnectionInfo = useCallback(async () => {
+    if (!window.electronAPI) return
+    try {
+      const [billing, notificationsOn] = await Promise.all([
+        window.electronAPI.getBillingMethod(),
+        window.electronAPI.getNotificationsEnabled(),
+      ])
+      setAuthType(billing.authType)
+      setHasCredential(billing.hasCredential)
+      setNotificationsEnabled(notificationsOn)
+    } catch (error) {
+      console.error('Failed to load settings:', error)
     }
-    loadSettings()
+  }, [])
+
+  useEffect(() => {
+    loadConnectionInfo()
   }, [])
 
   // Load preset themes when workspace changes (themes are workspace-scoped)
@@ -440,146 +112,37 @@ export default function AppSettingsPage() {
     loadThemes()
   }, [])
 
-  // Check for existing Claude token when expanding oauth_token option
-  useEffect(() => {
-    if (expandedMethod !== 'oauth_token') return
+  // Helpers to open/close the fullscreen API setup overlay
+  const openApiSetup = useCallback(() => {
+    setShowApiSetup(true)
+    setFullscreenOverlayOpen(true)
+  }, [setFullscreenOverlayOpen])
 
-    const checkExistingToken = async () => {
-      if (!window.electronAPI) return
-      try {
-        const token = await window.electronAPI.getExistingClaudeToken()
-        setExistingClaudeToken(token)
-      } catch (error) {
-        console.error('Failed to check existing Claude token:', error)
-      }
-    }
-    checkExistingToken()
-  }, [expandedMethod])
+  const closeApiSetup = useCallback(() => {
+    setShowApiSetup(false)
+    setFullscreenOverlayOpen(false)
+  }, [setFullscreenOverlayOpen])
 
-  // Handle clicking on a payment method option
-  const handleMethodClick = useCallback(async (method: PaymentMethod) => {
-    if (method === 'api_key') {
-      if (authType !== 'api_key' || paymentMethod !== 'api_key') {
-        try {
-          const trimmedKey = apiKeyValue.trim() || undefined
-          await window.electronAPI.updateBillingMethod('api_key', trimmedKey, baseUrlValue.trim() || null, customModelValue.trim() || null)
-          setAuthType('api_key')
-          setPaymentMethod('api_key')
-          setHasCredential(!!trimmedKey)
-        } catch (error) {
-          console.error('Failed to switch to API key mode:', error)
-        }
-      }
-      return
-    }
+  // OnboardingWizard hook for editing API connection (starts at api-setup step)
+  const apiSetupOnboarding = useOnboarding({
+    initialStep: 'api-setup',
+    onComplete: () => {
+      closeApiSetup()
+      loadConnectionInfo()
+      apiSetupOnboarding.reset()
+    },
+    onDismiss: () => {
+      closeApiSetup()
+      apiSetupOnboarding.reset()
+    },
+  })
 
-    // OAuth token mode - show dialog
-    if (method === 'oauth_token') {
-      if (method === authType && hasCredential) {
-        setExpandedMethod(null)
-        return
-      }
-      setExpandedMethod('oauth_token')
-      setApiKeyError(undefined)
-      setClaudeOAuthStatus('idle')
-      setClaudeOAuthError(undefined)
-    }
-  }, [authType, paymentMethod, hasCredential, apiKeyValue, baseUrlValue, customModelValue])
-
-  // Use existing Claude token
-  const handleUseExistingClaudeToken = useCallback(async () => {
-    if (!window.electronAPI || !existingClaudeToken) return
-
-    setClaudeOAuthStatus('loading')
-    setClaudeOAuthError(undefined)
-    try {
-      await window.electronAPI.updateBillingMethod('oauth_token', existingClaudeToken)
-      setAuthType('oauth_token')
-      setPaymentMethod('oauth_token')
-      setHasCredential(true)
-      setClaudeOAuthStatus('success')
-      setExpandedMethod(null)
-    } catch (error) {
-      setClaudeOAuthStatus('error')
-      setClaudeOAuthError(error instanceof Error ? error.message : 'Failed to save token')
-    }
-  }, [existingClaudeToken])
-
-  // Start Claude OAuth flow (native browser-based)
-  const handleStartClaudeOAuth = useCallback(async () => {
-    if (!window.electronAPI) return
-
-    setClaudeOAuthStatus('loading')
-    setClaudeOAuthError(undefined)
-
-    try {
-      // Start OAuth flow - this opens the browser
-      const result = await window.electronAPI.startClaudeOAuth()
-
-      if (result.success) {
-        // Browser opened successfully, now waiting for user to copy the code
-        setIsWaitingForCode(true)
-        setClaudeOAuthStatus('idle')
-      } else {
-        setClaudeOAuthStatus('error')
-        setClaudeOAuthError(result.error || 'Failed to start OAuth')
-      }
-    } catch (error) {
-      setClaudeOAuthStatus('error')
-      setClaudeOAuthError(error instanceof Error ? error.message : 'OAuth failed')
-    }
-  }, [])
-
-  // Submit authorization code from browser
-  const handleSubmitAuthCode = useCallback(async (code: string) => {
-    if (!window.electronAPI || !code.trim()) {
-      setClaudeOAuthError('Please enter the authorization code')
-      return
-    }
-
-    setClaudeOAuthStatus('loading')
-    setClaudeOAuthError(undefined)
-
-    try {
-      const result = await window.electronAPI.exchangeClaudeCode(code.trim())
-
-      if (result.success && result.token) {
-        await window.electronAPI.updateBillingMethod('oauth_token', result.token)
-        setAuthType('oauth_token')
-        setPaymentMethod('oauth_token')
-        setHasCredential(true)
-        setClaudeOAuthStatus('success')
-        setIsWaitingForCode(false)
-        setAuthCode('')
-        setExpandedMethod(null)
-      } else {
-        setClaudeOAuthStatus('error')
-        setClaudeOAuthError(result.error || 'Failed to exchange code')
-      }
-    } catch (error) {
-      setClaudeOAuthStatus('error')
-      setClaudeOAuthError(error instanceof Error ? error.message : 'Failed to exchange code')
-    }
-  }, [])
-
-  // Cancel OAuth flow and clear state
-  const handleCancelOAuth = useCallback(async () => {
-    setIsWaitingForCode(false)
-    setAuthCode('')
-    setClaudeOAuthStatus('idle')
-    setClaudeOAuthError(undefined)
-    setExpandedMethod(null)
-
-    // Clear OAuth state on backend
-    if (window.electronAPI) {
-      try {
-        await window.electronAPI.clearClaudeOAuthState()
-      } catch (error) {
-        // Non-critical: state cleanup failed, but UI is already reset
-        console.error('Failed to clear OAuth state:', error)
-      }
-    }
-  }, [])
+  // Called when user completes the wizard (clicks Finish on completion step)
+  const handleApiSetupFinish = useCallback(() => {
+    closeApiSetup()
+    loadConnectionInfo()
+    apiSetupOnboarding.reset()
+  }, [closeApiSetup, loadConnectionInfo, apiSetupOnboarding])
 
   const handleNotificationsEnabledChange = useCallback(async (enabled: boolean) => {
     setNotificationsEnabled(enabled)
@@ -647,100 +210,53 @@ export default function AppSettingsPage() {
               </SettingsCard>
             </SettingsSection>
 
-            {/* Billing */}
-            <SettingsSection title="Billing" description="Choose how you pay for AI usage">
+            {/* API Connection */}
+            <SettingsSection title="API Connection" description="How your AI agents connect to language models.">
               <SettingsCard>
-                <SettingsMenuSelectRow
-                  label="Payment method"
+                <SettingsRow
+                  label="Connection type"
                   description={
-                    paymentMethod === 'api_key' && hasCredential
-                      ? 'API key configured'
-                      : paymentMethod === 'oauth_token' && hasCredential
-                        ? 'Claude connected'
-                        : 'Select a method'
+                    authType === 'oauth_token' && hasCredential
+                      ? 'Claude Pro/Max — using your Claude subscription'
+                      : authType === 'api_key' && hasCredential
+                        ? 'API Key — Anthropic, OpenRouter, or compatible API'
+                        : 'Not configured'
                   }
-                  value={paymentMethod}
-                  onValueChange={(v) => handleMethodClick(v as PaymentMethod)}
-                  options={[
-                    { value: 'oauth_token', label: 'Claude Pro/Max', description: 'Use your Pro or Max subscription' },
-                    { value: 'api_key', label: 'API Key', description: 'Anthropic, OpenRouter, Ollama, or compatible APIs' },
-                  ]}
-                />
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={openApiSetup}
+                  >
+                    Edit
+                  </Button>
+                </SettingsRow>
               </SettingsCard>
-
-              {/* API Key Config (with optional custom endpoint fields) */}
-              {paymentMethod === 'api_key' && (
-                <SettingsCard className="mt-2">
-                  <SettingsSecretInput
-                    label="API Key"
-                    description="Your API key (Anthropic, OpenRouter, or custom provider)"
-                    value={apiKeyValue}
-                    onChange={setApiKeyValue}
-                    onBlur={handleBlur}
-                    placeholder="sk-ant-..."
-                    inCard
-                    error={apiKeyError}
-                  />
-                  <SettingsInput
-                    label="Base URL"
-                    description="Optional. For OpenRouter, Ollama, or compatible APIs"
-                    value={baseUrlValue}
-                    onChange={setBaseUrlValue}
-                    onBlur={handleBlur}
-                    placeholder="https://openrouter.ai/api"
-                    inCard
-                  />
-                  <SettingsInput
-                    label="Model"
-                    description="Optional. Overrides model selector when set"
-                    value={customModelValue}
-                    onChange={setCustomModelValue}
-                    onBlur={handleBlur}
-                    placeholder="e.g. openai/gpt-5, qwen3-coder"
-                    inCard
-                  />
-                </SettingsCard>
-              )}
-
-              {/* Claude OAuth Dialog */}
-              <Dialog open={expandedMethod === 'oauth_token'} onOpenChange={(open) => !open && handleCancelOAuth()}>
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>Claude Max</DialogTitle>
-                    <DialogDescription>
-                      Connect your Claude subscription
-                    </DialogDescription>
-                  </DialogHeader>
-                  {isWaitingForCode ? (
-                    <ClaudeOAuthDialogContent
-                      existingToken={existingClaudeToken}
-                      isLoading={claudeOAuthStatus === 'loading'}
-                      onUseExisting={handleUseExistingClaudeToken}
-                      onStartOAuth={handleStartClaudeOAuth}
-                      onCancel={handleCancelOAuth}
-                      status={claudeOAuthStatus}
-                      errorMessage={claudeOAuthError}
-                      isWaitingForCode={true}
-                      authCode={authCode}
-                      onAuthCodeChange={setAuthCode}
-                      onSubmitAuthCode={handleSubmitAuthCode}
-                    />
-                  ) : (
-                    <ClaudeOAuthDialogContent
-                      existingToken={existingClaudeToken}
-                      isLoading={claudeOAuthStatus === 'loading'}
-                      onUseExisting={handleUseExistingClaudeToken}
-                      onStartOAuth={handleStartClaudeOAuth}
-                      onCancel={handleCancelOAuth}
-                      status={claudeOAuthStatus}
-                      errorMessage={claudeOAuthError}
-                      isWaitingForCode={false}
-                    />
-                  )}
-                </DialogContent>
-              </Dialog>
-
             </SettingsSection>
+
+            {/* API Setup Fullscreen Overlay — reuses the OnboardingWizard starting at the api-setup step */}
+            <FullscreenOverlayBase
+              isOpen={showApiSetup}
+              onClose={closeApiSetup}
+              className="z-splash flex flex-col bg-foreground-2"
+            >
+              <OnboardingWizard
+                state={apiSetupOnboarding.state}
+                onContinue={apiSetupOnboarding.handleContinue}
+                onBack={apiSetupOnboarding.handleBack}
+                onSelectApiSetupMethod={apiSetupOnboarding.handleSelectApiSetupMethod}
+                onSubmitCredential={apiSetupOnboarding.handleSubmitCredential}
+                onStartOAuth={apiSetupOnboarding.handleStartOAuth}
+                onFinish={handleApiSetupFinish}
+                existingClaudeToken={apiSetupOnboarding.existingClaudeToken}
+                isClaudeCliInstalled={apiSetupOnboarding.isClaudeCliInstalled}
+                onUseExistingClaudeToken={apiSetupOnboarding.handleUseExistingClaudeToken}
+                isWaitingForCode={apiSetupOnboarding.isWaitingForCode}
+                onSubmitAuthCode={apiSetupOnboarding.handleSubmitAuthCode}
+                onCancelOAuth={apiSetupOnboarding.handleCancelOAuth}
+                className="h-full"
+              />
+            </FullscreenOverlayBase>
 
             {/* About */}
             <SettingsSection title="About">

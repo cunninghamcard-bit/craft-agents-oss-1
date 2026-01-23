@@ -1242,7 +1242,7 @@ export default function App() {
           state={onboarding.state}
           onContinue={onboarding.handleContinue}
           onBack={onboarding.handleBack}
-          onSelectBillingMethod={onboarding.handleSelectBillingMethod}
+          onSelectApiSetupMethod={onboarding.handleSelectApiSetupMethod}
           onSubmitCredential={onboarding.handleSubmitCredential}
           onStartOAuth={onboarding.handleStartOAuth}
           onFinish={onboarding.handleFinish}

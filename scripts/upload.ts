@@ -63,6 +63,16 @@ function getContentType(filename: string): string {
 }
 
 /**
+ * Detect architecture from filename (e.g., "Craft-Agent-arm64.zip" → "arm64")
+ * Used for electron-updater yml manifests so it can match the correct binary for the running arch.
+ */
+function detectArchFromFilename(filename: string): string {
+  if (filename.includes('arm64') || filename.includes('aarch64')) return 'arm64';
+  if (filename.includes('x64') || filename.includes('x86_64')) return 'x64';
+  return 'x64'; // Default to x64 if undetectable
+}
+
+/**
  * Detect platform from installer filename for legacy manifest generation
  */
 function detectPlatformFromFilename(filename: string): string | null {
@@ -118,12 +128,15 @@ function generateUpdateManifests(releaseDir: string, version: string): void {
 
   // Generate latest-mac.yml (contains entries for all available architectures)
   if (macZips.length > 0) {
-    const entries = macZips.map(zipFile => {
-      const filePath = join(releaseDir, zipFile);
-      const sha512 = computeSha512Base64(filePath);
-      const size = statSync(filePath).size;
-      return { url: zipFile, sha512, size };
-    });
+    const entries = macZips
+      .map(zipFile => {
+        const filePath = join(releaseDir, zipFile);
+        const sha512 = computeSha512Base64(filePath);
+        const size = statSync(filePath).size;
+        const arch = detectArchFromFilename(zipFile);
+        return { url: zipFile, sha512, size, arch };
+      })
+      .sort((a, b) => a.arch.localeCompare(b.arch)); // Deterministic order (arm64, x64)
 
     // YAML format expected by electron-updater
     let yml = `version: ${version}\n`;
@@ -132,6 +145,7 @@ function generateUpdateManifests(releaseDir: string, version: string): void {
       yml += `  - url: ${entry.url}\n`;
       yml += `    sha512: ${entry.sha512}\n`;
       yml += `    size: ${entry.size}\n`;
+      yml += `    arch: ${entry.arch}\n`;
     }
     // Top-level path/sha512 for backward compat (first entry)
     yml += `path: ${entries[0].url}\n`;
@@ -148,7 +162,8 @@ function generateUpdateManifests(releaseDir: string, version: string): void {
       const filePath = join(releaseDir, exeFile);
       const sha512 = computeSha512Base64(filePath);
       const size = statSync(filePath).size;
-      return { url: exeFile, sha512, size };
+      const arch = detectArchFromFilename(exeFile);
+      return { url: exeFile, sha512, size, arch };
     });
 
     let yml = `version: ${version}\n`;
@@ -157,6 +172,7 @@ function generateUpdateManifests(releaseDir: string, version: string): void {
       yml += `  - url: ${entry.url}\n`;
       yml += `    sha512: ${entry.sha512}\n`;
       yml += `    size: ${entry.size}\n`;
+      yml += `    arch: ${entry.arch}\n`;
     }
     yml += `path: ${entries[0].url}\n`;
     yml += `sha512: ${entries[0].sha512}\n`;
@@ -172,7 +188,8 @@ function generateUpdateManifests(releaseDir: string, version: string): void {
       const filePath = join(releaseDir, appImage);
       const sha512 = computeSha512Base64(filePath);
       const size = statSync(filePath).size;
-      return { url: appImage, sha512, size };
+      const arch = detectArchFromFilename(appImage);
+      return { url: appImage, sha512, size, arch };
     });
 
     let yml = `version: ${version}\n`;
@@ -181,6 +198,7 @@ function generateUpdateManifests(releaseDir: string, version: string): void {
       yml += `  - url: ${entry.url}\n`;
       yml += `    sha512: ${entry.sha512}\n`;
       yml += `    size: ${entry.size}\n`;
+      yml += `    arch: ${entry.arch}\n`;
     }
     yml += `path: ${entries[0].url}\n`;
     yml += `sha512: ${entries[0].sha512}\n`;

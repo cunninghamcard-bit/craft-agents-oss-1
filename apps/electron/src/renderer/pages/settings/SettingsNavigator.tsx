@@ -126,7 +126,7 @@ const settingsItems: SettingsItem[] = [
     id: 'app',
     label: 'App',
     icon: AppSettingsIcon,
-    description: 'Appearance, notifications, billing',
+    description: 'Appearance, notifications, API connection',
   },
   {
     id: 'workspace',

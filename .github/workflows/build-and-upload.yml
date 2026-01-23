@@ -340,6 +340,34 @@ jobs:
           SLACK_OAUTH_CLIENT_SECRET: ${{ secrets.SLACK_OAUTH_CLIENT_SECRET }}
           MICROSOFT_OAUTH_CLIENT_ID: ${{ secrets.MICROSOFT_OAUTH_CLIENT_ID }}
 
+      - name: Verify build outputs
+        if: steps.check-artifact.outputs.skip != 'true'
+        shell: bash
+        run: |
+          echo "=== Verifying build outputs ==="
+          RELEASE_DIR="apps/electron/release"
+          BINARY="$RELEASE_DIR/Craft-Agent-${{ matrix.arch }}.${{ matrix.ext }}"
+
+          # Check main binary exists
+          if [ ! -f "$BINARY" ]; then
+            echo "::error::Main binary not found: $BINARY"
+            exit 1
+          fi
+          echo "✓ Binary: $(basename $BINARY) ($(du -h "$BINARY" | cut -f1))"
+
+          # macOS: ZIP is required for electron-updater auto-updates (it downloads zip, not dmg)
+          if [ "${{ matrix.platform }}" = "darwin" ]; then
+            ZIP="$RELEASE_DIR/Craft-Agent-${{ matrix.arch }}.zip"
+            if [ ! -f "$ZIP" ]; then
+              echo "::error::macOS ZIP not found: $ZIP — electron-updater requires this for auto-updates!"
+              echo "::error::Check that electron-builder.yml has 'zip' in mac.target"
+              exit 1
+            fi
+            echo "✓ ZIP:    $(basename $ZIP) ($(du -h "$ZIP" | cut -f1))"
+          fi
+
+          echo "=== All build outputs verified ==="
+
       - name: Upload build artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.0
         with:
@@ -388,8 +416,33 @@ jobs:
           pattern: build-*
           merge-multiple: true
 
-      - name: List downloaded artifacts
-        run: ls -la apps/electron/release/
+      - name: Verify downloaded artifacts
+        run: |
+          echo "=== Downloaded Artifacts ==="
+          ls -la apps/electron/release/
+          echo ""
+
+          # Verify we have at least one binary
+          BINARIES=$(find apps/electron/release -name "*.dmg" -o -name "*.exe" -o -name "*.AppImage" | wc -l | tr -d ' ')
+          echo "Binary count: $BINARIES"
+          if [ "$BINARIES" -eq 0 ]; then
+            echo "::error::No binaries found in release directory!"
+            exit 1
+          fi
+
+          # Verify macOS zips exist if DMGs exist (required for electron-updater)
+          for DMG in apps/electron/release/Craft-Agent-*.dmg; do
+            [ -f "$DMG" ] || continue
+            ARCH=$(echo "$DMG" | grep -oE '(arm64|x64)')
+            ZIP="apps/electron/release/Craft-Agent-${ARCH}.zip"
+            if [ ! -f "$ZIP" ]; then
+              echo "::error::Found $DMG but missing corresponding $ZIP — electron-updater needs zip for auto-updates!"
+              exit 1
+            fi
+            echo "✓ macOS $ARCH: DMG + ZIP present"
+          done
+
+          echo "=== Artifacts verified ==="
 
       - name: Upload builds to S3
         env:
@@ -416,6 +469,24 @@ jobs:
           echo "Running: bun run scripts/upload.ts $FLAGS"
           echo "==========================="
           bun run scripts/upload.ts $FLAGS
+
+      - name: Print update manifests
+        run: |
+          echo "=== electron-updater Manifests (uploaded to S3) ==="
+          echo ""
+          for YML in apps/electron/release/latest-mac.yml apps/electron/release/latest.yml apps/electron/release/latest-linux.yml; do
+            if [ -f "$YML" ]; then
+              echo "── $(basename $YML) ──"
+              cat "$YML"
+              echo ""
+            fi
+          done
+          if [ -f "apps/electron/release/manifest.json" ]; then
+            echo "── manifest.json (legacy, for old updater transition) ──"
+            cat apps/electron/release/manifest.json
+            echo ""
+          fi
+          echo "=== Update URL: https://agents.craft.do/electron/latest/ ==="
 
       - name: Create git tag
         if: github.ref == 'refs/heads/main'

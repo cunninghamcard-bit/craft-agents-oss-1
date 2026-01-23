@@ -966,171 +966,104 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     const trimmedKey = apiKey?.trim()
     const trimmedUrl = baseUrl?.trim()
 
-    // If no API key but base URL provided, try direct fetch (for local APIs like Ollama)
-    if (!trimmedKey && trimmedUrl) {
-      try {
-        const response = await fetch(`${trimmedUrl}/v1/models`)
-        if (response.ok) {
-          const data = await response.json()
-          return { success: true, modelCount: data?.data?.length ?? data?.models?.length ?? 0 }
-        }
-        return { success: true } // Server reachable even if models endpoint format differs
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error)
-        if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
-          return { success: false, error: 'Cannot connect to API server' }
-        }
-        return { success: false, error: `Connection failed: ${msg}` }
-      }
-    }
-
-    // Require API key if no base URL (connecting to default Anthropic API)
-    if (!trimmedKey) {
-      return { success: false, error: 'API key is required for Anthropic API' }
+    // Require API key unless a custom base URL is provided (e.g. Ollama needs no key)
+    if (!trimmedKey && !trimmedUrl) {
+      return { success: false, error: 'API key is required' }
     }
 
     try {
-      // For custom base URLs (OpenRouter, etc.), use fetch with Bearer auth
-      // OpenRouter and most OpenAI-compatible APIs expect Authorization: Bearer, not x-api-key
-      if (trimmedUrl) {
-        const headers: Record<string, string> = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${trimmedKey}`
-        }
-
-        // If a custom model name is provided, try to send a minimal message to validate it
-        // Include a tool definition to also verify tool/function calling support
-        if (modelName?.trim()) {
-          const response = await fetch(`${trimmedUrl}/v1/messages`, {
-            method: 'POST',
-            headers,
-            body: JSON.stringify({
-              model: modelName.trim(),
-              max_tokens: 16,  // Some providers (Azure) require minimum 16 tokens
-              messages: [{ role: 'user', content: 'test' }],
-              // Include minimal tool to trigger tool support validation
-              tools: [{
-                name: 'test_tool',
-                description: 'Test tool for validation',
-                input_schema: { type: 'object', properties: {} }
-              }]
-            })
-          })
-
-          if (response.ok) {
-            return { success: true }
-          }
-
-          const errorText = await response.text()
-          const lowerErrorText = errorText.toLowerCase()
-          ipcLog.info(`Model test error response (${response.status}): ${errorText.slice(0, 500)}`)
-          if (response.status === 401) {
-            return { success: false, error: 'Invalid API key' }
-          }
-          // Check for OpenRouter data policy errors (must be before tool support check)
-          if (lowerErrorText.includes('data policy') || lowerErrorText.includes('privacy')) {
-            return { success: false, error: `OpenRouter data policy restriction. Configure your privacy settings at openrouter.ai/settings/privacy` }
-          }
-          // Check for tool support errors (OpenRouter and other providers)
-          // These patterns must be checked BEFORE "model not found" since tool errors often contain "model"
-          const isToolSupportError =
-            lowerErrorText.includes('no endpoints found that support tool use') ||
-            lowerErrorText.includes('does not support tool') ||
-            lowerErrorText.includes('tool_use is not supported') ||
-            lowerErrorText.includes('function calling not available') ||
-            lowerErrorText.includes('tools are not supported') ||
-            lowerErrorText.includes('doesn\'t support tool') ||
-            lowerErrorText.includes('tool use is not supported') ||
-            // Generic pattern: "tool" + "not" + "support" anywhere in message
-            (lowerErrorText.includes('tool') && lowerErrorText.includes('not') && lowerErrorText.includes('support'))
-          if (isToolSupportError) {
-            return { success: false, error: `Model "${modelName}" does not support tool/function calling. Craft Agent requires a model with tool support (e.g., Claude, GPT-4, Gemini).` }
-          }
-          // Check for model not found - but only if it's clearly about the model not existing
-          // Be careful not to match tool support errors that mention "model"
-          if (lowerErrorText.includes('model not found') ||
-              lowerErrorText.includes('is not a valid model') ||
-              lowerErrorText.includes('invalid model')) {
-            return { success: false, error: `Model "${modelName}" not found` }
-          }
-          return { success: false, error: `API error (${response.status}): ${errorText.slice(0, 200)}` }
-        }
-
-        // No model specified - try to list models via simple fetch
-        const modelsResponse = await fetch(`${trimmedUrl}/v1/models`, {
-          headers: { 'Authorization': `Bearer ${trimmedKey}` }
-        })
-        if (modelsResponse.ok) {
-          const data = await modelsResponse.json()
-          return { success: true, modelCount: data?.data?.length ?? 0 }
-        }
-        return { success: true } // API key accepted even if models listing format differs
-      }
-
-      // Standard Anthropic API - use SDK with x-api-key
+      // Unified test: send a minimal POST to /v1/messages with a tool definition.
+      // This validates connection, auth, model existence, and tool support in one call.
+      // Works identically for Anthropic, OpenRouter, Vercel AI Gateway, and Ollama (v0.14+).
       const Anthropic = (await import('@anthropic-ai/sdk')).default
-      const client = new Anthropic({ apiKey: trimmedKey })
 
-      // If a custom model name is provided, try to send a minimal message to validate it
-      // Include a tool definition to also verify tool/function calling support
-      if (modelName?.trim()) {
-        try {
-          await client.messages.create({
-            model: modelName.trim(),
-            max_tokens: 16,  // Some providers require minimum 16 tokens
-            messages: [{ role: 'user', content: 'test' }],
-            // Include minimal tool to trigger tool support validation
-            tools: [{
-              name: 'test_tool',
-              description: 'Test tool for validation',
-              input_schema: { type: 'object' as const, properties: {} }
-            }]
-          })
-          return { success: true }
-        } catch (error) {
-          const msg = error instanceof Error ? error.message : String(error)
-          const lowerMsg = msg.toLowerCase()
-          ipcLog.info(`Model test SDK error: ${msg.slice(0, 500)}`)
-          if (lowerMsg.includes('401') || lowerMsg.includes('unauthorized')) {
-            return { success: false, error: 'Invalid API key' }
-          }
-          // Check for tool support errors (must be checked BEFORE model not found)
-          const isToolSupportError =
-            lowerMsg.includes('no endpoints found that support tool use') ||
-            lowerMsg.includes('does not support tool') ||
-            lowerMsg.includes('tool_use is not supported') ||
-            lowerMsg.includes('function calling not available') ||
-            lowerMsg.includes('tools are not supported') ||
-            lowerMsg.includes('doesn\'t support tool') ||
-            lowerMsg.includes('tool use is not supported') ||
-            (lowerMsg.includes('tool') && lowerMsg.includes('not') && lowerMsg.includes('support'))
-          if (isToolSupportError) {
-            return { success: false, error: `Model "${modelName}" does not support tool/function calling. Craft Agent requires a model with tool support (e.g., Claude, GPT-4, Gemini).` }
-          }
-          // Check for model not found - be specific to avoid matching tool errors
-          if (lowerMsg.includes('model not found') ||
-              lowerMsg.includes('is not a valid model') ||
-              lowerMsg.includes('invalid model') ||
-              lowerMsg.includes('404')) {
-            return { success: false, error: `Model "${modelName}" not found` }
-          }
-          return { success: false, error: msg }
-        }
-      }
+      // Auth strategy:
+      // - Custom base URL: pass key as authToken (SDK sends Authorization: Bearer,
+      //   which OpenRouter, Vercel AI Gateway, and Ollama all accept).
+      //   Explicitly null the other auth param to prevent SDK from reading env vars.
+      // - Anthropic direct: pass as apiKey (SDK sends x-api-key header)
+      const client = new Anthropic({
+        ...(trimmedUrl ? { baseURL: trimmedUrl } : {}),
+        ...(trimmedUrl
+          ? { authToken: trimmedKey || 'ollama', apiKey: null }  // Bearer for custom URLs; 'ollama' dummy for no-key local APIs
+          : { apiKey: trimmedKey, authToken: null }              // x-api-key for Anthropic direct
+        ),
+      })
 
-      // Default: list models to validate connection
-      const result = await client.models.list()
-      const modelCount = result.data?.length ?? 0
-      return { success: true, modelCount }
+      // Use provided model or a placeholder — "model not found" errors are a positive
+      // signal that auth and endpoint are working, just the model needs to be configured
+      const testModel = modelName?.trim() || 'test'
+
+      await client.messages.create({
+        model: testModel,
+        max_tokens: 1,
+        messages: [{ role: 'user', content: 'hi' }],
+        // Include a tool to validate tool/function calling support
+        tools: [{
+          name: 'test_tool',
+          description: 'Test tool for validation',
+          input_schema: { type: 'object' as const, properties: {} }
+        }]
+      })
+
+      // 200 response — everything works (auth, endpoint, model, tool support)
+      return { success: true }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
-      if (msg.includes('401') || msg.includes('invalid') || msg.includes('Unauthorized')) {
+      const lowerMsg = msg.toLowerCase()
+      ipcLog.info(`[testApiConnection] Error: ${msg.slice(0, 500)}`)
+
+      // Connection errors — server unreachable
+      if (lowerMsg.includes('econnrefused') || lowerMsg.includes('enotfound') || lowerMsg.includes('fetch failed')) {
+        return { success: false, error: 'Cannot connect to API server. Check the URL and ensure the server is running.' }
+      }
+
+      // 404 on endpoint — /v1/messages doesn't exist (wrong URL or Ollama < v0.14)
+      if (lowerMsg.includes('404') && !lowerMsg.includes('model')) {
+        return { success: false, error: 'Endpoint not found. Ensure the server supports the Anthropic Messages API (/v1/messages). For Ollama, version 0.14+ is required.' }
+      }
+
+      // Auth errors
+      if (lowerMsg.includes('401') || lowerMsg.includes('unauthorized') || lowerMsg.includes('authentication')) {
         return { success: false, error: 'Invalid API key' }
       }
-      if (msg.includes('ECONNREFUSED') || msg.includes('ENOTFOUND')) {
-        return { success: false, error: 'Cannot connect to API server' }
+
+      // OpenRouter data policy errors (check before tool support since both may contain "model")
+      if (lowerMsg.includes('data policy') || lowerMsg.includes('privacy')) {
+        return { success: false, error: 'Data policy restriction. Configure your privacy settings at openrouter.ai/settings/privacy' }
       }
-      return { success: false, error: msg }
+
+      // Tool support errors (check before model-not-found since tool errors often contain "model")
+      const isToolSupportError =
+        lowerMsg.includes('no endpoints found that support tool use') ||
+        lowerMsg.includes('does not support tool') ||
+        lowerMsg.includes('tool_use is not supported') ||
+        lowerMsg.includes('function calling not available') ||
+        lowerMsg.includes('tools are not supported') ||
+        lowerMsg.includes('doesn\'t support tool') ||
+        lowerMsg.includes('tool use is not supported') ||
+        (lowerMsg.includes('tool') && lowerMsg.includes('not') && lowerMsg.includes('support'))
+      if (isToolSupportError) {
+        return { success: false, error: `Model "${modelName || 'test'}" does not support tool/function calling. Craft Agent requires a model with tool support (e.g. Claude, GPT-4, Gemini).` }
+      }
+
+      // Model not found — this is actually a POSITIVE signal when no model was specified,
+      // it means auth and endpoint are both working correctly
+      const isModelNotFound =
+        lowerMsg.includes('model not found') ||
+        lowerMsg.includes('is not a valid model') ||
+        lowerMsg.includes('invalid model') ||
+        (lowerMsg.includes('404') && lowerMsg.includes('model'))
+      if (isModelNotFound) {
+        if (!modelName?.trim()) {
+          // No model was specified — "model not found" confirms auth + endpoint work
+          return { success: true }
+        }
+        return { success: false, error: `Model "${modelName}" not found. Check the model name and try again.` }
+      }
+
+      // Fallback: return the raw error message
+      return { success: false, error: msg.slice(0, 300) }
     }
   })
 
