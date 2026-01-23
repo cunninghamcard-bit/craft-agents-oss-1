@@ -25,7 +25,7 @@ import {
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { getDocUrl, type DocFeature } from '@craft-agent/shared/docs/doc-links'
 
-export type SidebarMenuType = 'allChats' | 'flagged' | 'status' | 'sources' | 'skills' | 'newChat'
+export type SidebarMenuType = 'allChats' | 'flagged' | 'status' | 'sources' | 'skills' | 'labels' | 'newChat'
 
 export interface SidebarMenuProps {
   /** Type of sidebar item (determines available menu items) */
@@ -34,6 +34,8 @@ export interface SidebarMenuProps {
   statusId?: string
   /** Handler for "Configure Statuses" action - only for allChats/status/flagged types */
   onConfigureStatuses?: () => void
+  /** Handler for "Configure Labels" action - only for labels type */
+  onConfigureLabels?: () => void
   /** Handler for "Add Source" action - only for sources type */
   onAddSource?: () => void
   /** Handler for "Add Skill" action - only for skills type */
@@ -50,6 +52,7 @@ export function SidebarMenu({
   type,
   statusId,
   onConfigureStatuses,
+  onConfigureLabels,
   onAddSource,
   onAddSkill,
   sourceType,
@@ -73,6 +76,16 @@ export function SidebarMenu({
       <MenuItem onClick={onConfigureStatuses}>
         <Settings2 className="h-3.5 w-3.5" />
         <span className="flex-1">Configure Statuses</span>
+      </MenuItem>
+    )
+  }
+
+  // Labels: show "Configure Labels"
+  if (type === 'labels' && onConfigureLabels) {
+    return (
+      <MenuItem onClick={onConfigureLabels}>
+        <Settings2 className="h-3.5 w-3.5" />
+        <span className="flex-1">Configure Labels</span>
       </MenuItem>
     )
   }

@@ -73,6 +73,17 @@ export interface SessionFile {
   children?: SessionFile[]  // Recursive children for directories
 }
 
+/**
+ * File search result for @ mention file selection.
+ * Returned by FS_SEARCH IPC handler when user types @filename in input.
+ */
+export interface FileSearchResult {
+  name: string
+  path: string
+  type: 'file' | 'directory'
+  relativePath: string  // Path relative to search base
+}
+
 // Import auth request types for unified auth flow
 import type { AuthRequest as SharedAuthRequest, CredentialInputMode as SharedCredentialInputMode, CredentialAuthRequest as SharedCredentialAuthRequest } from '@craft-agent/shared/agent';
 export type { SharedAuthRequest as AuthRequest };
@@ -267,6 +278,8 @@ export interface Session {
   permissionMode?: PermissionMode
   // Todo state (user-controlled) - determines open vs closed
   todoState?: TodoState
+  // Labels (additive tags, many-per-session — bare IDs or "id::value" entries)
+  labels?: string[]
   // Read/unread tracking - ID of last message user has read
   lastReadMessageId?: string
   /**
@@ -359,6 +372,7 @@ export type SessionEvent =
   | { type: 'plan_submitted'; sessionId: string; message: CoreMessage }
   // Source events
   | { type: 'sources_changed'; sessionId: string; enabledSourceSlugs: string[] }
+  | { type: 'labels_changed'; sessionId: string; labels: string[] }
   // Background task/shell events
   | { type: 'task_backgrounded'; sessionId: string; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'shell_backgrounded'; sessionId: string; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
@@ -413,6 +427,7 @@ export type SessionCommand =
   | { type: 'setThinkingLevel'; level: ThinkingLevel }
   | { type: 'updateWorkingDirectory'; dir: string }
   | { type: 'setSources'; sourceSlugs: string[] }
+  | { type: 'setLabels'; labels: string[] }
   | { type: 'showInFinder' }
   | { type: 'copyPath' }
   | { type: 'shareToViewer' }
@@ -482,6 +497,11 @@ export const IPC_CHANNELS = {
   READ_FILE_ATTACHMENT: 'file:readAttachment',
   STORE_ATTACHMENT: 'file:storeAttachment',
   GENERATE_THUMBNAIL: 'file:generateThumbnail',
+
+  // Filesystem search (for @ mention file selection)
+  FS_SEARCH: 'fs:search',
+  // Debug logging from renderer → main log file
+  DEBUG_LOG: 'debug:log',
 
   // Session info panel
   GET_SESSION_FILES: 'sessions:getFiles',
@@ -595,7 +615,12 @@ export const IPC_CHANNELS = {
 
   // Status management (workspace-scoped)
   STATUSES_LIST: 'statuses:list',
+  STATUSES_REORDER: 'statuses:reorder',  // Reorder statuses (drag-and-drop)
   STATUSES_CHANGED: 'statuses:changed',  // Broadcast event
+
+  // Label management (workspace-scoped)
+  LABELS_LIST: 'labels:list',
+  LABELS_CHANGED: 'labels:changed',  // Broadcast event
 
   // Theme management (cascading: app → workspace)
   THEME_APP_CHANGED: 'theme:appChanged',        // Broadcast event
@@ -632,6 +657,9 @@ export const IPC_CHANNELS = {
   BADGE_DRAW: 'badge:draw',  // Broadcast: { count: number, iconDataUrl: string }
   WINDOW_FOCUS_STATE: 'window:focusState',  // Broadcast: boolean (isFocused)
   WINDOW_GET_FOCUS_STATE: 'window:getFocusState',
+
+  // Git operations
+  GET_GIT_BRANCH: 'git:getBranch',
 } as const
 
 // Re-import types for ElectronAPI
@@ -684,6 +712,11 @@ export interface ElectronAPI {
   readFileAttachment(path: string): Promise<FileAttachment | null>
   storeAttachment(sessionId: string, attachment: FileAttachment): Promise<import('../../../../packages/core/src/types/index.ts').StoredAttachment>
   generateThumbnail(base64: string, mimeType: string): Promise<string | null>
+
+  // Filesystem search (for @ mention file selection)
+  searchFiles(basePath: string, query: string): Promise<FileSearchResult[]>
+  // Debug: send renderer logs to main process log file
+  debugLog(...args: unknown[]): void
 
   // Theme
   getSystemTheme(): Promise<boolean>
@@ -809,8 +842,14 @@ export interface ElectronAPI {
 
   // Statuses (workspace-scoped)
   listStatuses(workspaceId: string): Promise<import('@craft-agent/shared/statuses').StatusConfig[]>
+  reorderStatuses(workspaceId: string, orderedIds: string[]): Promise<void>
   // Statuses change listener (live updates when statuses config or icon files change)
   onStatusesChanged(callback: (workspaceId: string) => void): () => void
+
+  // Labels (workspace-scoped)
+  listLabels(workspaceId: string): Promise<import('@craft-agent/shared/labels').LabelConfig[]>
+  // Labels change listener (live updates when labels config or icon files change)
+  onLabelsChanged(callback: (workspaceId: string) => void): () => void
 
   // Generic workspace image loading/saving (returns data URL for images, raw string for SVG)
   readWorkspaceImage(workspaceId: string, relativePath: string): Promise<string>
@@ -846,6 +885,9 @@ export interface ElectronAPI {
   // Theme preferences sync across windows (mode, colorTheme, font)
   broadcastThemePreferences(preferences: { mode: string; colorTheme: string; font: string }): Promise<void>
   onThemePreferencesChange(callback: (preferences: { mode: string; colorTheme: string; font: string }) => void): () => void
+
+  // Git operations
+  getGitBranch(dirPath: string): Promise<string | null>
 }
 
 /**
@@ -934,11 +976,13 @@ export type RightSidebarPanel =
  * - 'allChats': All sessions regardless of status
  * - 'flagged': Only flagged sessions
  * - 'state': Sessions with specific status ID
+ * - 'label': Sessions with specific label (includes descendants via tree hierarchy)
  */
 export type ChatFilter =
   | { kind: 'allChats' }
   | { kind: 'flagged' }
   | { kind: 'state'; stateId: string }
+  | { kind: 'label'; labelId: string }
 
 /**
  * Settings subpage options
@@ -958,10 +1002,20 @@ export interface ChatsNavigationState {
 }
 
 /**
+ * Source type filter for sources navigation (e.g., show only APIs, MCPs, or Local sources)
+ */
+export interface SourceFilter {
+  kind: 'type'
+  sourceType: 'api' | 'mcp' | 'local'
+}
+
+/**
  * Sources navigation state - shows SourcesListPanel in navigator
  */
 export interface SourcesNavigationState {
   navigator: 'sources'
+  /** Optional filter for source type */
+  filter?: SourceFilter
   /** Selected source details, or null for empty state */
   details: { type: 'source'; sourceSlug: string } | null
   /** Optional right sidebar panel state */
@@ -1064,6 +1118,7 @@ export const getNavigationStateKey = (state: NavigationState): string => {
   const f = state.filter
   let base: string
   if (f.kind === 'state') base = `state:${f.stateId}`
+  else if (f.kind === 'label') base = `label:${f.labelId}`
   else base = f.kind
   if (state.details) {
     return `${base}/chat/${state.details.sessionId}`
@@ -1114,6 +1169,10 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
       const stateId = filterKey.slice(6)
       if (!stateId) return null
       filter = { kind: 'state', stateId }
+    } else if (filterKey.startsWith('label:')) {
+      const labelId = filterKey.slice(6)
+      if (!labelId) return null
+      filter = { kind: 'label', labelId }
     } else {
       return null
     }

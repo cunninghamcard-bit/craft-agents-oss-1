@@ -62,6 +62,7 @@ export function readSessionJsonl(sessionFile: string): StoredSession | null {
       sdkSessionId: header.sdkSessionId,
       isFlagged: header.isFlagged,
       todoState: header.todoState,
+      labels: header.labels,
       permissionMode: header.permissionMode,
       lastReadMessageId: header.lastReadMessageId,
       hasUnread: header.hasUnread,  // Explicit unread flag for NEW badge state machine
@@ -110,6 +111,7 @@ export function createSessionHeader(session: StoredSession): SessionHeader {
     sdkSessionId: session.sdkSessionId,
     isFlagged: session.isFlagged,
     todoState: session.todoState,
+    labels: session.labels,
     permissionMode: session.permissionMode,
     lastReadMessageId: session.lastReadMessageId,
     hasUnread: session.hasUnread,  // Explicit unread flag for NEW badge state machine

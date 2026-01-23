@@ -3,7 +3,7 @@ import { formatDistanceToNow, isToday, isYesterday, format, startOfDay } from "d
 import { MoreHorizontal, Flag, Search, X, Copy, Link2Off, CloudUpload, Globe, RefreshCw } from "lucide-react"
 import { toast } from "sonner"
 
-import { cn, isHexColor } from "@/lib/utils"
+import { cn } from "@/lib/utils"
 import { rendererPerf } from "@/lib/perf"
 import { Spinner } from "@craft-agent/ui"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -234,9 +234,8 @@ function SessionItem({
                 className={cn(
                   "w-4 h-4 flex items-center justify-center rounded-full transition-colors cursor-pointer",
                   "hover:bg-foreground/5",
-                  !isHexColor(getStateColor(currentTodoState, todoStates)) && (getStateColor(currentTodoState, todoStates) || 'text-muted-foreground')
                 )}
-                style={isHexColor(getStateColor(currentTodoState, todoStates)) ? { color: getStateColor(currentTodoState, todoStates) } : undefined}
+                style={{ color: getStateColor(currentTodoState, todoStates) ?? 'var(--foreground)' }}
                 role="button"
                 aria-haspopup="menu"
                 aria-expanded={todoMenuOpen}

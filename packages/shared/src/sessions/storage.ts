@@ -376,6 +376,7 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       sdkSessionId: header.sdkSessionId,
       isFlagged: header.isFlagged,
       todoState: validatedTodoState,
+      labels: header.labels,
       permissionMode: header.permissionMode,
       planCount: planCount > 0 ? planCount : undefined,
       lastMessageRole: header.lastMessageRole,
@@ -485,6 +486,7 @@ export function updateSessionMetadata(
     | 'isFlagged'
     | 'name'
     | 'todoState'
+    | 'labels'
     | 'lastReadMessageId'
     | 'hasUnread'
     | 'enabledSourceSlugs'
@@ -501,6 +503,7 @@ export function updateSessionMetadata(
   if (updates.isFlagged !== undefined) session.isFlagged = updates.isFlagged;
   if (updates.name !== undefined) session.name = updates.name;
   if (updates.todoState !== undefined) session.todoState = updates.todoState;
+  if (updates.labels !== undefined) session.labels = updates.labels;
   if (updates.enabledSourceSlugs !== undefined) session.enabledSourceSlugs = updates.enabledSourceSlugs;
   if (updates.workingDirectory !== undefined) session.workingDirectory = updates.workingDirectory;
   if (updates.permissionMode !== undefined) session.permissionMode = updates.permissionMode;
@@ -536,6 +539,17 @@ export function setSessionTodoState(
   todoState: TodoState
 ): void {
   updateSessionMetadata(workspaceRootPath, sessionId, { todoState });
+}
+
+/**
+ * Set labels for a session
+ */
+export function setSessionLabels(
+  workspaceRootPath: string,
+  sessionId: string,
+  labels: string[]
+): void {
+  updateSessionMetadata(workspaceRootPath, sessionId, { labels });
 }
 
 // ============================================================

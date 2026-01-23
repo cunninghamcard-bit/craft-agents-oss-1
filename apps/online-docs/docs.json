@@ -74,6 +74,7 @@
           {
             "group": "Go Further",
             "pages": [
+              "go-further/sharing",
               "go-further/workspaces",
               "go-further/themes",
               "go-further/connect-to-anything",

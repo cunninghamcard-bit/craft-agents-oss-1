@@ -295,6 +295,8 @@ interface ManagedSession {
   hasUnread?: boolean
   // Per-session source selection (slugs of enabled sources)
   enabledSourceSlugs?: string[]
+  // Labels applied to this session (additive tags, many-per-session)
+  labels?: string[]
   // Working directory for this session (used by agent for bash commands)
   workingDirectory?: string
   // SDK cwd for session storage - set once at creation, never changes.
@@ -518,6 +520,14 @@ export class SessionManager {
         sessionLog.info(`Status icon changed: ${iconFilename} in ${workspaceId}`)
         this.broadcastStatusesChanged(workspaceId)
       },
+      onLabelConfigChange: (workspaceId: string) => {
+        sessionLog.info(`Label config changed in ${workspaceId}`)
+        this.broadcastLabelsChanged(workspaceId)
+      },
+      onLabelIconChange: (workspaceId: string, labelSlug: string) => {
+        sessionLog.info(`Label icon changed: ${labelSlug} in ${workspaceId}`)
+        this.broadcastLabelsChanged(workspaceId)
+      },
       onAppThemeChange: (theme) => {
         sessionLog.info(`App theme changed`)
         this.broadcastAppThemeChanged(theme)
@@ -560,6 +570,15 @@ export class SessionManager {
     if (!this.windowManager) return
     sessionLog.info(`Broadcasting statuses changed for ${workspaceId}`)
     this.windowManager.broadcastToAll(IPC_CHANNELS.STATUSES_CHANGED, workspaceId)
+  }
+
+  /**
+   * Broadcast labels changed event to all windows
+   */
+  private broadcastLabelsChanged(workspaceId: string): void {
+    if (!this.windowManager) return
+    sessionLog.info(`Broadcasting labels changed for ${workspaceId}`)
+    this.windowManager.broadcastToAll(IPC_CHANNELS.LABELS_CHANGED, workspaceId)
   }
 
   /**
@@ -618,8 +637,14 @@ export class SessionManager {
   }
 
   /**
-   * Reinitialize authentication environment variables
-   * Call this after onboarding or settings changes to pick up new credentials
+   * Reinitialize authentication environment variables.
+   * Call this after onboarding or settings changes to pick up new credentials.
+   *
+   * SECURITY NOTE: These env vars are propagated to the SDK subprocess via options.ts.
+   * Bun's automatic .env loading is disabled in the subprocess (--env-file=/dev/null)
+   * to prevent a user's project .env from injecting ANTHROPIC_API_KEY and overriding
+   * OAuth auth — Claude Code prioritizes API key over OAuth token when both are set.
+   * See: https://github.com/lukilabs/craft-agents-oss/issues/39
    */
   async reinitializeAuth(): Promise<void> {
     try {
@@ -769,6 +794,7 @@ export class SessionManager {
             lastFinalMessageId: meta.lastFinalMessageId,  // Pre-computed for unread detection
             hasUnread: meta.hasUnread,  // Explicit unread flag for NEW badge state machine
             enabledSourceSlugs: undefined,  // Loaded with messages
+            labels: meta.labels,
             workingDirectory: meta.workingDirectory ?? wsDefaultWorkingDir,
             sdkCwd: meta.sdkCwd,
             model: meta.model,
@@ -815,6 +841,7 @@ export class SessionManager {
         lastReadMessageId: managed.lastReadMessageId,  // For unread detection
         hasUnread: managed.hasUnread,  // Explicit unread flag for NEW badge state machine
         enabledSourceSlugs: managed.enabledSourceSlugs,
+        labels: managed.labels,
         workingDirectory: managed.workingDirectory,
         sdkCwd: managed.sdkCwd,
         thinkingLevel: managed.thinkingLevel,
@@ -1140,6 +1167,7 @@ export class SessionManager {
         workingDirectory: m.workingDirectory,
         model: m.model,
         enabledSourceSlugs: m.enabledSourceSlugs,
+        labels: m.labels,
         sharedUrl: m.sharedUrl,
         sharedId: m.sharedId,
         lastMessageRole: m.lastMessageRole,
@@ -1179,6 +1207,7 @@ export class SessionManager {
       model: m.model,
       sessionFolderPath: getSessionStoragePath(m.workspace.rootPath, m.id),
       enabledSourceSlugs: m.enabledSourceSlugs,
+      labels: m.labels,
       sharedUrl: m.sharedUrl,
       sharedId: m.sharedId,
       lastMessageRole: m.lastMessageRole,
@@ -2848,6 +2877,25 @@ To view this task's output:
         type: 'permission_mode_changed',
         sessionId: managed.id,
         permissionMode: mode,
+      }, managed.workspace.id)
+      // Persist to disk
+      this.persistSession(managed)
+    }
+  }
+
+  /**
+   * Set labels for a session (additive tags, many-per-session).
+   * Labels are IDs referencing workspace labels/config.json.
+   */
+  setSessionLabels(sessionId: string, labels: string[]): void {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.labels = labels
+
+      this.sendEvent({
+        type: 'labels_changed',
+        sessionId: managed.id,
+        labels,
       }, managed.workspace.id)
       // Persist to disk
       this.persistSession(managed)

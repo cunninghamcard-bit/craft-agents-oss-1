@@ -1,7 +1,7 @@
 import { app, ipcMain, nativeTheme, nativeImage, dialog, shell, BrowserWindow } from 'electron'
-import { readFile, realpath, mkdir, writeFile, unlink, rm } from 'fs/promises'
+import { readFile, readdir, stat, realpath, mkdir, writeFile, unlink, rm } from 'fs/promises'
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
-import { normalize, isAbsolute, join, basename, dirname, resolve } from 'path'
+import { normalize, isAbsolute, join, basename, dirname, resolve, relative } from 'path'
 import { homedir, tmpdir } from 'os'
 import { randomUUID } from 'crypto'
 import { execSync } from 'child_process'
@@ -11,7 +11,7 @@ import { WindowManager } from './window-manager'
 import { registerOnboardingHandlers } from './onboarding'
 import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AuthType, type ApiSetupInfo, type SendMessageOptions } from '../shared/types'
 import { readFileAttachment, perf, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
-import { getAuthType, setAuthType, getPreferencesPath, getCustomModel, setCustomModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, getAnthropicBaseUrl, setAnthropicBaseUrl, loadStoredConfig, saveConfig, type Workspace, SUMMARIZATION_MODEL } from '@craft-agent/shared/config'
+import { getAuthType, setAuthType, getPreferencesPath, getCustomModel, setCustomModel, getModel, setModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, getAnthropicBaseUrl, setAnthropicBaseUrl, loadStoredConfig, saveConfig, type Workspace, SUMMARIZATION_MODEL } from '@craft-agent/shared/config'
 import { getSessionAttachmentsPath } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, getSourcesBySlugs, type LoadedSource } from '@craft-agent/shared/sources'
 import { isValidThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
@@ -349,6 +349,8 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         return sessionManager.updateWorkingDirectory(sessionId, command.dir)
       case 'setSources':
         return sessionManager.setSessionSources(sessionId, command.sourceSlugs)
+      case 'setLabels':
+        return sessionManager.setSessionLabels(sessionId, command.labels)
       case 'showInFinder': {
         const sessionPath = sessionManager.getSessionPath(sessionId)
         if (sessionPath) {
@@ -689,6 +691,86 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     } catch {
       // Not a git repo, git not installed, or other error
       return null
+    }
+  })
+
+  // Debug logging from renderer → main log file (fire-and-forget, no response)
+  ipcMain.on(IPC_CHANNELS.DEBUG_LOG, (_event, ...args: unknown[]) => {
+    ipcLog.info('[renderer]', ...args)
+  })
+
+  // Filesystem search for @ mention file selection.
+  // Uses a single recursive readdir call (native, fast) then filters in-memory.
+  // Much faster than sequential per-directory async walks.
+  ipcMain.handle(IPC_CHANNELS.FS_SEARCH, async (_event, basePath: string, query: string) => {
+    ipcLog.info('[FS_SEARCH] called:', basePath, query)
+    const MAX_RESULTS = 50
+    // Safety cap: stop processing after this many entries to bound work on huge trees
+    const MAX_ENTRIES = 10_000
+
+    // Path segments to skip (node_modules, .git, etc.)
+    const SKIP_DIRS = new Set([
+      'node_modules', '.git', '.svn', '.hg', 'dist', 'build',
+      '.next', '.nuxt', '.cache', '__pycache__', 'vendor',
+      '.idea', '.vscode', 'coverage', '.nyc_output', '.turbo', 'out',
+    ])
+
+    const lowerQuery = query.toLowerCase()
+
+    try {
+      // Single native call — returns all relative paths in the tree.
+      // This is implemented in libuv (C++) and is significantly faster than
+      // thousands of individual JS-level async readdir + await calls.
+      const allEntries = await readdir(basePath, { recursive: true })
+      ipcLog.info('[FS_SEARCH] readdir returned', allEntries.length, 'entries')
+
+      const results: Array<{ name: string; path: string; type: 'file' | 'directory'; relativePath: string }> = []
+
+      for (let i = 0; i < Math.min(allEntries.length, MAX_ENTRIES); i++) {
+        if (results.length >= MAX_RESULTS) break
+
+        const relativePath = allEntries[i]
+
+        // Skip entries inside ignored directories
+        const segments = relativePath.split('/')
+        if (segments.some(seg => SKIP_DIRS.has(seg) || seg.startsWith('.'))) continue
+
+        const fileName = segments[segments.length - 1]
+        const lowerName = fileName.toLowerCase()
+        const lowerRelative = relativePath.toLowerCase()
+
+        // Match if name or relative path contains the query
+        if (lowerName.includes(lowerQuery) || lowerRelative.includes(lowerQuery)) {
+          const fullPath = join(basePath, relativePath)
+          // Determine file vs directory from stat (only called for matches, max 50)
+          let entryType: 'file' | 'directory' = 'file'
+          try {
+            const s = await stat(fullPath)
+            if (s.isDirectory()) entryType = 'directory'
+          } catch {
+            // Default to file if stat fails
+          }
+
+          results.push({
+            name: fileName,
+            path: fullPath,
+            type: entryType,
+            relativePath,
+          })
+        }
+      }
+
+      // Sort: directories first, then by name length (shorter = better match)
+      results.sort((a, b) => {
+        if (a.type !== b.type) return a.type === 'directory' ? -1 : 1
+        return a.name.length - b.name.length
+      })
+
+      ipcLog.info('[FS_SEARCH] returning', results.length, 'results')
+      return results
+    } catch (err) {
+      ipcLog.error('[FS_SEARCH] error:', err)
+      return []
     }
   })
 
@@ -1078,6 +1160,21 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       // Fallback: return the raw error message
       return { success: false, error: msg.slice(0, 300) }
     }
+  })
+
+  // ============================================================
+  // Settings - Model (Global Default)
+  // ============================================================
+
+  // Get global default model
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_GET_MODEL, async (): Promise<string | null> => {
+    return getModel()
+  })
+
+  // Set global default model
+  ipcMain.handle(IPC_CHANNELS.SETTINGS_SET_MODEL, async (_event, model: string) => {
+    setModel(model)
+    ipcLog.info(`Global model updated to: ${model}`)
   })
 
   // ============================================================
@@ -1763,6 +1860,29 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
     const { listStatuses } = await import('@craft-agent/shared/statuses')
     return listStatuses(workspace.rootPath)
+  })
+
+  // Reorder statuses (drag-and-drop). Receives new ordered array of status IDs.
+  // Config watcher will detect the file change and broadcast STATUSES_CHANGED.
+  ipcMain.handle(IPC_CHANNELS.STATUSES_REORDER, async (_event, workspaceId: string, orderedIds: string[]) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { reorderStatuses } = await import('@craft-agent/shared/statuses')
+    reorderStatuses(workspace.rootPath, orderedIds)
+  })
+
+  // ============================================================
+  // Label Management (Workspace-scoped)
+  // ============================================================
+
+  // List all labels for a workspace
+  ipcMain.handle(IPC_CHANNELS.LABELS_LIST, async (_event, workspaceId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) throw new Error('Workspace not found')
+
+    const { listLabels } = await import('@craft-agent/shared/labels/storage')
+    return listLabels(workspace.rootPath)
   })
 
   // Generic workspace image loading (for source icons, status icons, etc.)

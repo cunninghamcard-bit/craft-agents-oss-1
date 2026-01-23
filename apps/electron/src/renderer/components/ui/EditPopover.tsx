@@ -66,6 +66,7 @@ export type EditContextKey =
   | 'add-source-local' // Filter-specific: user is viewing Local Folders
   | 'add-skill'
   | 'edit-statuses'
+  | 'edit-labels'
 
 /**
  * Full edit configuration including context for agent and example for UI.
@@ -321,6 +322,24 @@ const EDIT_CONFIGS: Record<EditContextKey, (location: string) => EditConfig> = {
     },
     example: 'Add a "Blocked" status',
   }),
+
+  // Label configuration context
+  'edit-labels': (location) => ({
+    context: {
+      label: 'Label Configuration',
+      filePath: `${location}/labels/config.json`,
+      context:
+        'The user wants to customize session labels (tagging/categorization). ' +
+        'Labels are stored in labels/config.json as a hierarchical tree. ' +
+        'Each label has: id (slug, globally unique), name (display), color (optional EntityColor), icon (optional emoji/URL/file path), children (sub-labels array). ' +
+        'Colors use EntityColor format: string shorthand (e.g. "blue") or { light, dark } object for theme-aware colors. ' +
+        'Icons can be emoji characters, URLs (auto-downloaded), or local file paths in labels/icons/. ' +
+        'Children form a recursive tree structure — array position determines display order. ' +
+        'Read ~/.craft-agent/docs/labels.md for full format reference. ' +
+        'Confirm clearly when done.',
+    },
+    example: 'Add a "Bug" label with red color',
+  }),
 }
 
 /**
@@ -550,6 +569,13 @@ export function EditPopover({
       <PopoverTrigger asChild className={triggerClassName}>
         {trigger}
       </PopoverTrigger>
+      {/* Subtle backdrop when popover is open — dims the background to draw focus */}
+      {open && (
+        <div
+          className="fixed inset-0 bg-black/10 z-[99] pointer-events-none animate-in fade-in-0 duration-200"
+          aria-hidden="true"
+        />
+      )}
       <PopoverContent
         side={side}
         align={align}

@@ -5,6 +5,11 @@ import { SlashCommandMenu, DEFAULT_SLASH_COMMAND_GROUPS, type SlashCommandId } f
 import { ChevronDown, X } from 'lucide-react'
 import { PERMISSION_MODE_CONFIG, type PermissionMode } from '@craft-agent/shared/agent/modes'
 import { ActiveTasksBar, type BackgroundTask } from './ActiveTasksBar'
+import { LabelIcon } from '@/components/ui/label-icon'
+import type { LabelConfig } from '@craft-agent/shared/labels'
+import { flattenLabels } from '@craft-agent/shared/labels'
+import { resolveEntityColor, type EntityColor } from '@craft-agent/shared/colors'
+import { useTheme } from '@/hooks/useTheme'
 
 // ============================================================================
 // Permission Mode Icon Component
@@ -44,6 +49,14 @@ export interface ActiveOptionBadgesProps {
   onKillTask?: (taskId: string) => void
   /** Callback to insert message into input field */
   onInsertMessage?: (text: string) => void
+  /** Label IDs applied to this session */
+  sessionLabels?: string[]
+  /** Available label configs (tree structure) for resolving label display */
+  labels?: LabelConfig[]
+  /** Workspace ID for label icon loading */
+  workspaceId?: string
+  /** Callback when a label is removed */
+  onRemoveLabel?: (labelId: string) => void
   /** Additional CSS classes */
   className?: string
 }
@@ -57,10 +70,25 @@ export function ActiveOptionBadges({
   sessionId,
   onKillTask,
   onInsertMessage,
+  sessionLabels = [],
+  labels = [],
+  workspaceId,
+  onRemoveLabel,
   className,
 }: ActiveOptionBadgesProps) {
+  const { isDark } = useTheme()
+
+  // Resolve session label IDs to their config objects for rendering
+  const resolvedLabels = React.useMemo(() => {
+    if (sessionLabels.length === 0 || labels.length === 0) return []
+    const flat = flattenLabels(labels)
+    return sessionLabels
+      .map(id => flat.find(l => l.id === id))
+      .filter((l): l is LabelConfig => l !== undefined)
+  }, [sessionLabels, labels])
+
   // Only render if badges or tasks are active
-  if (!ultrathinkEnabled && !permissionMode && tasks.length === 0) {
+  if (!ultrathinkEnabled && !permissionMode && tasks.length === 0 && resolvedLabels.length === 0) {
     return null
   }
 
@@ -93,6 +121,17 @@ export function ActiveOptionBadges({
         </button>
       )}
 
+      {/* Label Badges - rendered as removable tags with label color styling */}
+      {resolvedLabels.map(label => (
+        <LabelBadge
+          key={label.id}
+          label={label}
+          workspaceId={workspaceId || ''}
+          isDark={isDark}
+          onRemove={() => onRemoveLabel?.(label.id)}
+        />
+      ))}
+
       {/* Background Tasks - DISABLED: UI hidden because task tracking is not reliable.
        * The underlying infrastructure (useBackgroundTasks hook, atoms, event handlers) is kept
        * intact for when we fix the reliability issues. See apps/electron/CLAUDE.md for details.
@@ -100,6 +139,109 @@ export function ActiveOptionBadges({
       {/* {sessionId && <ActiveTasksBar tasks={tasks} sessionId={sessionId} onKillTask={onKillTask} onInsertMessage={onInsertMessage} />} */}
     </div>
   )
+}
+
+// ============================================================================
+// Label Badge Component
+// ============================================================================
+
+/**
+ * Renders a single label badge in the active options bar.
+ * Uses shadow-tinted style matching permission mode badges.
+ * Shows X on hover to allow removal.
+ */
+function LabelBadge({
+  label,
+  workspaceId,
+  isDark,
+  onRemove,
+}: {
+  label: LabelConfig
+  workspaceId: string
+  isDark: boolean
+  onRemove: () => void
+}) {
+  // Derive color styles from label's EntityColor
+  const colorStyle = React.useMemo(() => {
+    return getLabelBadgeStyle(label.color, isDark)
+  }, [label.color, isDark])
+
+  return (
+    <button
+      type="button"
+      onClick={onRemove}
+      className={cn(
+        "h-[30px] pl-2 pr-2 text-xs font-medium rounded-[8px] flex items-center gap-1.5 shrink-0",
+        "shadow-tinted outline-none select-none group/label-badge",
+      )}
+      style={{ '--shadow-color': colorStyle.shadowRgb, color: colorStyle.textColor, backgroundColor: colorStyle.backgroundColor } as React.CSSProperties}
+    >
+      <LabelIcon label={label} workspaceId={workspaceId} size="sm" />
+      <span className="truncate max-w-[120px]">{label.name}</span>
+      {/* X button appears on hover */}
+      <X className="h-3 w-3 opacity-0 group-hover/label-badge:opacity-60 hover:!opacity-100 transition-opacity translate-y-px" />
+    </button>
+  )
+}
+
+// ============================================================================
+// Label Color Utilities
+// ============================================================================
+
+interface LabelBadgeStyle {
+  shadowRgb: string
+  textColor: string
+  /** Inline background color — dynamic colors can't use Tailwind JIT classes */
+  backgroundColor: string
+}
+
+/**
+ * Resolves label EntityColor to badge styling props.
+ * Uses inline styles for background since colors are dynamic.
+ * Background is a subtle tint (~10% opacity) of the label's color.
+ */
+function getLabelBadgeStyle(color: EntityColor | undefined, isDark: boolean): LabelBadgeStyle {
+  if (!color) {
+    // Default: subtle foreground tint
+    return {
+      shadowRgb: 'var(--foreground-rgb)',
+      textColor: resolveEntityColor('foreground/70', isDark),
+      backgroundColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.04)',
+    }
+  }
+
+  if (typeof color === 'string') {
+    // System color: resolve to actual value, then apply as tinted background
+    const baseName = color.split('/')[0]
+    const shadowVar = `var(--${baseName}-rgb)`
+    const resolvedColor = resolveEntityColor(baseName as EntityColor, isDark)
+
+    return {
+      shadowRgb: shadowVar,
+      textColor: resolvedColor,
+      backgroundColor: `color-mix(in oklch, ${resolvedColor} 10%, transparent)`,
+    }
+  }
+
+  // Custom color: use hex value with computed RGB for both shadow and background
+  const hexColor = isDark ? (color.dark ?? color.light) : color.light
+  const rgb = hexToRgb(hexColor)
+
+  return {
+    shadowRgb: rgb,
+    textColor: hexColor,
+    backgroundColor: `rgba(${rgb}, 0.1)`,
+  }
+}
+
+/** Convert hex color to "r, g, b" string for CSS shadow-color variable */
+function hexToRgb(hex: string): string {
+  const cleaned = hex.replace('#', '')
+  const r = parseInt(cleaned.slice(0, 2), 16)
+  const g = parseInt(cleaned.slice(2, 4), 16)
+  const b = parseInt(cleaned.slice(4, 6), 16)
+  if (isNaN(r) || isNaN(g) || isNaN(b)) return '128, 128, 128'
+  return `${r}, ${g}, ${b}`
 }
 
 interface PermissionModeDropdownProps {

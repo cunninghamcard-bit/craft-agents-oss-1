@@ -191,6 +191,13 @@ const api: ElectronAPI = {
   // Folder dialog
   openFolderDialog: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_FOLDER_DIALOG),
 
+  // Filesystem search (for @ mention file selection)
+  searchFiles: (basePath: string, query: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.FS_SEARCH, basePath, query),
+  // Debug: send renderer logs to main process log file
+  debugLog: (...args: unknown[]) =>
+    ipcRenderer.send(IPC_CHANNELS.DEBUG_LOG, ...args),
+
   // User Preferences
   readPreferences: () => ipcRenderer.invoke(IPC_CHANNELS.PREFERENCES_READ),
   writePreferences: (content: string) => ipcRenderer.invoke(IPC_CHANNELS.PREFERENCES_WRITE, content),
@@ -243,6 +250,8 @@ const api: ElectronAPI = {
   // Status management
   listStatuses: (workspaceId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.STATUSES_LIST, workspaceId),
+  reorderStatuses: (workspaceId: string, orderedIds: string[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.STATUSES_REORDER, workspaceId, orderedIds),
 
   // Generic workspace image loading/saving
   readWorkspaceImage: (workspaceId: string, relativePath: string) =>
@@ -292,6 +301,21 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC_CHANNELS.STATUSES_CHANGED, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.STATUSES_CHANGED, handler)
+    }
+  },
+
+  // Label management
+  listLabels: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.LABELS_LIST, workspaceId),
+
+  // Labels change listener (live updates when labels config or icon files change)
+  onLabelsChanged: (callback: (workspaceId: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, workspaceId: string) => {
+      callback(workspaceId)
+    }
+    ipcRenderer.on(IPC_CHANNELS.LABELS_CHANGED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.LABELS_CHANGED, handler)
     }
   },
 
@@ -372,6 +396,8 @@ const api: ElectronAPI = {
       ipcRenderer.removeListener(IPC_CHANNELS.NOTIFICATION_NAVIGATE, handler)
     }
   },
+  getGitBranch: (dirPath: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_GIT_BRANCH, dirPath),
 }
 
 contextBridge.exposeInMainWorld('electronAPI', api)

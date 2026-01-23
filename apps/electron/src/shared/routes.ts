@@ -101,6 +101,12 @@ export const routes = {
         ? `state/${stateId}/chat/${sessionId}` as const
         : `state/${stateId}` as const,
 
+    /** Label filter view (chats navigator, label filter — includes descendants via tree hierarchy) */
+    label: (labelId: string, sessionId?: string) =>
+      sessionId
+        ? `label/${encodeURIComponent(labelId)}/chat/${sessionId}` as const
+        : `label/${encodeURIComponent(labelId)}` as const,
+
     /** Sources view (sources navigator) - supports type filtering */
     sources: (params?: { sourceSlug?: string; type?: 'api' | 'mcp' | 'local' }) => {
       const { sourceSlug, type } = params ?? {}

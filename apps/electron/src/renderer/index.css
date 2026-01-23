@@ -369,6 +369,10 @@ html[data-font="inter"] {
   --color-foreground-90: var(--foreground-90);
   --color-foreground-95: var(--foreground-95);
 
+  /* === SEMANTIC SURFACE COLORS === */
+  /* Subtle hover background for sidebar list items (2% foreground opacity) */
+  --color-sidebar-hover: oklch(from var(--foreground) l c h / 0.02);
+
   /* === LEGACY COMPATIBILITY === */
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);

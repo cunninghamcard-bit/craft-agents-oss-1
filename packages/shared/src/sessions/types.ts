@@ -68,6 +68,8 @@ export interface SessionConfig {
   permissionMode?: PermissionMode;
   /** User-controlled todo state - determines inbox vs completed */
   todoState?: TodoState;
+  /** Labels applied to this session (bare IDs or "id::value" entries) */
+  labels?: string[];
   /** ID of last message user has read */
   lastReadMessageId?: string;
   /**
@@ -133,6 +135,8 @@ export interface SessionHeader {
   permissionMode?: PermissionMode;
   /** User-controlled todo state - determines inbox vs completed */
   todoState?: TodoState;
+  /** Labels applied to this session (bare IDs or "id::value" entries) */
+  labels?: string[];
   /** ID of last message user has read */
   lastReadMessageId?: string;
   /**
@@ -196,6 +200,8 @@ export interface SessionMetadata {
   isFlagged?: boolean;
   /** User-controlled todo state */
   todoState?: TodoState;
+  /** Labels applied to this session (bare IDs or "id::value" entries) */
+  labels?: string[];
   /** Permission mode for this session */
   permissionMode?: PermissionMode;
   /** Number of plan files for this session */

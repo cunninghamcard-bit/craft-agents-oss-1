@@ -35,7 +35,7 @@ import {
   RefreshCw,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { cn, isHexColor } from '@/lib/utils'
+import { cn } from '@/lib/utils'
 import { useMenuComponents } from '@/components/ui/menu-context'
 import { getStateColor, getStateIcon, type TodoStateId } from '@/config/todo-states'
 import type { TodoState } from '@/config/todo-states'
@@ -198,17 +198,8 @@ export function SessionMenu({
       <Sub>
         <SubTrigger>
           <span
-            className={cn(
-              'shrink-0 flex items-center justify-center -mt-px h-3.5 w-3.5',
-              '[&>svg]:w-full [&>svg]:h-full [&>div>svg]:w-full [&>div>svg]:h-full [&>img]:w-full [&>img]:h-full',
-              !isHexColor(getStateColor(currentTodoState, todoStates)) &&
-                (getStateColor(currentTodoState, todoStates) || 'text-muted-foreground')
-            )}
-            style={
-              isHexColor(getStateColor(currentTodoState, todoStates))
-                ? { color: getStateColor(currentTodoState, todoStates) }
-                : undefined
-            }
+            className="shrink-0 flex items-center justify-center -mt-px h-3.5 w-3.5 [&>svg]:w-full [&>svg]:h-full [&>div>svg]:w-full [&>div>svg]:h-full [&>img]:w-full [&>img]:h-full"
+            style={{ color: getStateColor(currentTodoState, todoStates) ?? 'var(--foreground)' }}
           >
             {getStateIcon(currentTodoState, todoStates)}
           </span>
@@ -225,12 +216,8 @@ export function SessionMenu({
                 className={currentTodoState === state.id ? 'bg-foreground/5' : ''}
               >
                 <span
-                  className={cn(
-                    'shrink-0 flex items-center justify-center -mt-px h-3.5 w-3.5',
-                    '[&>svg]:w-full [&>svg]:h-full [&>div>svg]:w-full [&>div>svg]:h-full [&>img]:w-full [&>img]:h-full',
-                    applyColor && !isHexColor(state.color) && state.color
-                  )}
-                  style={applyColor && isHexColor(state.color) ? { color: state.color } : undefined}
+                  className="shrink-0 flex items-center justify-center -mt-px h-3.5 w-3.5 [&>svg]:w-full [&>svg]:h-full [&>div>svg]:w-full [&>div>svg]:h-full [&>img]:w-full [&>img]:h-full"
+                  style={applyColor ? { color: state.resolvedColor } : undefined}
                 >
                   {state.icon}
                 </span>

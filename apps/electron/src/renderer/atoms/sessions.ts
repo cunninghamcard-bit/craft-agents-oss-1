@@ -40,6 +40,8 @@ export interface SessionMeta {
    * Set to false when user views the session (and not processing).
    */
   hasUnread?: boolean
+  /** Labels for filtering (additive tags, many-per-session) */
+  labels?: string[]
   /** Todo state for filtering */
   todoState?: string
   /** Role/type of the last message (for badge display without loading messages) */
@@ -88,6 +90,7 @@ export function extractSessionMeta(session: Session): SessionMeta {
     lastFinalMessageId,
     // Explicit unread flag - source of truth for NEW badge
     hasUnread: session.hasUnread,
+    labels: session.labels,
     todoState: session.todoState,
     lastMessageRole: session.lastMessageRole,
     // Use isAsyncOperationOngoing if available, fall back to deprecated isRegeneratingTitle
@@ -402,6 +405,13 @@ export const syncSessionsToAtomsAtom = atom(
  * Action atom: Load session messages if not already loaded
  * Returns the loaded session or current session if already loaded.
  * Uses promise deduplication to prevent redundant IPC calls from concurrent requests.
+ *
+ * IMPORTANT: This only merges messages into the existing session atom.
+ * UI state fields (hasUnread, isFlagged, todoState, etc.) are preserved from
+ * the in-memory atom, NOT overwritten with potentially stale disk data.
+ * This prevents a race condition where optimistic updates (e.g., clearing the
+ * NEW badge on session view) get clobbered by async message loading that reads
+ * older state from disk.
  */
 export const ensureSessionMessagesLoadedAtom = atom(
   null,
@@ -427,21 +437,35 @@ export const ensureSessionMessagesLoadedAtom = atom(
         return get(sessionAtomFamily(sessionId))
       }
 
-      // Update the atom with the full session (including messages)
-      set(sessionAtomFamily(sessionId), loadedSession)
+      // Merge messages into existing session, preserving in-memory UI state.
+      // The renderer's atom is authoritative for UI fields (hasUnread, isFlagged, etc.)
+      // because optimistic updates may have changed them since the disk write.
+      const existingSession = get(sessionAtomFamily(sessionId))
+      const mergedSession = existingSession
+        ? { ...existingSession, messages: loadedSession.messages }
+        : loadedSession
+      set(sessionAtomFamily(sessionId), mergedSession)
 
-      // Update metadata
-      const metaMap = get(sessionMetaMapAtom)
-      const newMetaMap = new Map(metaMap)
-      newMetaMap.set(sessionId, extractSessionMeta(loadedSession))
-      set(sessionMetaMapAtom, newMetaMap)
+      // Update only lastFinalMessageId in metadata (now computable from loaded messages).
+      // Don't replace the full meta entry — other fields are maintained through
+      // optimistic updates and IPC events, and may be ahead of disk state.
+      const lastFinalMessageId = findLastFinalMessageId(loadedSession.messages)
+      if (lastFinalMessageId) {
+        const metaMap = get(sessionMetaMapAtom)
+        const existingMeta = metaMap.get(sessionId)
+        if (existingMeta && existingMeta.lastFinalMessageId !== lastFinalMessageId) {
+          const newMetaMap = new Map(metaMap)
+          newMetaMap.set(sessionId, { ...existingMeta, lastFinalMessageId })
+          set(sessionMetaMapAtom, newMetaMap)
+        }
+      }
 
       // Mark as loaded
       const newLoadedSessions = new Set(get(loadedSessionsAtom))
       newLoadedSessions.add(sessionId)
       set(loadedSessionsAtom, newLoadedSessions)
 
-      return loadedSession
+      return mergedSession
     })()
 
     // Cache the promise before awaiting

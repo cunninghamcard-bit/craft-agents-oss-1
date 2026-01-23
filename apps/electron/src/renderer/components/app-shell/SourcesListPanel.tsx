@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/styled-context-menu'
 import { DropdownMenuProvider, ContextMenuProvider } from '@/components/ui/menu-context'
 import { SourceMenu } from './SourceMenu'
-import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
+import { EditPopover, getEditConfig, type EditContextKey } from '@/components/ui/EditPopover'
 import { cn } from '@/lib/utils'
 import type { LoadedSource, SourceConnectionStatus, SourceFilter } from '../../../shared/types'
 
@@ -71,7 +71,7 @@ export function SourcesListPanel({
 }: SourcesListPanelProps) {
   // Filter sources based on type filter if active
   const filteredSources = React.useMemo(() => {
-    if (!sourceFilter || sourceFilter.kind === 'all') {
+    if (!sourceFilter) {
       return sources
     }
     // Filter by source type
@@ -104,7 +104,7 @@ export function SourcesListPanel({
                   }
                   {...getEditConfig(
                     // Use filter-aware edit config key when a type filter is active
-                    sourceFilter?.kind === 'type' ? `add-source-${sourceFilter.sourceType}` : 'add-source',
+                    sourceFilter?.kind === 'type' ? `add-source-${sourceFilter.sourceType}` as EditContextKey : 'add-source',
                     workspaceRootPath
                   )}
                 />
