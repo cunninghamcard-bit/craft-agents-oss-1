@@ -51,7 +51,8 @@ export function CodePreviewOverlay({
   error,
   onOpenFile,
 }: CodePreviewOverlayProps) {
-  const backgroundColor = theme === 'dark' ? '#1e1e1e' : '#ffffff'
+  // Use CSS variable so custom themes are respected
+  const backgroundColor = 'var(--background)'
 
   // Build subtitle with line info
   const subtitle =

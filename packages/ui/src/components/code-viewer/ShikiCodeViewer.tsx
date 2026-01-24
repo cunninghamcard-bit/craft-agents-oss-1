@@ -132,8 +132,8 @@ export function ShikiCodeViewer({
     }
   }, [code, resolvedLang, theme, shikiTheme, onReady])
 
-  // Theme-aware colors
-  const backgroundColor = theme === 'dark' ? '#1e1e1e' : '#ffffff'
+  // Use CSS variables so custom themes are respected
+  const backgroundColor = 'var(--background)'
   const lineNumberColor = theme === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.3)'
   const borderColor = theme === 'dark' ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)'
 

@@ -117,8 +117,8 @@ export function ShikiDiffViewer({
     }
   }, [onReady, original, modified, fileDiff])
 
-  // Background color to match themes
-  const backgroundColor = theme === 'dark' ? '#1e1e1e' : '#ffffff'
+  // Use CSS variable so custom themes are respected
+  const backgroundColor = 'var(--background)'
 
   return (
     <div
@@ -136,7 +136,7 @@ export function ShikiDiffViewer({
       <FileDiff
         fileDiff={fileDiff}
         options={options}
-        className="min-h-full"
+        className="min-h-full h-full"
       />
     </div>
   )

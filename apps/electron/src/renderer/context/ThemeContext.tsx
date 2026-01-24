@@ -130,8 +130,11 @@ export function ThemeProvider({
     return resolvedTheme.mode === 'scenic' && !!resolvedTheme.backgroundImage
   }, [resolvedTheme])
 
-  // Scenic themes force dark mode for better contrast
-  const isDark = isScenic ? true : isDarkFromMode
+  // Dark-only themes (e.g. Dracula) force dark mode regardless of system mode
+  const isDarkOnlyTheme = presetTheme?.supportedModes?.length === 1 && presetTheme.supportedModes[0] === 'dark'
+
+  // isDark reflects actual visual appearance: scenic, dark-only themes, or system dark mode
+  const isDark = isScenic || isDarkOnlyTheme ? true : isDarkFromMode
 
   // Shiki theme configuration
   const shikiConfig = useMemo(() => {

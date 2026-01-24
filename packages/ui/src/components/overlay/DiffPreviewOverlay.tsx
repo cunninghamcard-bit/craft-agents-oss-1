@@ -45,7 +45,8 @@ export function DiffPreviewOverlay({
   error,
   onOpenFile,
 }: DiffPreviewOverlayProps) {
-  const backgroundColor = theme === 'dark' ? '#1e1e1e' : '#ffffff'
+  // Use CSS variable so custom themes are respected
+  const backgroundColor = 'var(--background)'
 
   return (
     <PreviewOverlay
