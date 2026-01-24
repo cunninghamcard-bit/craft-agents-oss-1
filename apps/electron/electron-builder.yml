@@ -74,11 +74,17 @@ mac:
 dmg:
   # Use predictable naming: Craft-Agent-arm64.dmg, Craft-Agent-x64.dmg
   artifactName: "Craft-Agent-${arch}.dmg"
+  # Custom background (multi-resolution TIFF with 1x+2x for retina support)
+  background: resources/dmg-background.tiff
+  # Use app icon as the mounted volume icon in Finder
+  icon: resources/icon.icns
+  iconSize: 80
+  title: "Craft Agents"
   contents:
     - x: 130
-      y: 220
+      y: 200
     - x: 410
-      y: 220
+      y: 200
       type: link
       path: /Applications
   window:

@@ -160,11 +160,11 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   // Get workspace ID for the calling window
   ipcMain.handle(IPC_CHANNELS.GET_WINDOW_WORKSPACE, (event) => {
     const workspaceId = windowManager.getWorkspaceForWindow(event.sender.id)
-    // Set up ConfigWatcher for live theme/source updates
+    // Set up ConfigWatcher for live updates (labels, statuses, sources, themes)
     if (workspaceId) {
       const workspace = getWorkspaceByNameOrId(workspaceId)
       if (workspace) {
-        sessionManager.setupConfigWatcher(workspace.rootPath)
+        sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
       }
     }
     return workspaceId
@@ -227,7 +227,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     // Set up ConfigWatcher for the new workspace
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (workspace) {
-      sessionManager.setupConfigWatcher(workspace.rootPath)
+      sessionManager.setupConfigWatcher(workspace.rootPath, workspaceId)
     }
     end()
   })
@@ -1493,14 +1493,11 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   // Get all sources for a workspace
   ipcMain.handle(IPC_CHANNELS.SOURCES_GET, async (_event, workspaceId: string) => {
-    // Look up workspace to get rootPath
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       ipcLog.error(`SOURCES_GET: Workspace not found: ${workspaceId}`)
       return []
     }
-    // Set up ConfigWatcher for this workspace to broadcast live updates
-    sessionManager.setupConfigWatcher(workspace.rootPath)
     return loadWorkspaceSources(workspace.rootPath)
   })
 

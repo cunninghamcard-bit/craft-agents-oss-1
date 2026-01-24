@@ -62,6 +62,7 @@ import type { PermissionMode } from '@craft-agent/shared/agent/modes'
 import { PERMISSION_MODE_ORDER } from '@craft-agent/shared/agent/modes'
 import { type ThinkingLevel, THINKING_LEVELS, getThinkingLevelName } from '@craft-agent/shared/agent/thinking-levels'
 import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
+import { hasOpenOverlay } from '@/lib/overlay-detection'
 import { EscapeInterruptOverlay } from './EscapeInterruptOverlay'
 
 /**
@@ -969,7 +970,13 @@ export function FreeFormInput({
       submitMessage()
     }
     if (e.key === 'Escape') {
-      richInputRef.current?.blur()
+      // Skip blur if a popover/overlay is open — let the overlay handle ESC instead.
+      // This prevents the input from consuming ESC when focus gets pulled back here
+      // while a popover is still visible (portal DOM isolation means the event won't
+      // reach the popover's DismissableLayer otherwise).
+      if (!hasOpenOverlay()) {
+        richInputRef.current?.blur()
+      }
     }
   }
 

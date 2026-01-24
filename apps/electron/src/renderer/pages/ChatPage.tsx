@@ -253,6 +253,10 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     onTodoStateChange(sessionId, state)
   }, [sessionId, onTodoStateChange])
 
+  const handleLabelsChange = React.useCallback((newLabels: string[]) => {
+    onSessionLabelsChange?.(sessionId, newLabels)
+  }, [sessionId, onSessionLabelsChange])
+
   const handleDelete = React.useCallback(async () => {
     await onDeleteSession(sessionId)
   }, [sessionId, onDeleteSession])
@@ -373,6 +377,7 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
   ), [sharedUrl, handleShare, handleOpenInBrowser, handleCopyLink, handleUpdateShare, handleRevokeShare])
 
   // Build title menu content for chat sessions using shared SessionMenu
+  const sessionLabels = session?.labels ?? []
   const titleMenu = React.useMemo(() => (
     <SessionMenu
       sessionId={sessionId}
@@ -383,6 +388,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
       hasUnreadMessages={hasUnreadMessages}
       currentTodoState={currentTodoState}
       todoStates={todoStates ?? []}
+      sessionLabels={sessionLabels}
+      labels={labels ?? []}
+      onLabelsChange={handleLabelsChange}
       onRename={handleRename}
       onFlag={handleFlag}
       onUnflag={handleUnflag}
@@ -400,6 +408,9 @@ const ChatPage = React.memo(function ChatPage({ sessionId }: ChatPageProps) {
     hasUnreadMessages,
     currentTodoState,
     todoStates,
+    sessionLabels,
+    labels,
+    handleLabelsChange,
     handleRename,
     handleFlag,
     handleUnflag,

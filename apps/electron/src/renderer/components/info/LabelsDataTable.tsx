@@ -109,7 +109,7 @@ const columns: ColumnDef<LabelConfig>[] = [
         )}
       </div>
     ),
-    minSize: 160,
+    minSize: 120,
   },
 ]
 

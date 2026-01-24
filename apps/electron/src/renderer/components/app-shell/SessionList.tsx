@@ -7,7 +7,7 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { rendererPerf } from "@/lib/perf"
 import type { LabelConfig } from "@craft-agent/shared/labels"
-import { flattenLabels, extractLabelId } from "@craft-agent/shared/labels"
+import { flattenLabels, parseLabelEntry, formatLabelEntry, formatDisplayValue } from "@craft-agent/shared/labels"
 import { resolveEntityColor } from "@craft-agent/shared/colors"
 import { useTheme } from "@/context/ThemeContext"
 import { Spinner, Tooltip, TooltipTrigger, TooltipContent } from "@craft-agent/ui"
@@ -17,6 +17,8 @@ import { Separator } from "@/components/ui/separator"
 import { Button } from "@/components/ui/button"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { TodoStateMenu } from "@/components/ui/todo-filter-menu"
+import { LabelValuePopover } from "@/components/ui/label-value-popover"
+import { LabelValueTypeIcon } from "@/components/ui/label-icon"
 import { getStateColor, getStateIcon, getStateLabel, type TodoStateId } from "@/config/todo-states"
 import type { TodoState } from "@/config/todo-states"
 import {
@@ -193,6 +195,10 @@ interface SessionItemProps {
   todoStates: TodoState[]
   /** Pre-flattened label configs for resolving session label IDs to display info */
   flatLabels: LabelConfig[]
+  /** Full label tree (for labels submenu in SessionMenu) */
+  labels: LabelConfig[]
+  /** Callback when session labels are toggled */
+  onLabelsChange?: (sessionId: string, labels: string[]) => void
 }
 
 /**
@@ -219,23 +225,29 @@ function SessionItem({
   searchQuery,
   todoStates,
   flatLabels,
+  labels,
+  onLabelsChange,
 }: SessionItemProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
   const [todoMenuOpen, setTodoMenuOpen] = useState(false)
+  // Tracks which label badge's LabelValuePopover is open (by index), null = all closed
+  const [openLabelIndex, setOpenLabelIndex] = useState<number | null>(null)
 
   // Get current todo state from session properties
   const currentTodoState = getSessionTodoState(item)
 
-  // Resolve session label IDs (e.g. "bug", "priority::3") to their LabelConfig objects
+  // Resolve session label entries (e.g. "bug", "priority::3") to config + optional value
   const resolvedLabels = useMemo(() => {
     if (!item.labels || item.labels.length === 0 || flatLabels.length === 0) return []
     return item.labels
       .map(entry => {
-        const id = extractLabelId(entry)
-        return flatLabels.find(l => l.id === id)
+        const parsed = parseLabelEntry(entry)
+        const config = flatLabels.find(l => l.id === parsed.id)
+        if (!config) return null
+        return { config, rawValue: parsed.rawValue }
       })
-      .filter((l): l is LabelConfig => l != null)
+      .filter((l): l is { config: LabelConfig; rawValue: string | undefined } => l != null)
   }, [item.labels, flatLabels])
 
 
@@ -380,23 +392,74 @@ function SessionItem({
                     {PERMISSION_MODE_CONFIG[permissionMode].shortName}
                   </span>
                 )}
-                {/* Label badges — solid color via color-mix in sRGB */}
-                {resolvedLabels.map(label => {
+                {/* Label badges — each badge opens its own LabelValuePopover for
+                    editing the value or removing the label. Uses onMouseDown +
+                    stopPropagation to prevent parent <button> session selection. */}
+                {resolvedLabels.map(({ config: label, rawValue }, labelIndex) => {
                   const color = label.color ? resolveEntityColor(label.color, isDark) : null
+                  const displayValue = rawValue ? formatDisplayValue(rawValue, label.valueType) : undefined
                   return (
-                    <span
+                    <LabelValuePopover
                       key={label.id}
-                      className="shrink-0 h-[18px] px-1.5 text-[10px] font-medium rounded flex items-center whitespace-nowrap"
-                      style={color ? {
-                        backgroundColor: `color-mix(in srgb, ${color} 6%, transparent)`,
-                        color: `color-mix(in srgb, ${color} 80%, transparent)`,
-                      } : {
-                        backgroundColor: 'rgba(var(--foreground-rgb), 0.05)',
-                        color: 'rgba(var(--foreground-rgb), 0.6)',
+                      label={label}
+                      value={rawValue}
+                      open={openLabelIndex === labelIndex}
+                      onOpenChange={(open) => setOpenLabelIndex(open ? labelIndex : null)}
+                      onValueChange={(newValue) => {
+                        // Rebuild labels array with the updated value for this label
+                        const updatedLabels = (item.labels || []).map(entry => {
+                          const parsed = parseLabelEntry(entry)
+                          if (parsed.id === label.id) {
+                            return formatLabelEntry(label.id, newValue)
+                          }
+                          return entry
+                        })
+                        onLabelsChange?.(item.id, updatedLabels)
+                      }}
+                      onRemove={() => {
+                        // Remove this label entry from the session
+                        const updatedLabels = (item.labels || []).filter(entry => {
+                          const parsed = parseLabelEntry(entry)
+                          return parsed.id !== label.id
+                        })
+                        onLabelsChange?.(item.id, updatedLabels)
                       }}
                     >
-                      {label.name}
-                    </span>
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className="shrink-0 h-[18px] max-w-[120px] px-1.5 text-[10px] font-medium rounded flex items-center whitespace-nowrap gap-0.5 cursor-pointer"
+                        onMouseDown={(e) => {
+                          e.stopPropagation()
+                          e.preventDefault()
+                        }}
+                        style={color ? {
+                          backgroundColor: `color-mix(in srgb, ${color} 6%, transparent)`,
+                          color: `color-mix(in srgb, ${color} 75%, var(--foreground))`,
+                        } : {
+                          backgroundColor: 'rgba(var(--foreground-rgb), 0.05)',
+                          color: 'rgba(var(--foreground-rgb), 0.8)',
+                        }}
+                      >
+                        {label.name}
+                        {/* Interpunct + value for typed labels, or placeholder icon if typed but no value set */}
+                        {displayValue ? (
+                          <>
+                            <span style={{ opacity: 0.4 }}>·</span>
+                            <span className="font-normal truncate min-w-0" style={{ opacity: 0.75 }}>
+                              {displayValue}
+                            </span>
+                          </>
+                        ) : (
+                          label.valueType && (
+                            <>
+                              <span style={{ opacity: 0.4 }}>·</span>
+                              <LabelValueTypeIcon valueType={label.valueType} size={10} />
+                            </>
+                          )
+                        )}
+                      </div>
+                    </LabelValuePopover>
                   )
                 })}
                 {item.sharedUrl && (
@@ -491,6 +554,9 @@ function SessionItem({
                     hasUnreadMessages={hasUnreadMessages(item)}
                     currentTodoState={currentTodoState}
                     todoStates={todoStates}
+                    sessionLabels={item.labels ?? []}
+                    labels={labels}
+                    onLabelsChange={onLabelsChange ? (newLabels) => onLabelsChange(item.id, newLabels) : undefined}
                     onRename={() => onRenameClick(item.id, getSessionTitle(item))}
                     onFlag={() => onFlag?.(item.id)}
                     onUnflag={() => onUnflag?.(item.id)}
@@ -518,6 +584,9 @@ function SessionItem({
               hasUnreadMessages={hasUnreadMessages(item)}
               currentTodoState={currentTodoState}
               todoStates={todoStates}
+              sessionLabels={item.labels ?? []}
+              labels={labels}
+              onLabelsChange={onLabelsChange ? (newLabels) => onLabelsChange(item.id, newLabels) : undefined}
               onRename={() => onRenameClick(item.id, getSessionTitle(item))}
               onFlag={() => onFlag?.(item.id)}
               onUnflag={() => onUnflag?.(item.id)}
@@ -579,6 +648,8 @@ interface SessionListProps {
   evaluateViews?: (meta: SessionMeta) => ViewConfig[]
   /** Label configs for resolving session label IDs to display info */
   labels?: LabelConfig[]
+  /** Callback when session labels are toggled (for labels submenu in SessionMenu) */
+  onLabelsChange?: (sessionId: string, labels: string[]) => void
 }
 
 // Re-export TodoStateId for use by parent components
@@ -614,6 +685,7 @@ export function SessionList({
   todoStates = [],
   evaluateViews,
   labels = [],
+  onLabelsChange,
 }: SessionListProps) {
   const [session] = useSession()
   const { navigate } = useNavigation()
@@ -647,15 +719,28 @@ export function SessionList({
     (b.lastMessageAt || 0) - (a.lastMessageAt || 0)
   )
 
-  // Filter items by search query
+  // Filter items by search query — matches title, label names, and label values.
+  // '#' characters are stripped when matching labels (so "#bug" finds label "bug").
+  // A bare '#' matches all sessions that have any labels.
   const searchFilteredItems = useMemo(() => {
     if (!searchQuery.trim()) return sortedItems
     const query = searchQuery.toLowerCase()
+    const labelQuery = query.replace(/#/g, '')
     return sortedItems.filter(item => {
-      const title = getSessionTitle(item).toLowerCase()
-      return title.includes(query)
+      if (getSessionTitle(item).toLowerCase().includes(query)) return true
+      // Bare '#' (no text after stripping) matches any session with labels
+      if (!labelQuery && item.labels && item.labels.length > 0) return true
+      // Match against label names and values (with # stripped)
+      if (labelQuery && item.labels?.some(entry => {
+        const parsed = parseLabelEntry(entry)
+        const config = flatLabels.find(l => l.id === parsed.id)
+        if (config?.name.toLowerCase().includes(labelQuery)) return true
+        if (parsed.rawValue?.toLowerCase().includes(labelQuery)) return true
+        return false
+      })) return true
+      return false
     })
-  }, [sortedItems, searchQuery])
+  }, [sortedItems, searchQuery, flatLabels])
 
   // Reset display limit when search query changes
   useEffect(() => {
@@ -963,6 +1048,8 @@ export function SessionList({
                     searchQuery={searchQuery}
                     todoStates={todoStates}
                     flatLabels={flatLabels}
+                    labels={labels}
+                    onLabelsChange={onLabelsChange}
                   />
                 )
               })}

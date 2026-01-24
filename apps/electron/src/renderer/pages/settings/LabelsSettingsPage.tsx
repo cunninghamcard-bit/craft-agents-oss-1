@@ -76,10 +76,7 @@ export default function LabelsSettingsPage() {
                           Labels help you organize sessions with colored tags. Use them to categorize conversations by project, topic, or priority — making it easy to filter and find related sessions later.
                         </p>
                         <p>
-                          Each label can optionally carry a <span className="text-foreground/80 font-medium">value</span> with a specific type (text, number, or enum). This turns labels into structured metadata — for example, a "priority" label with values "high", "medium", "low", or a "project" label carrying the project name.
-                        </p>
-                        <p className="font-bold text-foreground/80">
-                          Label values are not yet fully implemented on the UI, coming soon.
+                          Each label can optionally carry a <span className="text-foreground/80 font-medium">value</span> with a specific type (text, number, or date). This turns labels into structured metadata — for example, a "priority" label with value 3, or a "due" label with a date.
                         </p>
                         <p>
                           <span className="text-foreground/80 font-medium">Auto-apply rules</span> assign labels automatically when a message matches a regex pattern. For example, pasting a Linear issue URL can auto-tag the session with the project name and issue ID — no manual tagging needed.

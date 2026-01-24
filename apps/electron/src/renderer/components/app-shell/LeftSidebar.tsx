@@ -75,6 +75,8 @@ export interface LinkItem {
   contextMenu?: SidebarContextMenuConfig
   // Drag-and-drop: flat list reorder (e.g., statuses)
   sortable?: SortableConfig
+  // Optional element rendered after the title (e.g., label type icon), revealed on hover
+  afterTitle?: React.ReactNode
 }
 
 export interface SeparatorItem {
@@ -490,9 +492,15 @@ const SidebarButton = React.forwardRef<HTMLButtonElement, SidebarButtonProps & R
           )}
         </span>
         {link.title}
+        {/* After-title element: type indicator icon, right-aligned before count badge, revealed on hover */}
+        {link.afterTitle && (
+          <span className="ml-auto opacity-0 group-hover/section:opacity-100 group-data-[state=open]:opacity-100 group-data-[edit-active=true]:opacity-100 transition-opacity">
+            {link.afterTitle}
+          </span>
+        )}
         {/* Label Badge: Shows count or status on the right */}
         {link.label && (
-          <span className="ml-auto text-xs text-foreground/30 opacity-0 group-hover/section:opacity-100 group-data-[state=open]:opacity-100 group-data-[edit-active=true]:opacity-100 transition-opacity">
+          <span className={cn(link.afterTitle ? 'ml-0' : 'ml-auto', 'text-xs text-foreground/30 opacity-0 group-hover/section:opacity-100 group-data-[state=open]:opacity-100 group-data-[edit-active=true]:opacity-100 transition-opacity')}>
             {link.label}
           </span>
         )}

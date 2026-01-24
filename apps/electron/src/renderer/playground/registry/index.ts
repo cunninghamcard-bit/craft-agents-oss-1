@@ -9,6 +9,7 @@ import { markdownComponents } from './markdown'
 import { iconComponents } from './icons'
 import { oauthComponents } from './oauth'
 import { toastsComponents } from './toasts'
+import { labelBadgeComponents } from './label-badges'
 
 export * from './types'
 
@@ -24,6 +25,7 @@ export const componentRegistry: ComponentEntry[] = [
   ...markdownComponents,
   ...iconComponents,
   ...oauthComponents,
+  ...labelBadgeComponents,
 ]
 
 export function getCategories(): CategoryGroup[] {

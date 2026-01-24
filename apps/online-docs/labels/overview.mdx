@@ -5,9 +5,13 @@ description: "Organize sessions with colored tags and structured metadata"
 
 Labels are additive, colored tags you can apply to sessions. Unlike statuses (which are exclusive — one per session), labels are multi-select — a session can have zero or many labels. They support hierarchical organization via nested trees.
 
-<Warning>
-**Label values are not yet fully implemented on the UI, coming soon.** The configuration and storage layer supports values, but the UI does not yet expose full value editing or display.
-</Warning>
+{/* Labels are a workspace-level concept: each workspace starts with zero labels,
+    and users define their own taxonomy. The agent can create/modify labels on request.
+    Labels persist in the workspace config and are available across all sessions. */}
+
+{/* On sessions, labels are stored as a flat string array. Boolean (presence-only) labels
+    are bare IDs like "bug". Valued labels use the :: separator, e.g. "priority::3" or
+    "due::2026-01-30". The parser infers the value type from the raw string at read time. */}
 
 ## How Labels Work
 
@@ -114,14 +118,14 @@ Bug
 
 Each label object supports these properties:
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `id` | string | Yes | Unique slug (lowercase alphanumeric + hyphens) |
-| `name` | string | Yes | Display name |
-| `color` | EntityColor | No | Color for the label circle (see below) |
-| `valueType` | `"string"` \| `"number"` \| `"date"` | No | Value type hint. Omit for presence-only labels. |
-| `children` | Label[] | No | Nested child labels |
-| `autoRules` | AutoRule[] | No | Regex rules for auto-applying (see [Auto-Apply Rules](/labels/auto-rules)) |
+| Property | Type | Required | Default | Description |
+|----------|------|----------|---------|-------------|
+| `id` | string | Yes | — | Unique slug (lowercase alphanumeric + hyphens) |
+| `name` | string | Yes | — | Display name |
+| `color` | EntityColor | No | `currentColor` at 40% opacity | Color for the label circle (see below) |
+| `valueType` | `"string"` \| `"number"` \| `"date"` | No | *(none — presence-only)* | Value type hint. Omit for presence-only labels. |
+| `children` | Label[] | No | `[]` | Nested child labels |
+| `autoRules` | AutoRule[] | No | `[]` | Regex rules for auto-applying (see [Auto-Apply Rules](/labels/auto-rules)) |
 
 ## Colors
 

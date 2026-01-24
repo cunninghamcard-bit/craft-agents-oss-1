@@ -33,12 +33,16 @@ import {
   CloudUpload,
   Globe,
   RefreshCw,
+  Tag,
+  Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { cn } from '@/lib/utils'
-import { useMenuComponents } from '@/components/ui/menu-context'
+import { useMenuComponents, type MenuComponents } from '@/components/ui/menu-context'
 import { getStateColor, getStateIcon, type TodoStateId } from '@/config/todo-states'
 import type { TodoState } from '@/config/todo-states'
+import type { LabelConfig } from '@craft-agent/shared/labels'
+import { extractLabelId } from '@craft-agent/shared/labels'
+import { LabelIcon } from '@/components/ui/label-icon'
 
 export interface SessionMenuProps {
   /** Session ID */
@@ -57,6 +61,12 @@ export interface SessionMenuProps {
   currentTodoState: TodoStateId
   /** Available todo states */
   todoStates: TodoState[]
+  /** Current labels applied to this session (e.g. ["bug", "priority::3"]) */
+  sessionLabels?: string[]
+  /** All available label configs (tree structure) for the labels submenu */
+  labels?: LabelConfig[]
+  /** Callback when labels are toggled (receives full updated labels array) */
+  onLabelsChange?: (labels: string[]) => void
   /** Callbacks */
   onRename: () => void
   onFlag: () => void
@@ -80,6 +90,9 @@ export function SessionMenu({
   hasUnreadMessages,
   currentTodoState,
   todoStates,
+  sessionLabels = [],
+  labels = [],
+  onLabelsChange,
   onRename,
   onFlag,
   onUnflag,
@@ -155,6 +168,26 @@ export function SessionMenu({
     }
   }
 
+  // Set of currently applied label IDs (extracted from entries like "priority::3" → "priority")
+  const appliedLabelIds = React.useMemo(
+    () => new Set(sessionLabels.map(extractLabelId)),
+    [sessionLabels]
+  )
+
+  // Toggle a label: add if not applied, remove if applied (by base ID)
+  const handleLabelToggle = React.useCallback((labelId: string) => {
+    if (!onLabelsChange) return
+    const isApplied = appliedLabelIds.has(labelId)
+    if (isApplied) {
+      // Remove all entries matching this label ID (handles valued labels too)
+      const updated = sessionLabels.filter(entry => extractLabelId(entry) !== labelId)
+      onLabelsChange(updated)
+    } else {
+      // Add as a boolean label (just the ID, no value)
+      onLabelsChange([...sessionLabels, labelId])
+    }
+  }, [sessionLabels, appliedLabelIds, onLabelsChange])
+
   // Get menu components from context (works with both DropdownMenu and ContextMenu)
   const { MenuItem, Separator, Sub, SubTrigger, SubContent } = useMenuComponents()
 
@@ -168,7 +201,7 @@ export function SessionMenu({
         </MenuItem>
       ) : (
         <Sub>
-          <SubTrigger>
+          <SubTrigger className="pr-2">
             <CloudUpload className="h-3.5 w-3.5" />
             <span className="flex-1">Shared</span>
           </SubTrigger>
@@ -196,7 +229,7 @@ export function SessionMenu({
 
       {/* Status submenu - includes all statuses plus Flag/Unflag at the bottom */}
       <Sub>
-        <SubTrigger>
+        <SubTrigger className="pr-2">
           <span
             className="shrink-0 flex items-center justify-center -mt-px h-3.5 w-3.5 [&>svg]:w-full [&>svg]:h-full [&>div>svg]:w-full [&>div>svg]:h-full [&>img]:w-full [&>img]:h-full"
             style={{ color: getStateColor(currentTodoState, todoStates) ?? 'var(--foreground)' }}
@@ -228,6 +261,29 @@ export function SessionMenu({
 
         </SubContent>
       </Sub>
+
+      {/* Labels submenu - hierarchical label tree with nested sub-menus and toggle checkmarks */}
+      {labels.length > 0 && (
+        <Sub>
+          <SubTrigger className="pr-2">
+            <Tag className="h-3.5 w-3.5" />
+            <span className="flex-1">Labels</span>
+            {sessionLabels.length > 0 && (
+              <span className="text-[10px] text-muted-foreground tabular-nums -mr-2.5">
+                {sessionLabels.length}
+              </span>
+            )}
+          </SubTrigger>
+          <SubContent>
+            <LabelMenuItems
+              labels={labels}
+              appliedLabelIds={appliedLabelIds}
+              onToggle={handleLabelToggle}
+              menu={{ MenuItem, Separator, Sub, SubTrigger, SubContent }}
+            />
+          </SubContent>
+        </Sub>
+      )}
 
       {/* Flag/Unflag */}
       {!isFlagged ? (
@@ -291,6 +347,114 @@ export function SessionMenu({
         <Trash2 className="h-3.5 w-3.5" />
         <span className="flex-1">Delete</span>
       </MenuItem>
+    </>
+  )
+}
+
+/**
+ * Count how many labels in a subtree (including the root) are currently applied.
+ * Used to show selection counts on parent SubTriggers so users can see
+ * where in the tree their selections are.
+ */
+function countAppliedInSubtree(label: LabelConfig, appliedIds: Set<string>): number {
+  let count = appliedIds.has(label.id) ? 1 : 0
+  if (label.children) {
+    for (const child of label.children) {
+      count += countAppliedInSubtree(child, appliedIds)
+    }
+  }
+  return count
+}
+
+/**
+ * LabelMenuItems - Recursive component for rendering label tree as nested sub-menus.
+ *
+ * Labels with children render as nested Sub/SubTrigger/SubContent menus (the parent
+ * itself appears as the first toggleable item inside its submenu, followed by children).
+ * Leaf labels render as simple toggleable menu items with checkmarks.
+ * Parent triggers show a count of applied descendants so users can see where selections are.
+ *
+ * Menu primitives are passed as props so this works in both DropdownMenu and ContextMenu.
+ */
+function LabelMenuItems({
+  labels,
+  appliedLabelIds,
+  onToggle,
+  menu,
+}: {
+  labels: LabelConfig[]
+  appliedLabelIds: Set<string>
+  onToggle: (labelId: string) => void
+  menu: Pick<MenuComponents, 'MenuItem' | 'Separator' | 'Sub' | 'SubTrigger' | 'SubContent'>
+}) {
+  const { MenuItem, Separator, Sub, SubTrigger, SubContent } = menu
+
+  return (
+    <>
+      {labels.map(label => {
+        const hasChildren = label.children && label.children.length > 0
+        const isApplied = appliedLabelIds.has(label.id)
+
+        if (hasChildren) {
+          // Count applied labels in this subtree (parent + all descendants)
+          const subtreeCount = countAppliedInSubtree(label, appliedLabelIds)
+
+          // Parent label: render as a submenu trigger with nested child items
+          return (
+            <Sub key={label.id}>
+              <SubTrigger className="pr-2">
+                <LabelIcon label={label} size="sm" hasChildren />
+                <span className="flex-1">{label.name}</span>
+                {subtreeCount > 0 && (
+                  <span className="text-[10px] text-muted-foreground tabular-nums -mr-2.5">
+                    {subtreeCount}
+                  </span>
+                )}
+              </SubTrigger>
+              <SubContent>
+                {/* Parent label itself is toggleable as the first item */}
+                <MenuItem
+                  onSelect={(e: Event) => {
+                    e.preventDefault()
+                    onToggle(label.id)
+                  }}
+                >
+                  <LabelIcon label={label} size="sm" hasChildren />
+                  <span className="flex-1">{label.name}</span>
+                  <span className="w-3.5 ml-4">
+                    {isApplied && <Check className="h-3.5 w-3.5 text-foreground" />}
+                  </span>
+                </MenuItem>
+                <Separator />
+                {/* Recurse into children */}
+                <LabelMenuItems
+                  labels={label.children!}
+                  appliedLabelIds={appliedLabelIds}
+                  onToggle={onToggle}
+                  menu={menu}
+                />
+              </SubContent>
+            </Sub>
+          )
+        }
+
+        // Leaf label: simple toggleable item with checkmark
+        return (
+          <MenuItem
+            key={label.id}
+            onSelect={(e: Event) => {
+              e.preventDefault()
+              onToggle(label.id)
+            }}
+          >
+            <LabelIcon label={label} size="sm" />
+            <span className="flex-1">{label.name}</span>
+            <span className="w-3.5 ml-4">
+              {isApplied && <Check className="h-3.5 w-3.5 text-foreground" />}
+            </span>
+          </MenuItem>
+        )
+      })}
     </>
   )
 }
