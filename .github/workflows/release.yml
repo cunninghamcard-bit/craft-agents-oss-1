@@ -149,6 +149,11 @@ jobs:
           mkdir -p apps/electron/release
           curl -fsSL "$URL" -o "apps/electron/release/${ARTIFACT}"
 
+          # Also download .zip if it exists (macOS builds produce .zip for electron-updater)
+          ZIP_ARTIFACT="Craft-Agent-${{ matrix.arch }}.zip"
+          ZIP_URL="https://agents.craft.do/electron/${VERSION}/${ZIP_ARTIFACT}"
+          curl -fsSL "$ZIP_URL" -o "apps/electron/release/${ZIP_ARTIFACT}" || true
+
       - name: Setup Bun
         if: steps.check.outputs.skip != 'true'
         uses: oven-sh/setup-bun@v2
@@ -260,7 +265,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-${{ matrix.platform }}-${{ matrix.arch }}
-          path: apps/electron/release/Craft-Agent-${{ matrix.arch }}.${{ matrix.ext }}
+          # Include both installer (.dmg/.exe/.AppImage) and .zip (used by electron-updater for macOS auto-updates).
+          # The .zip only exists for macOS builds; upload-artifact silently ignores missing paths.
+          path: |
+            apps/electron/release/Craft-Agent-${{ matrix.arch }}.${{ matrix.ext }}
+            apps/electron/release/Craft-Agent-${{ matrix.arch }}.zip
           retention-days: 7
 
   # Upload to S3 and create GitHub release
@@ -294,7 +303,9 @@ jobs:
           FLAGS=""
           # Update latest for tag pushes or if explicitly requested
           if [[ "${{ needs.prepare.outputs.is_tag }}" == "true" ]] || [[ "${{ inputs.update_latest }}" == "true" ]]; then
-            FLAGS="$FLAGS --latest --script"
+            # --legacy-manifest generates manifest.json for clients still on the old custom updater (pre-electron-updater).
+            # Remove --legacy-manifest once all users have updated past v0.2.25.
+            FLAGS="$FLAGS --latest --script --legacy-manifest"
           fi
           bun run scripts/upload.ts $FLAGS
 
