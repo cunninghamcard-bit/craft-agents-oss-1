@@ -22,6 +22,9 @@ import { FullscreenOverlayBase } from './FullscreenOverlayBase'
 /** Badge color variants - re-export for backwards compatibility */
 export type BadgeVariant = PreviewBadgeVariant
 
+/** Shared background class for all overlay modes - single source of truth */
+const OVERLAY_BG = 'bg-background'
+
 export interface PreviewOverlayProps {
   /** Whether the overlay is visible */
   isOpen: boolean
@@ -119,7 +122,7 @@ export function PreviewOverlay({
   // Embedded mode — renders inline without dialog/portal, for design system playground
   if (embedded) {
     return (
-      <div className="flex flex-col bg-background h-full w-full overflow-hidden rounded-lg border border-foreground/5">
+      <div className={`flex flex-col ${OVERLAY_BG} h-full w-full overflow-hidden rounded-lg border border-foreground/5`}>
         {header}
         {errorBanner}
         {contentArea}
@@ -133,7 +136,7 @@ export function PreviewOverlay({
       <FullscreenOverlayBase
         isOpen={isOpen}
         onClose={onClose}
-        className="flex flex-col bg-background"
+        className={`flex flex-col ${OVERLAY_BG}`}
       >
         <div className="flex flex-col flex-1 min-h-0">
           {header}
@@ -153,7 +156,7 @@ export function PreviewOverlay({
       }}
     >
       <div
-        className="flex flex-col bg-background shadow-3xl overflow-hidden smooth-corners"
+        className={`flex flex-col ${OVERLAY_BG} shadow-3xl overflow-hidden smooth-corners`}
         style={{
           width: '90vw',
           maxWidth: OVERLAY_LAYOUT.modalMaxWidth,
