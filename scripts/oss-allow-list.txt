@@ -41,10 +41,11 @@ apps/electron/resources/**/*
 # Electron ESLint rules
 apps/electron/eslint-rules/**/*
 
-# Electron scripts (build only)
+# Electron scripts (build and packaging)
 apps/electron/scripts/build-dmg.sh
 apps/electron/scripts/build-win.ps1
 apps/electron/scripts/build-linux.sh
+apps/electron/scripts/afterPack.cjs
 
 # =============================================================================
 # APPS - VIEWER (Session Viewer Web App)
@@ -79,3 +80,11 @@ packages/ui/**/*
 scripts/sync-version.ts
 scripts/install-app.sh
 scripts/install-app.ps1
+
+# Electron build scripts (required for electron:start, electron:dev, electron:build)
+scripts/electron-build-main.ts
+scripts/electron-build-preload.ts
+scripts/electron-build-renderer.ts
+scripts/electron-build-resources.ts
+scripts/electron-clean.ts
+scripts/electron-dev.ts

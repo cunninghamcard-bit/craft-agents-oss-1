@@ -14,8 +14,8 @@ Thank you for your interest in contributing to Craft Agents! This document provi
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/anthropics/craft-agents.git
-   cd craft-agents
+   git clone https://github.com/lukilabs/craft-agents-oss.git
+   cd craft-agents-oss
    ```
 
 2. Install dependencies:
