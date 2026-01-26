@@ -1,4 +1,4 @@
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { readFileSync } from 'fs';
 
 const BUCKET = 'agents-craft-do';
@@ -17,19 +17,23 @@ const s3 = new S3Client({
   },
 });
 
-const manifestContent = readFileSync('/tmp/craft-0.2.26/manifest.json', 'utf-8');
+const VERSION = process.argv[2] || '0.2.31';
 
 async function upload() {
-  // Upload to versioned path
-  console.log('Uploading electron/0.2.26/manifest.json...');
-  await s3.send(new PutObjectCommand({
+  // Fetch the manifest for the specified version from S3
+  const manifestKey = `electron/${VERSION}/manifest.json`;
+  console.log(`Fetching manifest from S3: ${manifestKey}...`);
+
+  const getResponse = await s3.send(new GetObjectCommand({
     Bucket: BUCKET,
-    Key: 'electron/0.2.26/manifest.json',
-    Body: manifestContent,
-    ContentType: 'application/json',
-    CacheControl: 'no-cache, no-store, must-revalidate',
+    Key: manifestKey,
   }));
-  console.log('  ✓ electron/0.2.26/manifest.json');
+
+  const manifestContent = await getResponse.Body?.transformToString();
+  if (!manifestContent) {
+    throw new Error(`Failed to fetch manifest: empty response`);
+  }
+  console.log(`  ✓ Fetched manifest for v${VERSION}`);
 
   // Upload to latest
   console.log('Uploading electron/latest/manifest.json...');
@@ -42,7 +46,7 @@ async function upload() {
   }));
   console.log('  ✓ electron/latest/manifest.json');
 
-  console.log('Done!');
+  console.log(`Done! /latest now points to v${VERSION}`);
 }
 
 upload().catch(err => {

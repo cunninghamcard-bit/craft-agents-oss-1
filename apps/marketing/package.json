@@ -1,6 +1,6 @@
 {
   "name": "@craft-agent/marketing",
-  "version": "0.2.32",
+  "version": "0.2.31",
   "private": true,
   "type": "module",
   "scripts": {
