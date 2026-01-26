@@ -8,6 +8,7 @@
 import * as React from 'react'
 import { useMemo } from 'react'
 import JsonView from '@uiw/react-json-view'
+import { ContentFrame } from './ContentFrame'
 
 /**
  * Recursively parse stringified JSON within JSON values.
@@ -123,40 +124,43 @@ export function JSONPreviewOverlay({
       theme={theme}
       error={error ? { label: 'Parse Error', message: error } : undefined}
       embedded={embedded}
+      className="bg-foreground-3"
     >
-      <div className="h-full overflow-auto p-4">
-        <div className="p-4">
-          <JsonView
-            value={processedData}
-            style={jsonTheme}
-            collapsed={false}
-            enableClipboard={true}
-            displayDataTypes={false}
-            shortenTextAfterLength={100}
-          >
-            {/* Custom copy icon using lucide-react */}
-            <JsonView.Copied
-              render={(props) => {
-                // Type assertion needed - @uiw/react-json-view types don't include data-copied
-                const isCopied = (props as Record<string, unknown>)['data-copied']
-                return isCopied ? (
-                  <Check
-                    className="ml-1.5 inline-flex cursor-pointer text-green-500"
-                    size={10}
-                    onClick={props.onClick}
-                  />
-                ) : (
-                  <Copy
-                    className="ml-1.5 inline-flex cursor-pointer text-muted-foreground hover:text-foreground"
-                    size={10}
-                    onClick={props.onClick}
-                  />
-                )
-              }}
-            />
-          </JsonView>
+      <ContentFrame title="JSON">
+        <div className="flex-1 overflow-y-auto min-h-0 p-4">
+          <div className="p-4">
+            <JsonView
+              value={processedData}
+              style={jsonTheme}
+              collapsed={false}
+              enableClipboard={true}
+              displayDataTypes={false}
+              shortenTextAfterLength={100}
+            >
+              {/* Custom copy icon using lucide-react */}
+              <JsonView.Copied
+                render={(props) => {
+                  // Type assertion needed - @uiw/react-json-view types don't include data-copied
+                  const isCopied = (props as Record<string, unknown>)['data-copied']
+                  return isCopied ? (
+                    <Check
+                      className="ml-1.5 inline-flex cursor-pointer text-green-500"
+                      size={10}
+                      onClick={props.onClick}
+                    />
+                  ) : (
+                    <Copy
+                      className="ml-1.5 inline-flex cursor-pointer text-muted-foreground hover:text-foreground"
+                      size={10}
+                      onClick={props.onClick}
+                    />
+                  )
+                }}
+              />
+            </JsonView>
+          </div>
         </div>
-      </div>
+      </ContentFrame>
     </PreviewOverlay>
   )
 }

@@ -123,7 +123,19 @@ export function PreviewOverlay({
     </div>
   )
 
-  const contentArea = <div className="flex-1 min-h-0 relative">{children}</div>
+  // Gradient fade mask — softens the top/bottom edges of the content area,
+  // replacing the old hard header border with a smooth visual transition.
+  // Uses inline styles because the CSS utility classes live in the Electron app, not this shared package.
+  const FADE_MASK = 'linear-gradient(to bottom, transparent 0%, black 24px, black calc(100% - 24px), transparent 100%)'
+
+  const contentArea = (
+    <div
+      className="flex-1 min-h-0 relative"
+      style={{ maskImage: FADE_MASK, WebkitMaskImage: FADE_MASK }}
+    >
+      {children}
+    </div>
+  )
 
   // Embedded mode — renders inline without dialog/portal, for design system playground
   if (embedded) {

@@ -10,6 +10,7 @@ import * as React from 'react'
 import { useMemo } from 'react'
 import { FileCode } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
+import { ContentFrame } from './ContentFrame'
 import { CodeBlock } from '../markdown/CodeBlock'
 
 export interface GenericOverlayProps {
@@ -143,32 +144,34 @@ export function GenericOverlay({
       }}
       title={title}
       embedded={embedded}
+      className="bg-foreground-3"
     >
-      <div className="absolute inset-0 overflow-auto p-4">
-        {diffMode ? (
-          // Side-by-side diff view
-          <div className="flex gap-4 h-full">
-            <div className="flex-1 flex flex-col min-w-0">
-              <div className="text-xs text-muted-foreground mb-2 font-medium">Original</div>
-              <div className="flex-1 overflow-auto p-4">
-                <CodeBlock code={originalContent} language={detectedLanguage} mode="minimal" forcedTheme={theme} />
+      <ContentFrame title="Preview">
+        <div className="flex-1 overflow-y-auto min-h-0">
+          {diffMode ? (
+            // Side-by-side diff view
+            <div className="flex gap-4 h-full p-4">
+              <div className="flex-1 flex flex-col min-w-0">
+                <div className="text-xs text-muted-foreground mb-2 font-medium">Original</div>
+                <div className="flex-1 overflow-auto p-4">
+                  <CodeBlock code={originalContent} language={detectedLanguage} mode="minimal" forcedTheme={theme} />
+                </div>
+              </div>
+              <div className="flex-1 flex flex-col min-w-0">
+                <div className="text-xs text-muted-foreground mb-2 font-medium">Modified</div>
+                <div className="flex-1 overflow-auto p-4">
+                  <CodeBlock code={modifiedContent} language={detectedLanguage} mode="minimal" forcedTheme={theme} />
+                </div>
               </div>
             </div>
-            <div className="flex-1 flex flex-col min-w-0">
-              <div className="text-xs text-muted-foreground mb-2 font-medium">Modified</div>
-              <div className="flex-1 overflow-auto p-4">
-                <CodeBlock code={modifiedContent} language={detectedLanguage} mode="minimal" forcedTheme={theme} />
-              </div>
+          ) : (
+            // Single content view
+            <div className="p-4">
+              <CodeBlock code={content} language={detectedLanguage} mode="minimal" forcedTheme={theme} />
             </div>
-          </div>
-        ) : (
-          // Single content view
-          // Note: No h-full - content grows naturally and outer container scrolls
-          <div className="p-4">
-            <CodeBlock code={content} language={detectedLanguage} mode="minimal" forcedTheme={theme} />
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </ContentFrame>
     </PreviewOverlay>
   )
 }

@@ -43,10 +43,10 @@ import { setAnthropicOptionsEnv, setPathToClaudeCodeExecutable, setInterceptorPa
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient } from '@craft-agent/shared/mcp'
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, IPC_CHANNELS, generateMessageId } from '../shared/types'
-import { generateSessionTitle, regenerateSessionTitle, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient } from '@craft-agent/shared/utils'
+import { generateSessionTitle, regenerateSessionTitle, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient, resolveToolIcon } from '@craft-agent/shared/utils'
 import { loadWorkspaceSkills, type LoadedSkill } from '@craft-agent/shared/skills'
 import type { ToolDisplayMeta } from '@craft-agent/core/types'
-import { DEFAULT_MODEL } from '@craft-agent/shared/config'
+import { DEFAULT_MODEL, getToolIconsDir } from '@craft-agent/shared/config'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels } from '@craft-agent/shared/labels/storage'
@@ -213,6 +213,21 @@ function resolveToolDisplayMeta(
       }
     }
     return undefined
+  }
+
+  // CLI tool icon resolution for Bash commands
+  // Parses the command string to detect known tools (git, npm, docker, etc.)
+  // and resolves their brand icon from ~/.craft-agent/tool-icons/
+  if (toolName === 'Bash' && toolInput?.command) {
+    const toolIconsDir = getToolIconsDir()
+    const match = resolveToolIcon(String(toolInput.command), toolIconsDir)
+    if (match) {
+      return {
+        displayName: match.displayName,
+        iconDataUrl: match.iconDataUrl,
+        category: 'native' as const,
+      }
+    }
   }
 
   // Native tool display names (no icons - UI handles these with built-in icons)

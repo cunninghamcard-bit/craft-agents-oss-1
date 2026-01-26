@@ -132,7 +132,7 @@ export function PreviewHeader({
   return (
     <div
       className={cn(
-        'shrink-0 flex items-center justify-between px-3 border-b border-foreground/5',
+        'shrink-0 flex items-center justify-between px-3',
         className
       )}
       style={{ height, ...style }}

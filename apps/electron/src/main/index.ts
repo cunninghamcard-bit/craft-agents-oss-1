@@ -15,6 +15,7 @@ import { getWorkspaces } from '@craft-agent/shared/config'
 import { initializeDocs } from '@craft-agent/shared/docs'
 import { ensureDefaultPermissions } from '@craft-agent/shared/agent/permissions-config'
 import { handleDeepLink } from './deep-link'
+import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
 import { initNotificationService, clearBadgeCount, initBadgeIcon, initInstanceBadge } from './notifications'
@@ -55,6 +56,10 @@ if (process.defaultApp) {
   // Production mode
   app.setAsDefaultProtocolClient(DEEPLINK_SCHEME)
 }
+
+// Register thumbnail:// custom protocol for file preview thumbnails in the sidebar.
+// Must happen before app.whenReady() — Electron requires early scheme registration.
+registerThumbnailScheme()
 
 // Handle deeplink on macOS (when app is already running)
 app.on('open-url', (event, url) => {
@@ -150,6 +155,9 @@ app.whenReady().then(async () => {
   // Ensure default permissions file exists (copies bundled default.json on first run)
   const bundledPermissionsDir = join(__dirname, 'resources/permissions')
   ensureDefaultPermissions(bundledPermissionsDir)
+
+  // Register thumbnail:// protocol handler (scheme was registered earlier, before app.whenReady)
+  registerThumbnailHandler()
 
   // Note: electron-updater handles pending updates internally via autoInstallOnAppQuit
 

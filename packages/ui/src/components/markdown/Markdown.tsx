@@ -5,6 +5,7 @@ import remarkGfm from 'remark-gfm'
 import { cn } from '../../lib/utils'
 import { CodeBlock, InlineCode } from './CodeBlock'
 import { MarkdownDiffBlock } from './MarkdownDiffBlock'
+import { MarkdownJsonBlock } from './MarkdownJsonBlock'
 import { preprocessLinks } from './linkify'
 import remarkCollapsibleSections from './remarkCollapsibleSections'
 import { CollapsibleSection } from './CollapsibleSection'
@@ -162,6 +163,10 @@ function createComponents(
           if (match?.[1] === 'diff') {
             return <MarkdownDiffBlock code={code} className="my-1" />
           }
+          // JSON code blocks → interactive tree viewer
+          if (match?.[1] === 'json') {
+            return <MarkdownJsonBlock code={code} className="my-1" />
+          }
           return <CodeBlock code={code} language={match?.[1]} mode="full" className="my-1" />
         }
 
@@ -225,6 +230,10 @@ function createComponents(
         // Diff code blocks → pierre/diffs for a proper diff viewer
         if (match?.[1] === 'diff') {
           return <MarkdownDiffBlock code={code} className="my-1" />
+        }
+        // JSON code blocks → interactive tree viewer
+        if (match?.[1] === 'json') {
+          return <MarkdownJsonBlock code={code} className="my-1" />
         }
         return <CodeBlock code={code} language={match?.[1]} mode="full" className="my-1" />
       }

@@ -7,6 +7,7 @@
 import * as React from 'react'
 import { BookOpen, PenLine } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
+import { ContentFrame } from './ContentFrame'
 import { ShikiCodeViewer } from '../code-viewer/ShikiCodeViewer'
 import { truncateFilePath } from '../code-viewer/language-map'
 
@@ -75,16 +76,19 @@ export function CodePreviewOverlay({
       subtitle={subtitle}
       error={error ? { label: mode === 'write' ? 'Write Failed' : 'Read Failed', message: error } : undefined}
       embedded={embedded}
+      className="bg-foreground-3"
     >
-      <div className="h-full">
-        <ShikiCodeViewer
-          code={content}
-          filePath={filePath}
-          language={language}
-          startLine={startLine}
-          theme={theme}
-        />
-      </div>
+      <ContentFrame title="Code">
+        <div className="flex-1 overflow-y-auto min-h-0">
+          <ShikiCodeViewer
+            code={content}
+            filePath={filePath}
+            language={language}
+            startLine={startLine}
+            theme={theme}
+          />
+        </div>
+      </ContentFrame>
     </PreviewOverlay>
   )
 }

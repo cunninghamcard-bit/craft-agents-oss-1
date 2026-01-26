@@ -16,6 +16,7 @@ import { ShikiDiffViewer, getDiffStats } from '../code-viewer/ShikiDiffViewer'
 import { DiffViewerControls } from '../code-viewer/DiffViewerControls'
 import { truncateFilePath, LANGUAGE_MAP } from '../code-viewer/language-map'
 import { PreviewOverlay, type BadgeVariant } from './PreviewOverlay'
+import { ContentFrame } from './ContentFrame'
 
 /**
  * A single file change (Edit or Write)
@@ -477,12 +478,13 @@ export function MultiDiffPreviewOverlay({
       onTitleClick={headerTitleClick}
       headerActions={headerActions}
       embedded={embedded}
+      className="bg-foreground-3"
     >
-      {/* Sidebar + diff content fills the available space */}
-      <div className="absolute inset-0 flex">
-        {/* Sidebar navigation for multiple files */}
-        {showSidebar && (
-          <div className="w-64 shrink-0 h-full overflow-y-auto">
+      <ContentFrame
+        title="Diff"
+        maxWidth={1100}
+        leftSidebar={showSidebar ? (
+          <div className="w-64 h-full">
             <div className="px-2 py-2">
               <Sidebar
                 entries={sidebarEntries}
@@ -492,8 +494,8 @@ export function MultiDiffPreviewOverlay({
               />
             </div>
           </div>
-        )}
-
+        ) : undefined}
+      >
         {/* Main diff area */}
         <div className="flex-1 min-w-0 h-full">
           {selectedEntry ? (
@@ -515,7 +517,7 @@ export function MultiDiffPreviewOverlay({
             </div>
           )}
         </div>
-      </div>
+      </ContentFrame>
     </PreviewOverlay>
   )
 }

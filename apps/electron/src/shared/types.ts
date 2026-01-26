@@ -506,6 +506,7 @@ export const IPC_CHANNELS = {
 
   // File operations
   READ_FILE: 'file:read',
+  READ_FILE_DATA_URL: 'file:readDataUrl',
   OPEN_FILE_DIALOG: 'file:openDialog',
   READ_FILE_ATTACHMENT: 'file:readAttachment',
   STORE_ATTACHMENT: 'file:storeAttachment',
@@ -747,6 +748,8 @@ export interface ElectronAPI {
 
   // File operations
   readFile(path: string): Promise<string>
+  /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */
+  readFileDataUrl(path: string): Promise<string>
   openFileDialog(): Promise<string[]>
   readFileAttachment(path: string): Promise<FileAttachment | null>
   storeAttachment(sessionId: string, attachment: FileAttachment): Promise<import('../../../../packages/core/src/types/index.ts').StoredAttachment>

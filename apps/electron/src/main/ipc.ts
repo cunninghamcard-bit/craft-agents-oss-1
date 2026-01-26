@@ -413,6 +413,41 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     }
   })
 
+  // Read a file as a data URL for in-app binary preview (images, PDFs).
+  // Returns data:{mime};base64,{content} — used by ImagePreviewOverlay and PDFPreviewOverlay.
+  ipcMain.handle(IPC_CHANNELS.READ_FILE_DATA_URL, async (_event, path: string) => {
+    try {
+      const safePath = await validateFilePath(path)
+      const buffer = await readFile(safePath)
+      const ext = safePath.split('.').pop()?.toLowerCase() ?? ''
+
+      // Map common extensions to MIME types
+      const mimeMap: Record<string, string> = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        gif: 'image/gif',
+        webp: 'image/webp',
+        svg: 'image/svg+xml',
+        bmp: 'image/bmp',
+        ico: 'image/x-icon',
+        heic: 'image/heic',
+        heif: 'image/heif',
+        tiff: 'image/tiff',
+        tif: 'image/tiff',
+        avif: 'image/avif',
+        pdf: 'application/pdf',
+      }
+      const mime = mimeMap[ext] || 'application/octet-stream'
+      const base64 = buffer.toString('base64')
+      return `data:${mime};base64,${base64}`
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      ipcLog.error('readFileDataUrl error:', message)
+      throw new Error(`Failed to read file as data URL: ${message}`)
+    }
+  })
+
   // Open native file dialog for selecting files to attach
   ipcMain.handle(IPC_CHANNELS.OPEN_FILE_DIALOG, async () => {
     const result = await dialog.showOpenDialog({

@@ -41,7 +41,16 @@ import { sourcesAtom } from '@/atoms/sources'
 import { skillsAtom } from '@/atoms/skills'
 import { extractBadges } from '@/lib/mentions'
 import { getDefaultStore } from 'jotai'
-import { ShikiThemeProvider, PlatformProvider } from '@craft-agent/ui'
+import {
+  ShikiThemeProvider,
+  PlatformProvider,
+  ImagePreviewOverlay,
+  PDFPreviewOverlay,
+  CodePreviewOverlay,
+  DocumentFormattedMarkdownOverlay,
+  JSONPreviewOverlay,
+} from '@craft-agent/ui'
+import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 
 type AppState = 'loading' | 'onboarding' | 'reauth' | 'ready'
 
@@ -223,7 +232,7 @@ export default function App() {
   // Apply theme via hook (injects CSS variables)
   // shikiTheme is passed to ShikiThemeProvider to ensure correct syntax highlighting
   // theme for dark-only themes in light system mode
-  const { shikiTheme } = useTheme({ appTheme })
+  const { shikiTheme, isDark } = useTheme({ appTheme })
 
   // Ref for sessionOptions to access current value in event handlers without re-registering
   const sessionOptionsRef = useRef(sessionOptions)
@@ -1027,21 +1036,28 @@ export default function App() {
     }
   }, [])
 
-  const handleOpenFile = useCallback(async (path: string) => {
-    try {
-      await window.electronAPI.openFile(path)
-    } catch (error) {
-      console.error('Failed to open file:', error)
-    }
-  }, [])
+  // Centralized link interceptor: classifies file types and decides whether to
+  // show an in-app preview overlay or open externally. Replaces the old
+  // handleOpenFile/handleOpenUrl that always opened in external apps.
+  const linkInterceptor = useLinkInterceptor({
+    openFileExternal: async (path) => {
+      try { await window.electronAPI.openFile(path) }
+      catch (error) { console.error('Failed to open file:', error) }
+    },
+    openUrl: async (url) => {
+      try { await window.electronAPI.openUrl(url) }
+      catch (error) { console.error('Failed to open URL:', error) }
+    },
+    showInFolder: async (path) => {
+      try { await window.electronAPI.showInFolder(path) }
+      catch (error) { console.error('Failed to show in folder:', error) }
+    },
+    readFile: (path) => window.electronAPI.readFile(path),
+    readFileDataUrl: (path) => window.electronAPI.readFileDataUrl(path),
+  })
 
-  const handleOpenUrl = useCallback(async (url: string) => {
-    try {
-      await window.electronAPI.openUrl(url)
-    } catch (error) {
-      console.error('Failed to open URL:', error)
-    }
-  }, [])
+  const handleOpenFile = linkInterceptor.handleOpenFile
+  const handleOpenUrl = linkInterceptor.handleOpenUrl
 
   const handleOpenSettings = useCallback(() => {
     navigate(routes.view.settings())
@@ -1324,6 +1340,18 @@ export default function App() {
               onCancel={() => setShowResetDialog(false)}
             />
           </div>
+
+          {/* File preview overlay — rendered by the link interceptor when a previewable file is clicked */}
+          {linkInterceptor.previewState && (
+            <FilePreviewRenderer
+              state={linkInterceptor.previewState}
+              onClose={linkInterceptor.closePreview}
+              onOpenExternal={linkInterceptor.openCurrentExternal}
+              onRevealInFinder={linkInterceptor.revealCurrentInFinder}
+              loadDataUrl={linkInterceptor.readFileDataUrl}
+              isDark={isDark}
+            />
+          )}
         </NavigationProvider>
         </TooltipProvider>
         </ModalProvider>
@@ -1340,4 +1368,129 @@ export default function App() {
 function WindowCloseHandler() {
   useWindowCloseHandler()
   return null
+}
+
+/**
+ * FilePreviewRenderer - Routes file preview state to the correct overlay component.
+ *
+ * Handles all preview types from the link interceptor:
+ * - image → ImagePreviewOverlay (binary, loaded via data URL)
+ * - pdf → PDFPreviewOverlay (binary, embedded via Chromium viewer)
+ * - code/text → CodePreviewOverlay (syntax highlighted)
+ * - markdown → DocumentFormattedMarkdownOverlay
+ * - json → JSONPreviewOverlay
+ *
+ * Each overlay shows a clickable file path in the header for opening externally.
+ */
+function FilePreviewRenderer({
+  state,
+  onClose,
+  onOpenExternal,
+  onRevealInFinder,
+  loadDataUrl,
+  isDark,
+}: {
+  state: FilePreviewState
+  onClose: () => void
+  onOpenExternal: () => void
+  onRevealInFinder: () => void
+  loadDataUrl: (path: string) => Promise<string>
+  isDark: boolean
+}) {
+  const theme = isDark ? 'dark' : 'light' as const
+
+  // Adapt the no-arg callbacks to the (path: string) => void signatures
+  // that overlay components expect. The interceptor already knows the path,
+  // so we just ignore the argument from the overlay.
+  const openExternal = (_path: string) => onOpenExternal()
+  const revealInFinder = (_path: string) => onRevealInFinder()
+
+  switch (state.type) {
+    case 'image':
+      return (
+        <ImagePreviewOverlay
+          isOpen
+          onClose={onClose}
+          filePath={state.filePath}
+          loadDataUrl={loadDataUrl}
+          onOpenExternal={openExternal}
+          onRevealInFinder={revealInFinder}
+          theme={theme}
+        />
+      )
+
+    case 'pdf':
+      return (
+        <PDFPreviewOverlay
+          isOpen
+          onClose={onClose}
+          filePath={state.filePath}
+          loadDataUrl={loadDataUrl}
+          onOpenExternal={openExternal}
+          onRevealInFinder={revealInFinder}
+          theme={theme}
+        />
+      )
+
+    case 'code':
+    case 'text':
+      return (
+        <CodePreviewOverlay
+          isOpen
+          onClose={onClose}
+          filePath={state.filePath}
+          content={state.content ?? ''}
+          language={state.type === 'code' ? state.language : 'plaintext'}
+          mode="read"
+          theme={theme}
+          error={state.error}
+          onOpenFile={openExternal}
+        />
+      )
+
+    case 'markdown':
+      return (
+        <DocumentFormattedMarkdownOverlay
+          isOpen
+          onClose={onClose}
+          content={state.content ?? ''}
+        />
+      )
+
+    case 'json': {
+      // JSONPreviewOverlay expects parsed data, not a raw string
+      let parsedData: unknown = null
+      try {
+        if (state.content) parsedData = JSON.parse(state.content)
+      } catch {
+        // If parsing fails, fall back to showing as code
+        return (
+          <CodePreviewOverlay
+            isOpen
+            onClose={onClose}
+            filePath={state.filePath}
+            content={state.content ?? ''}
+            language="json"
+            mode="read"
+            theme={theme}
+            error={state.error}
+            onOpenFile={openExternal}
+          />
+        )
+      }
+      return (
+        <JSONPreviewOverlay
+          isOpen
+          onClose={onClose}
+          title={state.filePath.split('/').pop() ?? 'JSON'}
+          data={parsedData}
+          theme={theme}
+          error={state.error}
+        />
+      )
+    }
+
+    default:
+      return null
+  }
 }
