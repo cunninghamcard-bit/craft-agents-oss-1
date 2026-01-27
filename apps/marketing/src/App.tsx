@@ -107,7 +107,6 @@ const faqItems = [
     answer: 'Just tell the agent "add Linear as a source." Really. It finds public APIs and MCP servers, reads their documentation, fetches credentials, and sets everything up. Sources become instantly available. No config files, no setup wizards.',
     links: [
       { text: 'Check out how I just connected to Slack', url: 'https://agents.craft.do/s/DRNQEiy8w2e1v5LPgKl8b' },
-      { text: 'Or watch it set up Gmail in one go', url: 'https://agents.craft.do/s/yUVFb8zrlFaaGuw7mjoke' },
     ],
   },
   {
