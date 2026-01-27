@@ -45,6 +45,8 @@
     "./labels/storage": "./src/labels/storage.ts",
     "./views": "./src/views/index.ts",
     "./views/storage": "./src/views/storage.ts",
+    "./hooks": "./src/hooks/index.ts",
+    "./hooks/types": "./src/hooks/types.ts",
     "./validation": "./src/validation/index.ts",
     "./version": "./src/version/index.ts",
     "./branding": "./src/branding.ts",
@@ -63,6 +65,7 @@
     "bash-parser": "^0.5.0",
     "filtrex": "^3.1.0",
     "incr-regex-package": "^1.0.4",
+    "nanoevents": "^9.1.0",
     "shell-quote": "^1.8.3"
   },
   "peerDependencies": {
