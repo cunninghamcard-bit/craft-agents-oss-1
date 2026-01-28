@@ -243,18 +243,6 @@ function SessionItem({
   onNavigatePrev,
   onNavigateNext,
 }: SessionItemProps) {
-  // Debug: log chevron condition values
-  useEffect(() => {
-    if (isSelected) {
-      console.log('[SessionItem Chevron Condition]', item.id, {
-        isSelected,
-        searchQuery: searchQuery || '(empty)',
-        chatMatchCount,
-        showChevrons: !!(isSelected && searchQuery && chatMatchCount != null && chatMatchCount > 0)
-      })
-    }
-  }, [isSelected, searchQuery, chatMatchCount, item.id])
-
   const [menuOpen, setMenuOpen] = useState(false)
   const [contextMenuOpen, setContextMenuOpen] = useState(false)
   const [todoMenuOpen, setTodoMenuOpen] = useState(false)
@@ -782,11 +770,6 @@ export function SessionList({
   const [session] = useSession()
   const { navigate } = useNavigation()
   const navState = useNavigationState()
-
-  // Debug: Log chatMatchCount when it changes
-  useEffect(() => {
-    console.log('[SessionList] chatMatchCount prop:', chatMatchCount, 'chatMatchIndex:', chatMatchIndex, 'selected:', session.selected)
-  }, [chatMatchCount, chatMatchIndex, session.selected])
 
   // Pre-flatten label tree once for efficient ID lookups in each SessionItem
   const flatLabels = useMemo(() => flattenLabels(labels), [labels])

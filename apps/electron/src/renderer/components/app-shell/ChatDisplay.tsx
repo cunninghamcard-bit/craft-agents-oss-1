@@ -551,18 +551,6 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     return filtered
   }, [matchingOccurrences, actualMatchIds])
 
-  // For pagination: get turn data (unique turns with their indices)
-  const matchingTurnData = useMemo(() => {
-    const seen = new Set<string>()
-    return matchingOccurrences
-      .filter(m => {
-        if (seen.has(m.turnId)) return false
-        seen.add(m.turnId)
-        return true
-      })
-      .map(m => ({ turnId: m.turnId, turnIndex: m.turnIndex }))
-  }, [matchingOccurrences])
-
   // Auto-scroll to match ONLY when there's exactly one match
   // Multiple matches: user navigates with chevrons to avoid jarring scroll
   useEffect(() => {
@@ -932,6 +920,35 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       title: 'Message Preview',
     })
   }, [session])
+
+  // Helper to collect Edit/Write activities into FileChange array
+  // Used by both onOpenActivityDetails and onOpenMultiFileDiff
+  const collectFileChanges = useCallback((activities: ActivityItem[]): FileChange[] => {
+    const changes: FileChange[] = []
+    for (const a of activities) {
+      const input = a.toolInput as Record<string, unknown> | undefined
+      if (a.toolName === 'Edit' && input) {
+        changes.push({
+          id: a.id,
+          filePath: (input.file_path as string) || 'unknown',
+          toolType: 'Edit',
+          original: (input.old_string as string) || '',
+          modified: (input.new_string as string) || '',
+          error: a.error || undefined,
+        })
+      } else if (a.toolName === 'Write' && input) {
+        changes.push({
+          id: a.id,
+          filePath: (input.file_path as string) || 'unknown',
+          toolType: 'Write',
+          original: '',
+          modified: (input.content as string) || '',
+          error: a.error || undefined,
+        })
+      }
+    }
+    return changes
+  }, [])
 
   // Ref to track total turn count for scroll handler
   const totalTurnCountRef = React.useRef(0)
@@ -1312,31 +1329,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           // Edit/Write tool → Multi-file diff overlay (ungrouped, focused on this change)
                           // Exception: Write to .md/.txt files goes to document overlay instead
                           if ((activity.toolName === 'Edit' || activity.toolName === 'Write') && !isDocumentWrite) {
-                            // Collect all Edit/Write activities from this turn for context
-                            const changes: FileChange[] = []
-                            for (const a of turn.activities) {
-                              const actInput = a.toolInput as Record<string, unknown> | undefined
-                              if (a.toolName === 'Edit' && actInput) {
-                                changes.push({
-                                  id: a.id,
-                                  filePath: (actInput.file_path as string) || 'unknown',
-                                  toolType: 'Edit',
-                                  original: (actInput.old_string as string) || '',
-                                  modified: (actInput.new_string as string) || '',
-                                  error: a.error || undefined,
-                                })
-                              } else if (a.toolName === 'Write' && actInput) {
-                                changes.push({
-                                  id: a.id,
-                                  filePath: (actInput.file_path as string) || 'unknown',
-                                  toolType: 'Write',
-                                  original: '',
-                                  modified: (actInput.content as string) || '',
-                                  error: a.error || undefined,
-                                })
-                              }
-                            }
-
+                            const changes = collectFileChanges(turn.activities)
                             if (changes.length > 0) {
                               setOverlayState({
                                 type: 'multi-diff',
@@ -1354,31 +1347,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                           a.toolName === 'Edit' || a.toolName === 'Write'
                         )}
                         onOpenMultiFileDiff={() => {
-                          // Collect all Edit/Write activities from this turn
-                          const changes: FileChange[] = []
-                          for (const a of turn.activities) {
-                            const input = a.toolInput as Record<string, unknown> | undefined
-                            if (a.toolName === 'Edit' && input) {
-                              changes.push({
-                                id: a.id,
-                                filePath: (input.file_path as string) || 'unknown',
-                                toolType: 'Edit',
-                                original: (input.old_string as string) || '',
-                                modified: (input.new_string as string) || '',
-                                error: a.error || undefined,
-                              })
-                            } else if (a.toolName === 'Write' && input) {
-                              changes.push({
-                                id: a.id,
-                                filePath: (input.file_path as string) || 'unknown',
-                                toolType: 'Write',
-                                original: '',
-                                modified: (input.content as string) || '',
-                                error: a.error || undefined,
-                              })
-                            }
-                          }
-
+                          const changes = collectFileChanges(turn.activities)
                           if (changes.length > 0) {
                             setOverlayState({
                               type: 'multi-diff',
