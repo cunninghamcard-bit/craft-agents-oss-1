@@ -487,6 +487,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Returns array with unique matchId for each occurrence
   const matchingOccurrences = useMemo(() => {
     if (!searchQuery.trim() || !session?.messages) return []
+    const startTime = performance.now()
     const query = searchQuery.toLowerCase()
     const turns = groupMessagesByTurn(session.messages)
     const matches: { matchId: string; turnId: string; turnIndex: number; matchIndexInTurn: number }[] = []
@@ -531,6 +532,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
         })
       }
     }
+    console.log('[ChatDisplay Perf] matchingOccurrences:', (performance.now() - startTime).toFixed(2), 'ms, found', matches.length, 'matches in', turns.length, 'turns')
     return matches
   }, [searchQuery, session?.messages, countOccurrences])
 
@@ -543,7 +545,10 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Filter to only valid matches that exist in DOM (actualMatchIds is updated after highlighting)
   const validMatches = useMemo(() => {
     if (actualMatchIds.size === 0) return matchingOccurrences // Before highlighting, show all
-    return matchingOccurrences.filter(m => actualMatchIds.has(m.matchId))
+    const startTime = performance.now()
+    const filtered = matchingOccurrences.filter(m => actualMatchIds.has(m.matchId))
+    console.log('[ChatDisplay Perf] validMatches filter:', (performance.now() - startTime).toFixed(2), 'ms,', matchingOccurrences.length, '->', filtered.length)
+    return filtered
   }, [matchingOccurrences, actualMatchIds])
 
   // For pagination: get turn data (unique turns with their indices)
@@ -595,7 +600,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
       // Use multiple attempts to ensure DOM is ready (highlights are applied)
       let attempts = 0
-      const maxAttempts = 15
+      const maxAttempts = 5
 
       const tryScroll = () => {
         const matchEl = document.getElementById(matchId)
@@ -640,7 +645,9 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
       })
     }
 
+    const clearStartTime = performance.now()
     clearHighlights()
+    console.log('[ChatDisplay Perf] clearHighlights:', (performance.now() - clearStartTime).toFixed(2), 'ms')
     setActualMatchIds(new Set())
 
     if (!searchQuery.trim() || !isSearchActive) return
@@ -781,18 +788,26 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
     // Retry logic: if no refs available yet, wait and try again
     let attempts = 0
-    const maxAttempts = 15 // Increased for pagination cases
+    const maxAttempts = 5
     let highlightTimeoutId: ReturnType<typeof setTimeout> | null = null
 
     const tryHighlight = () => {
+      // If no turns to highlight, don't retry - there's nothing to wait for
+      if (matchingTurnIds.length === 0) {
+        console.log('[ChatDisplay Highlight] No turns to highlight, skipping')
+        return
+      }
+
       const refCount = turnRefs.current.size
       const matchingInRefs = matchingTurnIds.filter(id => turnRefs.current.has(id)).length
       console.log('[ChatDisplay Highlight] Try highlight, attempt:', attempts, 'refCount:', refCount, 'matchingTurns:', matchingTurnIds.length, 'matchingInRefs:', matchingInRefs)
-      if (refCount > 0 && matchingInRefs > 0) {
+      if (matchingInRefs > 0) {
+        const highlightStartTime = performance.now()
         applyHighlights()
+        const highlightTime = performance.now() - highlightStartTime
         // Store actual match IDs for navigation (triggers re-render to update validMatches)
         setActualMatchIds(new Set(createdMatchIds))
-        console.log('[ChatDisplay Highlight] Applied highlights to', matchingInRefs, 'matching turns, created', createdMatchIds.length, 'marks')
+        console.log('[ChatDisplay Perf] applyHighlights:', highlightTime.toFixed(2), 'ms, created', createdMatchIds.length, 'marks in', matchingInRefs, 'turns')
       } else if (attempts < maxAttempts) {
         // Refs not ready yet - retry with increasing delay
         attempts++
