@@ -117,6 +117,10 @@ async function generateHtml(): Promise<string> {
     'Theme Showcase': 'Theme: ',
   }
 
+  // Build mapping from original index to display number (excluding Hero samples)
+  const heroCount = samples.filter(s => s.category === 'Hero').length
+  const displayNum = (i: number) => i + 1 - heroCount
+
   const tocSections = [...categories.entries()]
     .filter(([cat]) => cat !== 'Hero') // Skip Hero from TOC
     .map(([cat, indices]) => {
@@ -126,12 +130,12 @@ async function generateHtml(): Promise<string> {
       let title = samples[i]!.title
       // Strip the category prefix from the title since it's already under the category heading
       if (prefix && title.startsWith(prefix)) title = title.slice(prefix.length)
-      return `<li><a href="#sample-${i}"><span class="toc-num">${i + 1}.</span> ${escapeHtml(title)}</a></li>`
+      return `<li><a href="#sample-${i}"><span class="toc-num">${displayNum(i)}.</span> ${escapeHtml(title)}</a></li>`
     }).join('\n            ')
     return `
         <div class="toc-category">
           <h3>${escapeHtml(cat)} (${indices.length} samples)</h3>
-          <ol start="${indices[0]! + 1}">
+          <ol start="${displayNum(indices[0]!)}">
             ${items}
           </ol>
         </div>`
@@ -937,7 +941,7 @@ async function generateHtml(): Promise<string> {
       line-height: 1.6;
       color: color-mix(in srgb, var(--t-fg) 70%, var(--t-bg));
       margin: 0 0 1.5rem;
-      max-width: 640px;
+      max-width: 680px;
     }
     .hero-description a {
       color: var(--t-fg);
