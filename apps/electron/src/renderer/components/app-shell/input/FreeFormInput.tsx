@@ -320,18 +320,21 @@ export function FreeFormInput({
   // Input settings (loaded from config)
   const [autoCapitalisation, setAutoCapitalisation] = React.useState(true)
   const [sendMessageKey, setSendMessageKey] = React.useState<'enter' | 'cmd-enter'>('enter')
+  const [spellCheck, setSpellCheck] = React.useState(false)
 
   // Load input settings on mount
   React.useEffect(() => {
     const loadInputSettings = async () => {
       if (!window.electronAPI) return
       try {
-        const [autoCapEnabled, sendKey] = await Promise.all([
+        const [autoCapEnabled, sendKey, spellCheckEnabled] = await Promise.all([
           window.electronAPI.getAutoCapitalisation(),
           window.electronAPI.getSendMessageKey(),
+          window.electronAPI.getSpellCheck(),
         ])
         setAutoCapitalisation(autoCapEnabled)
         setSendMessageKey(sendKey)
+        setSpellCheck(spellCheckEnabled)
       } catch (error) {
         console.error('Failed to load input settings:', error)
       }
@@ -1242,6 +1245,7 @@ export function FreeFormInput({
           className="min-h-[88px] pl-5 pr-4 pt-4 pb-3 overflow-y-auto"
           style={{ maxHeight: inputMaxHeight }}
           data-tutorial="chat-input"
+          spellCheck={spellCheck}
         />
 
         {/* Bottom Row: Controls - wrapped in relative container for escape overlay */}

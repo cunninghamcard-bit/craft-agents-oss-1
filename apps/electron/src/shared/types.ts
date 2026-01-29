@@ -702,6 +702,8 @@ export const IPC_CHANNELS = {
   INPUT_SET_AUTO_CAPITALISATION: 'input:setAutoCapitalisation',
   INPUT_GET_SEND_MESSAGE_KEY: 'input:getSendMessageKey',
   INPUT_SET_SEND_MESSAGE_KEY: 'input:setSendMessageKey',
+  INPUT_GET_SPELL_CHECK: 'input:getSpellCheck',
+  INPUT_SET_SPELL_CHECK: 'input:setSpellCheck',
 
   BADGE_UPDATE: 'badge:update',
   BADGE_CLEAR: 'badge:clear',
@@ -970,6 +972,8 @@ export interface ElectronAPI {
   setAutoCapitalisation(enabled: boolean): Promise<void>
   getSendMessageKey(): Promise<'enter' | 'cmd-enter'>
   setSendMessageKey(key: 'enter' | 'cmd-enter'): Promise<void>
+  getSpellCheck(): Promise<boolean>
+  setSpellCheck(enabled: boolean): Promise<void>
 
   updateBadgeCount(count: number): Promise<void>
   clearBadgeCount(): Promise<void>

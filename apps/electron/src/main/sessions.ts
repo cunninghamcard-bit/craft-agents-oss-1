@@ -3185,7 +3185,7 @@ To view this task's output:
             toolName: event.toolName,
             toolUseId: event.toolUseId,
             toolInput: formattedToolInput,
-            toolStatus: 'pending',
+            toolStatus: 'executing',
             toolIntent: event.intent,
             toolDisplayName: event.displayName,
             toolDisplayMeta,  // Includes base64 icon for viewer compatibility

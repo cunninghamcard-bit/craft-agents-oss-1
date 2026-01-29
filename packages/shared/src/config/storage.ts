@@ -49,6 +49,7 @@ export interface StoredConfig {
   // Input settings
   autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: true)
   sendMessageKey?: 'enter' | 'cmd-enter';  // Key to send messages (default: 'enter')
+  spellCheck?: boolean;  // Enable spell check in input (default: false)
 }
 
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -298,6 +299,28 @@ export function setSendMessageKey(key: 'enter' | 'cmd-enter'): void {
   const config = loadStoredConfig();
   if (!config) return;
   config.sendMessageKey = key;
+  saveConfig(config);
+}
+
+/**
+ * Get whether spell check is enabled in the input.
+ */
+export function getSpellCheck(): boolean {
+  const config = loadStoredConfig();
+  if (config?.spellCheck !== undefined) {
+    return config.spellCheck;
+  }
+  const defaults = loadConfigDefaults();
+  return defaults.defaults.spellCheck;
+}
+
+/**
+ * Set whether spell check is enabled in the input.
+ */
+export function setSpellCheck(enabled: boolean): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.spellCheck = enabled;
   saveConfig(config);
 }
 

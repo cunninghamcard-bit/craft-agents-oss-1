@@ -5,6 +5,7 @@
  *
  * Settings:
  * - Auto Capitalisation (on/off)
+ * - Spell Check (on/off)
  * - Send Message Key (Enter or ⌘+Enter)
  */
 
@@ -19,9 +20,8 @@ import {
   SettingsSection,
   SettingsCard,
   SettingsToggle,
-  SettingsRow,
+  SettingsMenuSelectRow,
 } from '@/components/settings'
-import { SettingsSegmentedControl } from '@/components/settings/SettingsSegmentedControl'
 
 export const meta: DetailsPageMeta = {
   navigator: 'settings',
@@ -36,6 +36,9 @@ export default function InputSettingsPage() {
   // Auto-capitalisation state
   const [autoCapitalisation, setAutoCapitalisation] = useState(true)
 
+  // Spell check state (default off)
+  const [spellCheck, setSpellCheck] = useState(false)
+
   // Send message key state
   const [sendMessageKey, setSendMessageKey] = useState<'enter' | 'cmd-enter'>('enter')
 
@@ -44,11 +47,13 @@ export default function InputSettingsPage() {
     const loadSettings = async () => {
       if (!window.electronAPI) return
       try {
-        const [autoCapEnabled, sendKey] = await Promise.all([
+        const [autoCapEnabled, spellCheckEnabled, sendKey] = await Promise.all([
           window.electronAPI.getAutoCapitalisation(),
+          window.electronAPI.getSpellCheck(),
           window.electronAPI.getSendMessageKey(),
         ])
         setAutoCapitalisation(autoCapEnabled)
+        setSpellCheck(spellCheckEnabled)
         setSendMessageKey(sendKey)
       } catch (error) {
         console.error('Failed to load input settings:', error)
@@ -60,6 +65,11 @@ export default function InputSettingsPage() {
   const handleAutoCapitalisationChange = useCallback(async (enabled: boolean) => {
     setAutoCapitalisation(enabled)
     await window.electronAPI.setAutoCapitalisation(enabled)
+  }, [])
+
+  const handleSpellCheckChange = useCallback(async (enabled: boolean) => {
+    setSpellCheck(enabled)
+    await window.electronAPI.setSpellCheck(enabled)
   }, [])
 
   const handleSendMessageKeyChange = useCallback(async (key: 'enter' | 'cmd-enter') => {
@@ -83,30 +93,28 @@ export default function InputSettingsPage() {
                     checked={autoCapitalisation}
                     onCheckedChange={handleAutoCapitalisationChange}
                   />
+                  <SettingsToggle
+                    label="Spell check"
+                    description="Underline misspelled words while typing."
+                    checked={spellCheck}
+                    onCheckedChange={handleSpellCheckChange}
+                  />
                 </SettingsCard>
               </SettingsSection>
 
               {/* Send Behavior */}
               <SettingsSection title="Sending" description="Choose how to send messages.">
                 <SettingsCard>
-                  <SettingsRow
+                  <SettingsMenuSelectRow
                     label="Send message with"
-                    description={
-                      sendMessageKey === 'enter'
-                        ? 'Press Enter to send. Use Shift+Enter for new lines.'
-                        : 'Press ⌘+Enter to send. Use Enter for new lines.'
-                    }
-                  >
-                    <SettingsSegmentedControl
-                      value={sendMessageKey}
-                      onValueChange={handleSendMessageKeyChange}
-                      options={[
-                        { value: 'enter', label: 'Enter' },
-                        { value: 'cmd-enter', label: '⌘ Enter' },
-                      ]}
-                      size="sm"
-                    />
-                  </SettingsRow>
+                    description="Keyboard shortcut for sending messages"
+                    value={sendMessageKey}
+                    onValueChange={handleSendMessageKeyChange}
+                    options={[
+                      { value: 'enter', label: 'Enter', description: 'Use Shift+Enter for new lines' },
+                      { value: 'cmd-enter', label: '⌘ Enter', description: 'Use Enter for new lines' },
+                    ]}
+                  />
                 </SettingsCard>
               </SettingsSection>
             </div>

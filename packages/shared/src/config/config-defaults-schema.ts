@@ -16,6 +16,7 @@ export interface ConfigDefaults {
     colorTheme: string;
     autoCapitalisation: boolean;
     sendMessageKey: 'enter' | 'cmd-enter';
+    spellCheck: boolean;
   };
   workspaceDefaults: {
     thinkingLevel: ThinkingLevel;
@@ -40,6 +41,7 @@ export const BUNDLED_CONFIG_DEFAULTS: ConfigDefaults = {
     colorTheme: 'default',
     autoCapitalisation: true,
     sendMessageKey: 'enter',
+    spellCheck: false,
   },
   workspaceDefaults: {
     thinkingLevel: 'think',

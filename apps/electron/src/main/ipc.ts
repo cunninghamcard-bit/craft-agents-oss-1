@@ -2438,6 +2438,18 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     setSendMessageKey(key)
   })
 
+  // Get spell check setting
+  ipcMain.handle(IPC_CHANNELS.INPUT_GET_SPELL_CHECK, async () => {
+    const { getSpellCheck } = await import('@craft-agent/shared/config/storage')
+    return getSpellCheck()
+  })
+
+  // Set spell check setting
+  ipcMain.handle(IPC_CHANNELS.INPUT_SET_SPELL_CHECK, async (_event, enabled: boolean) => {
+    const { setSpellCheck } = await import('@craft-agent/shared/config/storage')
+    setSpellCheck(enabled)
+  })
+
   // Update app badge count
   ipcMain.handle(IPC_CHANNELS.BADGE_UPDATE, async (_event, count: number) => {
     const { updateBadgeCount } = await import('./notifications')
