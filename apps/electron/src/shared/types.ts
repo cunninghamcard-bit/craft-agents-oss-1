@@ -128,6 +128,30 @@ export interface McpToolsResult {
 }
 
 /**
+ * Search match result for session content search
+ */
+export interface SessionSearchMatch {
+  /** Session ID */
+  sessionId: string
+  /** Line number in the JSONL file */
+  lineNumber: number
+  /** The matched text snippet with context */
+  snippet: string
+}
+
+/**
+ * Aggregated search results for a session
+ */
+export interface SessionSearchResult {
+  /** Session ID */
+  sessionId: string
+  /** Number of matches found in this session */
+  matchCount: number
+  /** First few matches with context snippets */
+  matches: SessionSearchMatch[]
+}
+
+/**
  * Result of sharing or revoking a session
  */
 export interface ShareResult {
@@ -370,7 +394,6 @@ export type SessionEvent =
   | { type: 'text_complete'; sessionId: string; text: string; isIntermediate?: boolean; turnId?: string; parentToolUseId?: string }
   | { type: 'tool_start'; sessionId: string; toolName: string; toolUseId: string; toolInput: Record<string, unknown>; toolIntent?: string; toolDisplayName?: string; toolDisplayMeta?: import('@craft-agent/core').ToolDisplayMeta; turnId?: string; parentToolUseId?: string }
   | { type: 'tool_result'; sessionId: string; toolUseId: string; toolName: string; result: string; turnId?: string; parentToolUseId?: string; isError?: boolean }
-  | { type: 'parent_update'; sessionId: string; toolUseId: string; parentToolUseId: string }
   | { type: 'error'; sessionId: string; error: string }
   | { type: 'typed_error'; sessionId: string; error: TypedError }
   | { type: 'complete'; sessionId: string; tokenUsage?: Session['tokenUsage']; hasUnread?: boolean }
@@ -510,6 +533,8 @@ export const IPC_CHANNELS = {
 
   // File operations
   READ_FILE: 'file:read',
+  READ_FILE_DATA_URL: 'file:readDataUrl',
+  READ_FILE_BINARY: 'file:readBinary',
   OPEN_FILE_DIALOG: 'file:openDialog',
   READ_FILE_ATTACHMENT: 'file:readAttachment',
   STORE_ATTACHMENT: 'file:storeAttachment',
@@ -618,6 +643,9 @@ export const IPC_CHANNELS = {
   // MCP tools listing
   SOURCES_GET_MCP_TOOLS: 'sources:getMcpTools',
 
+  // Session content search (full-text via ripgrep)
+  SEARCH_SESSIONS: 'sessions:searchContent',
+
   // Skills (workspace-scoped)
   SKILLS_GET: 'skills:get',
   SKILLS_GET_FILES: 'skills:getFiles',
@@ -661,6 +689,9 @@ export const IPC_CHANNELS = {
   THEME_BROADCAST_PREFERENCES: 'theme:broadcastPreferences',  // Send preferences to main for broadcast
   THEME_PREFERENCES_CHANGED: 'theme:preferencesChanged',  // Broadcast: preferences changed in another window
 
+  // Tool icon mappings (for Appearance settings)
+  TOOL_ICONS_GET_MAPPINGS: 'toolIcons:getMappings',
+
   // Logo URL resolution (uses Node.js filesystem cache)
   LOGO_GET_URL: 'logo:getUrl',
 
@@ -669,6 +700,14 @@ export const IPC_CHANNELS = {
   NOTIFICATION_NAVIGATE: 'notification:navigate',  // Broadcast: { workspaceId, sessionId }
   NOTIFICATION_GET_ENABLED: 'notification:getEnabled',
   NOTIFICATION_SET_ENABLED: 'notification:setEnabled',
+
+  // Input settings
+  INPUT_GET_AUTO_CAPITALISATION: 'input:getAutoCapitalisation',
+  INPUT_SET_AUTO_CAPITALISATION: 'input:setAutoCapitalisation',
+  INPUT_GET_SEND_MESSAGE_KEY: 'input:getSendMessageKey',
+  INPUT_SET_SEND_MESSAGE_KEY: 'input:setSendMessageKey',
+  INPUT_GET_SPELL_CHECK: 'input:getSpellCheck',
+  INPUT_SET_SPELL_CHECK: 'input:setSpellCheck',
 
   BADGE_UPDATE: 'badge:update',
   BADGE_CLEAR: 'badge:clear',
@@ -703,6 +742,15 @@ export const IPC_CHANNELS = {
 
 // Re-import types for ElectronAPI
 import type { Workspace, SessionMetadata, StoredAttachment as StoredAttachmentType } from '@craft-agent/core/types';
+
+/** Tool icon mapping entry from tool-icons.json (with icon resolved to data URL) */
+export interface ToolIconMapping {
+  id: string
+  displayName: string
+  /** Data URL of the icon (e.g., data:image/png;base64,...) */
+  iconDataUrl: string
+  commands: string[]
+}
 
 // Type-safe IPC API exposed to renderer
 export interface ElectronAPI {
@@ -747,6 +795,8 @@ export interface ElectronAPI {
 
   // File operations
   readFile(path: string): Promise<string>
+  /** Read a file as a data URL (data:{mime};base64,...) for binary preview (images, PDFs) */
+  readFileDataUrl(path: string): Promise<string>
   openFileDialog(): Promise<string[]>
   readFileAttachment(path: string): Promise<FileAttachment | null>
   storeAttachment(sessionId: string, attachment: FileAttachment): Promise<import('../../../../packages/core/src/types/index.ts').StoredAttachment>
@@ -859,6 +909,9 @@ export interface ElectronAPI {
   getDefaultPermissionsConfig(): Promise<{ config: import('@craft-agent/shared/agent').PermissionsConfigFile | null; path: string }>
   getMcpTools(workspaceId: string, sourceSlug: string): Promise<McpToolsResult>
 
+  // Session content search (full-text search via ripgrep)
+  searchSessionContent(workspaceId: string, query: string): Promise<SessionSearchResult[]>
+
   // Sources change listener (live updates when sources are added/removed)
   onSourcesChanged(callback: (sources: LoadedSource[]) => void): () => void
 
@@ -896,6 +949,9 @@ export interface ElectronAPI {
   readWorkspaceImage(workspaceId: string, relativePath: string): Promise<string>
   writeWorkspaceImage(workspaceId: string, relativePath: string, base64: string, mimeType: string): Promise<void>
 
+  // Tool icon mappings (for Appearance settings page)
+  getToolIconMappings(): Promise<ToolIconMapping[]>
+
   // Theme (app-level only)
   getAppTheme(): Promise<import('@config/theme').ThemeOverrides | null>
   // Preset themes (app-level)
@@ -914,6 +970,14 @@ export interface ElectronAPI {
   showNotification(title: string, body: string, workspaceId: string, sessionId: string): Promise<void>
   getNotificationsEnabled(): Promise<boolean>
   setNotificationsEnabled(enabled: boolean): Promise<void>
+
+  // Input settings
+  getAutoCapitalisation(): Promise<boolean>
+  setAutoCapitalisation(enabled: boolean): Promise<void>
+  getSendMessageKey(): Promise<'enter' | 'cmd-enter'>
+  setSendMessageKey(key: 'enter' | 'cmd-enter'): Promise<void>
+  getSpellCheck(): Promise<boolean>
+  setSpellCheck(enabled: boolean): Promise<void>
 
   updateBadgeCount(count: number): Promise<void>
   clearBadgeCount(): Promise<void>
@@ -1050,7 +1114,7 @@ export type ChatFilter =
 /**
  * Settings subpage options
  */
-export type SettingsSubpage = 'app' | 'workspace' | 'permissions' | 'labels' | 'shortcuts' | 'preferences'
+export type SettingsSubpage = 'app' | 'appearance' | 'input' | 'workspace' | 'permissions' | 'labels' | 'shortcuts' | 'preferences'
 
 /**
  * Chats navigation state - shows SessionList in navigator
@@ -1101,7 +1165,7 @@ export interface SettingsNavigationState {
  */
 export interface SkillsNavigationState {
   navigator: 'skills'
-  /** Selected skill details, or null for empty state */
+  /** Selected skill details or null for empty state */
   details: { type: 'skill'; skillSlug: string } | null
   /** Optional right sidebar panel state */
   rightSidebar?: RightSidebarPanel
@@ -1169,7 +1233,7 @@ export const getNavigationStateKey = (state: NavigationState): string => {
     return 'sources'
   }
   if (state.navigator === 'skills') {
-    if (state.details) {
+    if (state.details?.type === 'skill') {
       return `skills/skill/${state.details.skillSlug}`
     }
     return 'skills'
@@ -1219,7 +1283,7 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
   if (key === 'settings') return { navigator: 'settings', subpage: 'app' }
   if (key.startsWith('settings:')) {
     const subpage = key.slice(9) as SettingsSubpage
-    if (['app', 'workspace', 'permissions', 'labels', 'shortcuts', 'preferences'].includes(subpage)) {
+    if (['app', 'appearance', 'input', 'workspace', 'permissions', 'labels', 'shortcuts', 'preferences'].includes(subpage)) {
       return { navigator: 'settings', subpage }
     }
   }

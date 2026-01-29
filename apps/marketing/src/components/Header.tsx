@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 
 /**
  * Fixed header with scroll-aware styling.
@@ -30,7 +31,7 @@ export function Header() {
     >
       <div className="w-full px-6 py-4 flex items-center justify-between">
         {/* Logo - duplicated from favicon.svg to avoid accidental mismatches */}
-        <a href="/" className="flex items-center">
+        <Link to="/" className="flex items-center">
           <svg
             width="24"
             height="24"
@@ -45,11 +46,11 @@ export function Header() {
               />
             </g>
           </svg>
-        </a>
+        </Link>
 
         {/* Navigation links */}
         <nav className="flex items-center gap-6 text-sm font-medium">
-          <span className="text-foreground cursor-default">Blog</span>
+          <Link to="/blog" className="text-foreground hover:underline">Blog</Link>
           <a
             href="/docs"
             className="text-foreground hover:underline"

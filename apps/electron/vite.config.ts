@@ -3,6 +3,11 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
+// NOTE: Source map upload to Sentry is intentionally disabled.
+// To re-enable, uncomment the sentryVitePlugin below and add SENTRY_AUTH_TOKEN,
+// SENTRY_ORG, SENTRY_PROJECT to CI secrets. See CLAUDE.md "Sentry Error Tracking" section.
+// import { sentryVitePlugin } from '@sentry/vite-plugin'
+
 export default defineConfig({
   plugins: [
     react({
@@ -17,12 +22,23 @@ export default defineConfig({
       },
     }),
     tailwindcss(),
+    // Sentry source map upload — intentionally disabled. See CLAUDE.md for re-enabling instructions.
+    // sentryVitePlugin({
+    //   org: process.env.SENTRY_ORG,
+    //   project: process.env.SENTRY_PROJECT,
+    //   authToken: process.env.SENTRY_AUTH_TOKEN,
+    //   disable: !process.env.SENTRY_AUTH_TOKEN,
+    //   sourcemaps: {
+    //     filesToDeleteAfterUpload: ['**/*.map'],
+    //   },
+    // }),
   ],
   root: resolve(__dirname, 'src/renderer'),
   base: './',
   build: {
     outDir: resolve(__dirname, 'dist/renderer'),
     emptyDirBeforeWrite: true,
+    sourcemap: true,  // Source maps generated for debugging. Not uploaded to Sentry (see CLAUDE.md).
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'src/renderer/index.html'),
@@ -42,8 +58,12 @@ export default defineConfig({
     dedupe: ['react', 'react-dom']
   },
   optimizeDeps: {
-    include: ['react', 'react-dom', 'jotai', 'filtrex'],
-    exclude: ['@craft-agent/ui']
+    include: ['react', 'react-dom', 'jotai', 'filtrex', 'pdfjs-dist'],
+    exclude: ['@craft-agent/ui'],
+    esbuildOptions: {
+      supported: { 'top-level-await': true },
+      target: 'esnext'
+    }
   },
   server: {
     port: 5173,

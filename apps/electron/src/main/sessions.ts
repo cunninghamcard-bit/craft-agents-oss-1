@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import * as Sentry from '@sentry/electron/main'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { rm, readFile } from 'fs/promises'
@@ -43,10 +44,10 @@ import { setAnthropicOptionsEnv, setPathToClaudeCodeExecutable, setInterceptorPa
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient } from '@craft-agent/shared/mcp'
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, IPC_CHANNELS, generateMessageId } from '../shared/types'
-import { generateSessionTitle, regenerateSessionTitle, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient } from '@craft-agent/shared/utils'
+import { generateSessionTitle, regenerateSessionTitle, formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient, resolveToolIcon } from '@craft-agent/shared/utils'
 import { loadWorkspaceSkills, type LoadedSkill } from '@craft-agent/shared/skills'
 import type { ToolDisplayMeta } from '@craft-agent/core/types'
-import { DEFAULT_MODEL } from '@craft-agent/shared/config'
+import { DEFAULT_MODEL, getToolIconsDir } from '@craft-agent/shared/config'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels } from '@craft-agent/shared/labels/storage'
@@ -215,6 +216,21 @@ function resolveToolDisplayMeta(
     return undefined
   }
 
+  // CLI tool icon resolution for Bash commands
+  // Parses the command string to detect known tools (git, npm, docker, etc.)
+  // and resolves their brand icon from ~/.craft-agent/tool-icons/
+  if (toolName === 'Bash' && toolInput?.command) {
+    const toolIconsDir = getToolIconsDir()
+    const match = resolveToolIcon(String(toolInput.command), toolIconsDir)
+    if (match) {
+      return {
+        displayName: match.displayName,
+        iconDataUrl: match.iconDataUrl,
+        category: 'native' as const,
+      }
+    }
+  }
+
   // Native tool display names (no icons - UI handles these with built-in icons)
   // This ensures toolDisplayMeta is always populated for consistent display
   const nativeToolNames: Record<string, string> = {
@@ -256,19 +272,10 @@ interface ManagedSession {
   // Incremented each time a new message starts processing.
   // Used to detect if a follow-up message has superseded the current one (stale-request guard).
   processingGeneration: number
-  // Track tool_use_id -> toolName mapping (since tool_result only has toolUseId)
-  pendingTools: Map<string, string>
-  // Stack of parent tool IDs for nested tool calls (e.g., Task spawning Read/Grep)
-  // Using a stack handles concurrent parent tools correctly - each child tool
-  // gets associated with the most recent parent that started before it
-  parentToolStack: string[]
-  // Map of toolUseId -> parentToolUseId for tracking which parent was active when each tool started
-  // This is used to correctly attribute child tools even with concurrent parent tools
-  toolToParentMap: Map<string, string>
-  // Parent tool ID captured when text started streaming (first text_delta)
-  // Used by text_complete to assign correct parent - prevents text from being nested
-  // under tools that started after the text began (e.g., "I'll help..." before Task call)
-  pendingTextParent?: string
+  // NOTE: Parent-child tracking state (pendingTools, parentToolStack, toolToParentMap,
+  // pendingTextParent) has been removed. CraftAgent now provides parentToolUseId
+  // directly on all events using the SDK's authoritative parent_tool_use_id field.
+  // See: packages/shared/src/agent/tool-matching.ts
   // Session name (user-defined or AI-generated)
   name?: string
   isFlagged: boolean
@@ -859,10 +866,6 @@ export class SessionManager {
             lastMessageAt: meta.lastMessageAt ?? meta.lastUsedAt,  // Fallback for sessions saved before lastMessageAt was persisted
             streamingText: '',
             processingGeneration: 0,
-            pendingTools: new Map(),
-            parentToolStack: [],
-            toolToParentMap: new Map(),
-            pendingTextParent: undefined,
             name: meta.name,
             preview: meta.preview,
             createdAt: meta.createdAt,
@@ -1415,10 +1418,6 @@ export class SessionManager {
       lastMessageAt: storedSession.lastMessageAt ?? storedSession.lastUsedAt,  // Fallback for sessions saved before lastMessageAt was persisted
       streamingText: '',
       processingGeneration: 0,
-      pendingTools: new Map(),
-      parentToolStack: [],
-      toolToParentMap: new Map(),
-      pendingTextParent: undefined,
       isFlagged: false,
       permissionMode: defaultPermissionMode,
       workingDirectory: resolvedWorkingDir,
@@ -1584,11 +1583,6 @@ export class SessionManager {
             managed.agent.forceAbort(AbortReason.PlanSubmitted)
             managed.isProcessing = false
 
-            // Clear parent tool tracking (stale entries would corrupt future tracking)
-            managed.parentToolStack = []
-            managed.toolToParentMap.clear()
-            managed.pendingTextParent = undefined
-
             // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
             this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
 
@@ -1638,11 +1632,6 @@ export class SessionManager {
           sessionLog.info(`Force-aborting after auth request for session ${managed.id}`)
           managed.agent.forceAbort(AbortReason.AuthRequest)
           managed.isProcessing = false
-
-          // Clear parent tool tracking (stale entries would corrupt future tracking)
-          managed.parentToolStack = []
-          managed.toolToParentMap.clear()
-          managed.pendingTextParent = undefined
 
           // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
           this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
@@ -2693,6 +2682,12 @@ export class SessionManager {
         sessionLog.error('Error in chat:', error)
         sessionLog.error('Error message:', error instanceof Error ? error.message : String(error))
         sessionLog.error('Error stack:', error instanceof Error ? error.stack : 'No stack')
+
+        // Report chat/SDK errors to Sentry for crash tracking
+        Sentry.captureException(error, {
+          tags: { errorSource: 'chat', sessionId },
+        })
+
         sendSpan.mark('chat.error')
         sendSpan.setMetadata('error', error instanceof Error ? error.message : String(error))
         sendSpan.end()
@@ -2737,11 +2732,6 @@ export class SessionManager {
     // but since we cleared isProcessing, onProcessingStopped won't be called again
     managed.isProcessing = false
 
-    // Clear parent tool tracking (stale entries would corrupt future parent-child tracking)
-    managed.parentToolStack = []
-    managed.toolToParentMap.clear()
-    managed.pendingTextParent = undefined
-
     // Only show "Response interrupted" message when user explicitly clicked Stop
     // Silent mode is used when redirecting (sending new message while processing)
     if (!silent) {
@@ -2783,9 +2773,6 @@ export class SessionManager {
 
     // 1. Cleanup state
     managed.isProcessing = false
-    managed.parentToolStack = []
-    managed.toolToParentMap.clear()
-    managed.pendingTextParent = undefined
 
     // 2. Handle unread state based on whether user is viewing this session
     //    This is the explicit state machine for NEW badge:
@@ -2860,6 +2847,10 @@ export class SessionManager {
         next.messageId
       ).catch(err => {
         sessionLog.error('Error processing queued message:', err)
+        // Report queued message failures to Sentry — these indicate SDK/chat pipeline errors
+        Sentry.captureException(err, {
+          tags: { errorSource: 'chat-queue', sessionId },
+        })
         this.sendEvent({
           type: 'error',
           sessionId,
@@ -3112,13 +3103,6 @@ To view this task's output:
 
     switch (event.type) {
       case 'text_delta':
-        // Capture parent on FIRST delta of a text block (when streamingText is empty)
-        // This ensures text gets the parent that existed when it started, not when it completed
-        if (managed.streamingText === '') {
-          managed.pendingTextParent = managed.parentToolStack.length > 0
-            ? managed.parentToolStack[managed.parentToolStack.length - 1]
-            : undefined
-        }
         managed.streamingText += event.text
         // Queue delta for batched sending (performance: reduces IPC from 50+/sec to ~20/sec)
         this.queueDelta(sessionId, workspaceId, event.text, event.turnId)
@@ -3128,9 +3112,10 @@ To view this task's output:
         // Flush any pending deltas before sending complete (ensures renderer has all content)
         this.flushDelta(sessionId, workspaceId)
 
-        // Use the parent that was active when text STARTED streaming (captured in text_delta)
-        // This prevents text from being nested under tools that started after the text began
-        const textParentToolUseId = event.isIntermediate ? managed.pendingTextParent : undefined
+        // SDK's parent_tool_use_id identifies the subagent context for this text
+        // (undefined = main agent / top-level, Task ID = inside subagent)
+        // Only intermediate text (text before a tool_use) gets a parent assignment
+        const textParentToolUseId = event.isIntermediate ? event.parentToolUseId : undefined
 
         const assistantMessage: Message = {
           id: generateMessageId(),
@@ -3143,7 +3128,6 @@ To view this task's output:
         }
         managed.messages.push(assistantMessage)
         managed.streamingText = ''
-        managed.pendingTextParent = undefined // Clear for next text block
 
         // Update lastMessageRole and lastFinalMessageId for badge/unread display (only for final messages)
         if (!event.isIntermediate) {
@@ -3159,9 +3143,6 @@ To view this task's output:
       }
 
       case 'tool_start': {
-        // Track tool_use_id -> toolName mapping for later use in tool_result
-        managed.pendingTools.set(event.toolUseId, event.toolName)
-
         // Format tool input paths to relative for better readability
         const formattedToolInput = formatToolInputPaths(event.input)
 
@@ -3180,39 +3161,10 @@ To view this task's output:
         const existingStartMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
         const isDuplicateEvent = !!existingStartMsg
 
-        // Track parent-child relationships for nested tool calls
-        // Parent tools spawn child tools (e.g., Task runs Read, Grep, etc.)
-        // Include Task (subagents) and TaskOutput (retrieves task results)
-        const PARENT_TOOLS = ['Task', 'TaskOutput']
-        const isParentTool = PARENT_TOOLS.includes(event.toolName)
-
-        // Use parentToolUseId from the event - CraftAgent computes this correctly
-        // using the SDK's parent_tool_use_id (authoritative for parallel Tasks)
-        // Only fall back to stack heuristic if event doesn't provide parent
-        let parentToolUseId: string | undefined
-        if (isParentTool) {
-          // Parent tools don't have a parent themselves
-          parentToolUseId = undefined
-        } else if (event.parentToolUseId) {
-          // CraftAgent provided the correct parent from SDK - use it
-          parentToolUseId = event.parentToolUseId
-        } else if (managed.parentToolStack.length > 0) {
-          // Fallback: use stack heuristic for edge cases
-          parentToolUseId = managed.parentToolStack[managed.parentToolStack.length - 1]
-        }
-
-        // If this is a parent tool, push it onto the stack
-        // IMPORTANT: Only push on first event, not duplicate events (SDK sends two tool_start per tool)
-        if (isParentTool && !isDuplicateEvent) {
-          managed.parentToolStack.push(event.toolUseId)
-          sessionLog.info(`PARENT STACK PUSH: ${event.toolName} (${event.toolUseId}), stack=${JSON.stringify(managed.parentToolStack)}`)
-        }
-
-        // Store the parent assignment for this tool (only on first event)
-        // This allows us to look up the correct parent later even with concurrent parent tools
-        if (!isDuplicateEvent && parentToolUseId) {
-          managed.toolToParentMap.set(event.toolUseId, parentToolUseId)
-        }
+        // Use parentToolUseId directly from the event — CraftAgent resolves this
+        // from SDK's parent_tool_use_id (authoritative, handles parallel Tasks correctly).
+        // No stack or map needed; the event carries the correct parent from the start.
+        const parentToolUseId = event.parentToolUseId
 
         // Track if we need to send an event to the renderer
         // Send on: first occurrence OR when we have new input data to update
@@ -3247,7 +3199,7 @@ To view this task's output:
             toolName: event.toolName,
             toolUseId: event.toolUseId,
             toolInput: formattedToolInput,
-            toolStatus: 'pending',
+            toolStatus: 'executing',
             toolIntent: event.intent,
             toolDisplayName: event.displayName,
             toolDisplayMeta,  // Includes base64 icon for viewer compatibility
@@ -3276,39 +3228,8 @@ To view this task's output:
       }
 
       case 'tool_result': {
-        // AgentEvent tool_result only has toolUseId, look up the toolName
-        const toolName = managed.pendingTools.get(event.toolUseId) || 'unknown'
-        managed.pendingTools.delete(event.toolUseId)
-
-        // Parent tool names for defensive cleanup
-        const PARENT_TOOLS = ['Task', 'TaskOutput']
-
-        // Remove this tool from parent stack if it's there (parent tool completing)
-        const stackIndex = managed.parentToolStack.indexOf(event.toolUseId)
-        if (stackIndex !== -1) {
-          managed.parentToolStack.splice(stackIndex, 1)
-          sessionLog.info(`PARENT STACK POP: ${event.toolUseId}, stack=${JSON.stringify(managed.parentToolStack)}`)
-        } else if (PARENT_TOOLS.includes(toolName)) {
-          // Only log/warn for parent tools that SHOULD have been on the stack
-          // Non-parent tools (Read, Grep, Bash, etc.) are never on the stack - that's expected
-          sessionLog.warn(`PARENT STACK UNEXPECTED: ${toolName} (${event.toolUseId}) not found, stack=${JSON.stringify(managed.parentToolStack)}`)
-          // Defensive cleanup: try to find and remove by matching tool name in messages
-          const fallbackIdx = managed.parentToolStack.findIndex(id => {
-            const msg = managed.messages.find(m => m.toolUseId === id)
-            return msg?.toolName === toolName
-          })
-          if (fallbackIdx !== -1) {
-            const removedId = managed.parentToolStack.splice(fallbackIdx, 1)[0]
-            sessionLog.info(`PARENT STACK FALLBACK POP: ${removedId} (matched by toolName=${toolName}), stack=${JSON.stringify(managed.parentToolStack)}`)
-          }
-        }
-        // Non-parent tools: silent (expected behavior - they use toolToParentMap for hierarchy)
-
-        // Get the stored parent mapping before cleaning up (for fallback)
-        const storedParentId = managed.toolToParentMap.get(event.toolUseId)
-
-        // Clean up the tool-to-parent mapping for this tool
-        managed.toolToParentMap.delete(event.toolUseId)
+        // toolName comes directly from CraftAgent (resolved via ToolIndex)
+        const toolName = event.toolName || 'unknown'
 
         // Format absolute paths to relative paths for better readability
         const formattedResult = event.result ? formatPathsToRelative(event.result) : ''
@@ -3320,19 +3241,24 @@ To view this task's output:
 
         sessionLog.info(`RESULT MATCH: toolUseId=${event.toolUseId}, found=${!!existingToolMsg}, toolName=${existingToolMsg?.toolName || toolName}, wasComplete=${wasAlreadyComplete}`)
 
+        // parentToolUseId comes from CraftAgent (SDK-authoritative) or existing message
+        const parentToolUseId = existingToolMsg?.parentToolUseId || event.parentToolUseId
+
         if (existingToolMsg) {
           existingToolMsg.content = formattedResult
           existingToolMsg.toolResult = formattedResult
           existingToolMsg.toolStatus = 'completed'
           existingToolMsg.isError = event.isError
-          // If message doesn't have parent set, use stored mapping as fallback
-          // Note: SDK's event.parentToolUseId is for result matching, NOT hierarchy
-          if (!existingToolMsg.parentToolUseId && storedParentId) {
-            existingToolMsg.parentToolUseId = storedParentId
+          // If message doesn't have parent set, use event's parentToolUseId
+          if (!existingToolMsg.parentToolUseId && event.parentToolUseId) {
+            existingToolMsg.parentToolUseId = event.parentToolUseId
           }
         } else {
-          // Fallback: create new message if not found (shouldn't happen normally)
-          // Resolve toolDisplayMeta for MCP source tools (Skill tools need input which we don't have)
+          // No matching tool_start found — create message from result.
+          // This is normal for background subagent child tools where tool_result arrives
+          // without a prior tool_start. If tool_start arrives later, findToolMessage will
+          // locate this message by toolUseId and update it with input/intent/displayMeta.
+          sessionLog.info(`RESULT WITHOUT START: toolUseId=${event.toolUseId}, toolName=${toolName} (creating message from result)`)
           const fallbackWorkspaceRootPath = managed.workspace.rootPath
           const fallbackSources = loadAllSources(fallbackWorkspaceRootPath)
           const fallbackToolDisplayMeta = resolveToolDisplayMeta(toolName, undefined, fallbackWorkspaceRootPath, fallbackSources)
@@ -3346,18 +3272,17 @@ To view this task's output:
             toolUseId: event.toolUseId,
             toolResult: formattedResult,
             toolStatus: 'completed',
-            toolDisplayMeta: fallbackToolDisplayMeta,  // May be undefined for Skill tools (need input)
-            parentToolUseId: storedParentId,
+            toolDisplayMeta: fallbackToolDisplayMeta,
+            parentToolUseId,
             isError: event.isError,
           }
           managed.messages.push(toolMessage)
         }
 
-        // Use stored parent mapping or existing message's parent
-        const finalParentToolUseId = existingToolMsg?.parentToolUseId || storedParentId
-
-        // Only send event to renderer if not already marked complete
-        if (!wasAlreadyComplete) {
+        // Send event to renderer if: (a) first completion, or (b) result content changed
+        // (e.g., safety net auto-completed with empty result, then real result arrived later)
+        const resultChanged = wasAlreadyComplete && formattedResult && existingToolMsg?.toolResult !== formattedResult
+        if (!wasAlreadyComplete || resultChanged) {
           this.sendEvent({
             type: 'tool_result',
             sessionId,
@@ -3365,33 +3290,39 @@ To view this task's output:
             toolName: toolName,
             result: formattedResult,
             turnId: event.turnId,
-            parentToolUseId: finalParentToolUseId,
+            parentToolUseId,
             isError: event.isError,
           }, workspaceId)
         }
 
+        // Safety net: when a parent Task completes, mark all its still-pending child tools as completed.
+        // This handles the case where child tool_result events never arrive (e.g., subagent internal tools
+        // whose results aren't surfaced through the parent stream).
+        const PARENT_TOOLS_FOR_CLEANUP = ['Task', 'TaskOutput']
+        if (PARENT_TOOLS_FOR_CLEANUP.includes(toolName)) {
+          const pendingChildren = managed.messages.filter(
+            m => m.parentToolUseId === event.toolUseId
+              && m.toolStatus !== 'completed'
+              && m.toolStatus !== 'error'
+          )
+          for (const child of pendingChildren) {
+            child.toolStatus = 'completed'
+            child.toolResult = child.toolResult || ''
+            sessionLog.info(`CHILD AUTO-COMPLETED: toolUseId=${child.toolUseId}, toolName=${child.toolName} (parent ${toolName} completed)`)
+            this.sendEvent({
+              type: 'tool_result',
+              sessionId,
+              toolUseId: child.toolUseId!,
+              toolName: child.toolName || 'unknown',
+              result: child.toolResult || '',
+              turnId: child.turnId,
+              parentToolUseId: event.toolUseId,
+            }, workspaceId)
+          }
+        }
+
         // Persist session after tool completes to prevent data loss on quit
         this.persistSession(managed)
-        break
-      }
-
-      case 'parent_update': {
-        // Deferred parent assignment: tool started without parent (multiple active Tasks),
-        // now we know the correct parent from the tool result
-        const existingToolMsg = managed.messages.find(m => m.toolUseId === event.toolUseId)
-        if (existingToolMsg) {
-          sessionLog.info(`PARENT UPDATE: ${event.toolUseId} -> parent ${event.parentToolUseId}`)
-          existingToolMsg.parentToolUseId = event.parentToolUseId
-          // Also update the toolToParentMap for consistency
-          managed.toolToParentMap.set(event.toolUseId, event.parentToolUseId)
-        }
-        // Send event to renderer so it can update UI grouping
-        this.sendEvent({
-          type: 'parent_update',
-          sessionId,
-          toolUseId: event.toolUseId,
-          parentToolUseId: event.parentToolUseId,
-        }, workspaceId)
         break
       }
 
@@ -3514,9 +3445,6 @@ To view this task's output:
                 sessionLog.info(`[auth-retry] Retrying message for session ${sessionId}`)
                 // Clear processing state so sendMessage can start fresh
                 managed.isProcessing = false
-                managed.parentToolStack = []
-                managed.toolToParentMap.clear()
-                managed.pendingTextParent = undefined
                 // Note: Don't clear lastSentMessage yet - sendMessage will set new ones
 
                 // Remove the user message that was added for this failed attempt
@@ -3547,6 +3475,10 @@ To view this task's output:
             } catch (retryError) {
               managed.authRetryInProgress = false
               sessionLog.error(`[auth-retry] Failed to retry after auth refresh for session ${sessionId}:`, retryError)
+              // Report auth retry failures to Sentry — indicates credential/SDK issues
+              Sentry.captureException(retryError, {
+                tags: { errorSource: 'auth-retry', sessionId },
+              })
               // Show the original error to the user since retry failed
               const failedMessage: Message = {
                 id: generateMessageId(),

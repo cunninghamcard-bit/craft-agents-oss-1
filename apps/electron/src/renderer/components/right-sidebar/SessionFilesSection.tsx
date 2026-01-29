@@ -14,12 +14,13 @@
  */
 
 import * as React from 'react'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, memo } from 'react'
 import { AnimatePresence, motion, type Variants } from 'motion/react'
 import { File, Folder, FolderOpen, FileText, Image, FileCode, ChevronRight } from 'lucide-react'
 import type { SessionFile } from '../../../shared/types'
 import { cn } from '@/lib/utils'
 import * as storage from '@/lib/local-storage'
+import { useAppShellContext } from '@/context/AppShellContext'
 
 /**
  * Stagger animation variants for child items - matches LeftSidebar pattern
@@ -100,6 +101,77 @@ function getFileIcon(file: SessionFile, isExpanded?: boolean) {
 
   return <File className={iconClass} />
 }
+
+/**
+ * Extensions that have thumbnail previews via the thumbnail:// protocol.
+ * Matches the ALL_PREVIEWABLE set in thumbnail-protocol.ts.
+ */
+const PREVIEWABLE_EXTENSIONS = new Set([
+  'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'tiff', 'tif', 'ico', 'heic', 'heif',
+  'pdf', 'svg', 'psd', 'ai',
+])
+
+/**
+ * Constructs a thumbnail:// protocol URL for a given file path.
+ * The path is URI-encoded so it can be embedded safely in a URL.
+ * Works cross-platform (macOS paths start with /, Windows with C:\).
+ */
+function getThumbnailUrl(filePath: string): string {
+  return `thumbnail://thumb/${encodeURIComponent(filePath)}`
+}
+
+/**
+ * FileThumbnail — Renders an image thumbnail with cross-fade from icon fallback.
+ *
+ * Shows the Lucide icon immediately, then loads the thumbnail from the
+ * custom thumbnail:// protocol. On load, the icon fades out and the
+ * thumbnail fades in (200ms CSS transition). If loading fails, the icon
+ * stays visible — no layout shift, no error state.
+ */
+const FileThumbnail = memo(function FileThumbnail({ file }: { file: SessionFile }) {
+  const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  // Reset state when file changes (e.g. watcher triggered re-render)
+  useEffect(() => {
+    setLoaded(false)
+    setFailed(false)
+  }, [file.path])
+
+  const ext = file.name.split('.').pop()?.toLowerCase() || ''
+  const canPreview = PREVIEWABLE_EXTENSIONS.has(ext)
+
+  // Fall back to regular icon if not previewable or thumbnail failed
+  if (!canPreview || failed) {
+    return getFileIcon(file)
+  }
+
+  return (
+    <>
+      {/* Fallback icon — visible initially, fades out when thumbnail loads */}
+      <span
+        className={cn(
+          'absolute inset-0 flex items-center justify-center transition-opacity duration-200',
+          loaded ? 'opacity-0' : 'opacity-100'
+        )}
+      >
+        {getFileIcon(file)}
+      </span>
+      {/* Thumbnail — fades in on successful load */}
+      <img
+        src={getThumbnailUrl(file.path)}
+        alt=""
+        loading="lazy"
+        onLoad={() => setLoaded(true)}
+        onError={() => setFailed(true)}
+        className={cn(
+          'absolute inset-0 h-full w-full rounded-[2px] object-cover transition-opacity duration-200',
+          loaded ? 'opacity-100' : 'opacity-0'
+        )}
+      />
+    </>
+  )
+})
 
 interface FileTreeItemProps {
   file: SessionFile
@@ -190,7 +262,9 @@ function FileTreeItem({
             </span>
           </>
         ) : (
-          getFileIcon(file, isExpanded)
+          /* Non-directory files: show thumbnail preview for previewable types,
+             with cross-fade from icon. Falls back to icon for unsupported types. */
+          <FileThumbnail file={file} />
         )}
       </span>
 
@@ -334,19 +408,29 @@ export function SessionFilesSection({ sessionId, className }: SessionFilesSectio
     }
   }, [sessionId, loadFiles])
 
-  // Handle file click - reveal in Finder
+  // Use the link interceptor (via context) so file clicks show in-app previews
+  // instead of always opening in Finder / default app.
+  const { onOpenFile } = useAppShellContext()
+
+  // Handle file click — preview in-app if possible, open directory in Finder
   const handleFileClick = useCallback((file: SessionFile) => {
     if (file.type === 'directory') {
+      // eslint-disable-next-line craft-links/no-direct-file-open -- directories can't be previewed in-app
       window.electronAPI.openFile(file.path)
     } else {
-      window.electronAPI.showInFolder(file.path)
+      onOpenFile(file.path)
     }
-  }, [])
+  }, [onOpenFile])
 
-  // Handle double-click - open the file
+  // Handle double-click — same as single click (interceptor decides preview vs external)
   const handleFileDoubleClick = useCallback((file: SessionFile) => {
-    window.electronAPI.openFile(file.path)
-  }, [])
+    if (file.type === 'directory') {
+      // eslint-disable-next-line craft-links/no-direct-file-open -- directories can't be previewed in-app
+      window.electronAPI.openFile(file.path)
+    } else {
+      onOpenFile(file.path)
+    }
+  }, [onOpenFile])
 
   // Toggle folder expanded state
   const handleToggleExpand = useCallback((path: string) => {

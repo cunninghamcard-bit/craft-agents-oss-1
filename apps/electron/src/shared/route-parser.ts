@@ -94,7 +94,7 @@ export function parseCompoundRoute(route: string): ParsedCompoundRoute | null {
   // Settings navigator
   if (first === 'settings') {
     const subpage = (segments[1] || 'app') as SettingsSubpage
-    const validSubpages: SettingsSubpage[] = ['app', 'workspace', 'permissions', 'labels', 'shortcuts', 'preferences']
+    const validSubpages: SettingsSubpage[] = ['app', 'appearance', 'input', 'workspace', 'permissions', 'labels', 'shortcuts', 'preferences']
     if (!validSubpages.includes(subpage)) return null
     return {
       navigator: 'settings',
@@ -612,7 +612,7 @@ export function buildRouteFromNavigationState(state: NavigationState): string {
   }
 
   if (state.navigator === 'skills') {
-    if (state.details) {
+    if (state.details?.type === 'skill') {
       return `skills/skill/${state.details.skillSlug}`
     }
     return 'skills'

@@ -13,6 +13,7 @@ import noDirectNavigationState from './eslint-rules/no-direct-navigation-state.c
 import noLocalStorage from './eslint-rules/no-localstorage.cjs'
 import noDirectPlatformCheck from './eslint-rules/no-direct-platform-check.cjs'
 import noHardcodedPathSeparator from './eslint-rules/no-hardcoded-path-separator.cjs'
+import noDirectFileOpen from './eslint-rules/no-direct-file-open.cjs'
 
 export default [
   // Ignore patterns
@@ -62,6 +63,12 @@ export default [
           'no-hardcoded-path-separator': noHardcodedPathSeparator,
         },
       },
+      // Custom plugin for link interceptor enforcement
+      'craft-links': {
+        rules: {
+          'no-direct-file-open': noDirectFileOpen,
+        },
+      },
     },
     settings: {
       react: {
@@ -82,6 +89,9 @@ export default [
 
       // Custom cross-platform path rule
       'craft-paths/no-hardcoded-path-separator': 'warn',
+
+      // Custom link interceptor rule — prevents bypassing in-app file preview
+      'craft-links/no-direct-file-open': 'error',
     },
   },
 ]

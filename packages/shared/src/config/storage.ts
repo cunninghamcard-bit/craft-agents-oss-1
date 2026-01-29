@@ -10,7 +10,7 @@ import {
 } from '../workspaces/storage.ts';
 import { findIconFile } from '../utils/icon.ts';
 import { initializeDocs } from '../docs/index.ts';
-import { expandPath, toPortablePath } from '../utils/paths.ts';
+import { expandPath, toPortablePath, getBundledAssetsDir } from '../utils/paths.ts';
 import { CONFIG_DIR } from './paths.ts';
 import type { StoredAttachment, StoredMessage } from '@craft-agent/core/types';
 import type { Plan } from '../agent/plan-types.ts';
@@ -46,6 +46,10 @@ export interface StoredConfig {
   colorTheme?: string;  // ID of selected preset theme (e.g., 'dracula', 'nord'). Default: 'default'
   // Auto-update
   dismissedUpdateVersion?: string;  // Version that user dismissed (skip notifications for this version)
+  // Input settings
+  autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: true)
+  sendMessageKey?: 'enter' | 'cmd-enter';  // Key to send messages (default: 'enter')
+  spellCheck?: boolean;  // Enable spell check in input (default: false)
 }
 
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
@@ -67,25 +71,14 @@ export function loadConfigDefaults(): ConfigDefaults {
 }
 
 /**
- * Ensure config-defaults.json exists (copy from bundled if not).
+ * Ensure config-defaults.json exists.
+ * Writes from the BUNDLED_CONFIG_DEFAULTS constant (single source of truth).
  */
-export function ensureConfigDefaults(bundledDefaultsPath?: string): void {
+export function ensureConfigDefaults(): void {
   if (existsSync(CONFIG_DEFAULTS_FILE)) {
     return; // Already exists, don't overwrite
   }
 
-  // Try to copy from bundled resources
-  if (bundledDefaultsPath && existsSync(bundledDefaultsPath)) {
-    try {
-      const content = readFileSync(bundledDefaultsPath, 'utf-8');
-      writeFileSync(CONFIG_DEFAULTS_FILE, content, 'utf-8');
-      return;
-    } catch {
-      // Fall through to write bundled defaults
-    }
-  }
-
-  // Fallback: write bundled defaults directly
   writeFileSync(
     CONFIG_DEFAULTS_FILE,
     JSON.stringify(BUNDLED_CONFIG_DEFAULTS, null, 2),
@@ -93,7 +86,7 @@ export function ensureConfigDefaults(bundledDefaultsPath?: string): void {
   );
 }
 
-export function ensureConfigDir(bundledResourcesDir?: string): void {
+export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
   }
@@ -101,10 +94,10 @@ export function ensureConfigDir(bundledResourcesDir?: string): void {
   initializeDocs();
 
   // Initialize config defaults
-  const bundledDefaultsPath = bundledResourcesDir
-    ? join(bundledResourcesDir, 'config-defaults.json')
-    : undefined;
-  ensureConfigDefaults(bundledDefaultsPath);
+  ensureConfigDefaults();
+
+  // Initialize tool icons (CLI tool icons for turn card display)
+  ensureToolIcons();
 }
 
 export function loadStoredConfig(): StoredConfig | null {
@@ -263,6 +256,74 @@ export function setNotificationsEnabled(enabled: boolean): void {
   saveConfig(config);
 }
 
+/**
+ * Get whether auto-capitalisation is enabled.
+ * Defaults to true if not set.
+ */
+export function getAutoCapitalisation(): boolean {
+  const config = loadStoredConfig();
+  if (config?.autoCapitalisation !== undefined) {
+    return config.autoCapitalisation;
+  }
+  const defaults = loadConfigDefaults();
+  return defaults.defaults.autoCapitalisation;
+}
+
+/**
+ * Set whether auto-capitalisation is enabled.
+ */
+export function setAutoCapitalisation(enabled: boolean): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.autoCapitalisation = enabled;
+  saveConfig(config);
+}
+
+/**
+ * Get the key combination used to send messages.
+ * Defaults to 'enter' if not set.
+ */
+export function getSendMessageKey(): 'enter' | 'cmd-enter' {
+  const config = loadStoredConfig();
+  if (config?.sendMessageKey !== undefined) {
+    return config.sendMessageKey;
+  }
+  const defaults = loadConfigDefaults();
+  return defaults.defaults.sendMessageKey;
+}
+
+/**
+ * Set the key combination used to send messages.
+ */
+export function setSendMessageKey(key: 'enter' | 'cmd-enter'): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.sendMessageKey = key;
+  saveConfig(config);
+}
+
+/**
+ * Get whether spell check is enabled in the input.
+ */
+export function getSpellCheck(): boolean {
+  const config = loadStoredConfig();
+  if (config?.spellCheck !== undefined) {
+    return config.spellCheck;
+  }
+  const defaults = loadConfigDefaults();
+  return defaults.defaults.spellCheck;
+}
+
+/**
+ * Set whether spell check is enabled in the input.
+ */
+export function setSpellCheck(enabled: boolean): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.spellCheck = enabled;
+  saveConfig(config);
+}
+
 // Note: getDefaultWorkingDirectory/setDefaultWorkingDirectory removed
 // Working directory is now stored per-workspace in workspace config.json (defaults.workingDirectory)
 // Note: getDefaultPermissionMode/getEnabledPermissionModes removed
@@ -388,7 +449,7 @@ export function setActiveWorkspace(workspaceId: string): void {
  * @param workspaceId The ID of the workspace to switch to
  * @returns The workspace and session, or null if workspace not found
  */
-export function switchWorkspaceAtomic(workspaceId: string): { workspace: Workspace; session: SessionConfig } | null {
+export async function switchWorkspaceAtomic(workspaceId: string): Promise<{ workspace: Workspace; session: SessionConfig } | null> {
   const config = loadStoredConfig();
   if (!config) return null;
 
@@ -396,7 +457,7 @@ export function switchWorkspaceAtomic(workspaceId: string): { workspace: Workspa
   if (!workspace) return null;
 
   // Get or create the latest session for this workspace
-  const session = getOrCreateLatestSession(workspace.rootPath);
+  const session = await getOrCreateLatestSession(workspace.rootPath);
 
   // Update active workspace in config
   config.activeWorkspaceId = workspaceId;
@@ -761,6 +822,9 @@ import { readdirSync } from 'fs';
 const APP_THEME_FILE = join(CONFIG_DIR, 'theme.json');
 const APP_THEMES_DIR = join(CONFIG_DIR, 'themes');
 
+// Track if preset themes have been synced this session (prevents re-init on hot reload)
+let presetsInitialized = false;
+
 /**
  * Get the app-level themes directory.
  * Preset themes are stored at ~/.craft-agent/themes/
@@ -798,12 +862,19 @@ export function saveAppTheme(theme: ThemeOverrides): void {
 // ============================================
 
 /**
- * Ensure preset themes directory exists and has bundled themes.
- * Copies bundled themes from the provided directory to app themes dir on first run.
- * Only copies if theme doesn't exist (preserves user edits).
- * @param bundledThemesDir - Path to bundled themes (e.g., Electron's resources/themes)
+ * Sync bundled preset themes to disk on launch.
+ * Always overwrites to ensure presets stay current with the running app version
+ * (e.g., updated color tokens or new preset themes added in a new release).
+ * User-created custom theme files (with non-bundled filenames) are untouched.
+ * User color overrides live in theme.json (separate file) and are never touched.
  */
-export function ensurePresetThemes(bundledThemesDir?: string): void {
+export function ensurePresetThemes(): void {
+  // Skip if already initialized this session (prevents re-init on hot reload)
+  if (presetsInitialized) {
+    return;
+  }
+  presetsInitialized = true;
+
   const themesDir = getAppThemesDir();
 
   // Create themes directory if it doesn't exist
@@ -811,21 +882,22 @@ export function ensurePresetThemes(bundledThemesDir?: string): void {
     mkdirSync(themesDir, { recursive: true });
   }
 
-  // If no bundled themes directory provided, just ensure the directory exists
-  if (!bundledThemesDir || !existsSync(bundledThemesDir)) {
+  // Resolve bundled themes directory via shared asset resolver
+  const bundledThemesDir = getBundledAssetsDir('themes');
+  if (!bundledThemesDir) {
     return;
   }
 
-  // Copy each bundled theme if it doesn't exist in app themes dir
+  // Always write bundled preset themes to disk on launch.
+  // This ensures theme updates from new app versions are applied immediately.
+  // Only bundled filenames are overwritten — user-created custom themes are untouched.
   try {
     const bundledFiles = readdirSync(bundledThemesDir).filter(f => f.endsWith('.json'));
     for (const file of bundledFiles) {
+      const srcPath = join(bundledThemesDir, file);
       const destPath = join(themesDir, file);
-      if (!existsSync(destPath)) {
-        const srcPath = join(bundledThemesDir, file);
-        const content = readFileSync(srcPath, 'utf-8');
-        writeFileSync(destPath, content, 'utf-8');
-      }
+      const content = readFileSync(srcPath, 'utf-8');
+      writeFileSync(destPath, content, 'utf-8');
     }
   } catch {
     // Ignore errors - themes are optional
@@ -835,10 +907,9 @@ export function ensurePresetThemes(bundledThemesDir?: string): void {
 /**
  * Load all preset themes from app themes directory.
  * Returns array of PresetTheme objects sorted by name.
- * @param bundledThemesDir - Optional path to bundled themes (for Electron)
  */
-export function loadPresetThemes(bundledThemesDir?: string): PresetTheme[] {
-  ensurePresetThemes(bundledThemesDir);
+export function loadPresetThemes(): PresetTheme[] {
+  ensurePresetThemes();
 
   const themesDir = getAppThemesDir();
   if (!existsSync(themesDir)) {
@@ -969,11 +1040,12 @@ export function getPresetThemesDir(): string {
 /**
  * Reset a preset theme to its bundled default.
  * Copies the bundled version over the user's version.
+ * Resolves bundled path automatically via getBundledAssetsDir('themes').
  * @param id - Theme ID to reset
- * @param bundledThemesDir - Path to bundled themes (e.g., Electron's resources/themes)
  */
-export function resetPresetTheme(id: string, bundledThemesDir?: string): boolean {
-  // Bundled themes directory must be provided (e.g., by Electron)
+export function resetPresetTheme(id: string): boolean {
+  // Resolve bundled themes directory via shared asset resolver
+  const bundledThemesDir = getBundledAssetsDir('themes');
   if (!bundledThemesDir) {
     return false;
   }
@@ -1100,4 +1172,55 @@ export function resolveModelId(defaultModelId: string): string {
   const customModel = getCustomModel();
   if (customModel) return customModel;
   return defaultModelId;
+}
+
+// ============================================
+// Tool Icons (CLI tool icons for turn card display)
+// ============================================
+
+import { copyFileSync } from 'fs';
+
+const TOOL_ICONS_DIR_NAME = 'tool-icons';
+
+/**
+ * Returns the path to the tool-icons directory: ~/.craft-agent/tool-icons/
+ */
+export function getToolIconsDir(): string {
+  return join(CONFIG_DIR, TOOL_ICONS_DIR_NAME);
+}
+
+/**
+ * Ensure tool-icons directory exists and has bundled defaults.
+ * Resolves bundled path automatically via getBundledAssetsDir('tool-icons').
+ * Copies bundled tool-icons.json and icon files on first run.
+ * Only copies files that don't already exist (preserves user customizations).
+ */
+export function ensureToolIcons(): void {
+  const toolIconsDir = getToolIconsDir();
+
+  // Create tool-icons directory if it doesn't exist
+  if (!existsSync(toolIconsDir)) {
+    mkdirSync(toolIconsDir, { recursive: true });
+  }
+
+  // Resolve bundled tool-icons directory via shared asset resolver
+  const bundledToolIconsDir = getBundledAssetsDir('tool-icons');
+  if (!bundledToolIconsDir) {
+    return;
+  }
+
+  // Copy each bundled file if it doesn't exist in the target dir
+  // This includes tool-icons.json and all icon files (png, ico, svg, jpg)
+  try {
+    const bundledFiles = readdirSync(bundledToolIconsDir);
+    for (const file of bundledFiles) {
+      const destPath = join(toolIconsDir, file);
+      if (!existsSync(destPath)) {
+        const srcPath = join(bundledToolIconsDir, file);
+        copyFileSync(srcPath, destPath);
+      }
+    }
+  } catch {
+    // Ignore errors — tool icons are optional enhancement
+  }
 }

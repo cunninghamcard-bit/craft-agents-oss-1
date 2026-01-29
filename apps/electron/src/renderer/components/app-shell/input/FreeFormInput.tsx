@@ -317,6 +317,31 @@ export function FreeFormInput({
   const [inputMaxHeight, setInputMaxHeight] = React.useState(540)
   const [modelDropdownOpen, setModelDropdownOpen] = React.useState(false)
 
+  // Input settings (loaded from config)
+  const [autoCapitalisation, setAutoCapitalisation] = React.useState(true)
+  const [sendMessageKey, setSendMessageKey] = React.useState<'enter' | 'cmd-enter'>('enter')
+  const [spellCheck, setSpellCheck] = React.useState(false)
+
+  // Load input settings on mount
+  React.useEffect(() => {
+    const loadInputSettings = async () => {
+      if (!window.electronAPI) return
+      try {
+        const [autoCapEnabled, sendKey, spellCheckEnabled] = await Promise.all([
+          window.electronAPI.getAutoCapitalisation(),
+          window.electronAPI.getSendMessageKey(),
+          window.electronAPI.getSpellCheck(),
+        ])
+        setAutoCapitalisation(autoCapEnabled)
+        setSendMessageKey(sendKey)
+        setSpellCheck(spellCheckEnabled)
+      } catch (error) {
+        console.error('Failed to load input settings:', error)
+      }
+    }
+    loadInputSettings()
+  }, [])
+
   // Double-Esc interrupt: show warning overlay on first Esc, interrupt on second
   const { showEscapeOverlay } = useEscapeInterrupt()
 
@@ -968,15 +993,28 @@ export function FreeFormInput({
       }
     }
 
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      // Submit message - backend handles interruption if processing
-      submitMessage()
-    }
-    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-      e.preventDefault()
-      // Submit message - backend handles interruption if processing
-      submitMessage()
+    // Skip submission during IME composition - user is confirming composed characters, not sending
+    // Handle send key based on user preference:
+    // - 'enter': Enter sends (Shift+Enter for newline)
+    // - 'cmd-enter': ⌘/Ctrl+Enter sends (Enter for newline)
+    if (sendMessageKey === 'enter') {
+      // Enter sends, Shift+Enter adds newline
+      if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+        e.preventDefault()
+        submitMessage()
+      }
+      // Also allow Cmd/Ctrl+Enter to send (power user shortcut)
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+        e.preventDefault()
+        submitMessage()
+      }
+    } else {
+      // cmd-enter mode: ⌘/Ctrl+Enter sends, plain Enter adds newline
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.nativeEvent.isComposing) {
+        e.preventDefault()
+        submitMessage()
+      }
+      // Plain Enter is allowed to pass through (adds newline)
     }
     if (e.key === 'Escape') {
       // Skip blur if a popover/overlay is open — let the overlay handle ESC instead.
@@ -1027,11 +1065,14 @@ export function FreeFormInput({
     inlineLabel.handleInputChange(value, cursorPosition)
 
     // Auto-capitalize first letter (but not for slash commands, @mentions, or #labels)
+    // Only if autoCapitalisation setting is enabled
     let newValue = value
-    if (value.length > 0 && value.charAt(0) !== '/' && value.charAt(0) !== '@' && value.charAt(0) !== '#') {
+    if (autoCapitalisation && value.length > 0 && value.charAt(0) !== '/' && value.charAt(0) !== '@' && value.charAt(0) !== '#') {
       const capitalizedFirst = value.charAt(0).toUpperCase()
       if (capitalizedFirst !== value.charAt(0)) {
         newValue = capitalizedFirst + value.slice(1)
+        // Set cursor position BEFORE state update so it's used when useEffect syncs the value
+        richInputRef.current?.setSelectionRange(cursorPosition, cursorPosition)
         setInput(newValue)
         syncToParent(newValue)
         return
@@ -1042,14 +1083,12 @@ export function FreeFormInput({
     const typography = applySmartTypography(value, cursorPosition)
     if (typography.replaced) {
       newValue = typography.text
+      // Set cursor position BEFORE state update so it's used when useEffect syncs the value
+      richInputRef.current?.setSelectionRange(typography.cursor, typography.cursor)
       setInput(newValue)
       syncToParent(newValue)
-      // Restore cursor position after React re-render
-      requestAnimationFrame(() => {
-        richInputRef.current?.setSelectionRange(typography.cursor, typography.cursor)
-      })
     }
-  }, [inlineSlash, inlineMention, inlineLabel, syncToParent])
+  }, [inlineSlash, inlineMention, inlineLabel, syncToParent, autoCapitalisation])
 
   // Handle inline slash command selection (removes the /command text)
   const handleInlineSlashCommandSelect = React.useCallback((commandId: SlashCommandId) => {
@@ -1167,7 +1206,7 @@ export function FreeFormInput({
             overridePlaceholder={addLabelEditConfig.overridePlaceholder}
             secondaryAction={workspaceRootPath ? {
               label: 'Edit File',
-              onClick: () => window.electronAPI?.openFile(`${workspaceRootPath}/labels/config.json`),
+              filePath: `${workspaceRootPath}/labels/config.json`,
             } : undefined}
             side="top"
             align="start"
@@ -1206,6 +1245,7 @@ export function FreeFormInput({
           className="min-h-[88px] pl-5 pr-4 pt-4 pb-3 overflow-y-auto"
           style={{ maxHeight: inputMaxHeight }}
           data-tutorial="chat-input"
+          spellCheck={spellCheck}
         />
 
         {/* Bottom Row: Controls - wrapped in relative container for escape overlay */}
@@ -1214,7 +1254,8 @@ export function FreeFormInput({
           <EscapeInterruptOverlay isVisible={isProcessing && showEscapeOverlay} />
 
           <div className="flex items-center gap-1 px-2 py-2 border-t border-border/50">
-          {/* Context Badges - Files, Sources, Folder */}
+          {/* Left side: Context badges - shrinkable so model + send always stay visible */}
+          <div className="flex items-center gap-1 min-w-32 shrink overflow-hidden">
           {/* 1. Attach Files Badge */}
           <FreeFormInputContextBadge
             icon={<Paperclip className="h-4 w-4" />}
@@ -1235,7 +1276,7 @@ export function FreeFormInput({
 
           {/* 2. Source Selector Badge - only show if onSourcesChange is provided */}
           {onSourcesChange && (
-            <div className="relative">
+            <div className="relative shrink min-w-0 overflow-hidden">
               <FreeFormInputContextBadge
                 buttonRef={sourceButtonRef}
                 icon={
@@ -1402,10 +1443,13 @@ export function FreeFormInput({
               isEmptySession={isEmptySession}
             />
           )}
+          </div>
 
           {/* Spacer */}
           <div className="flex-1" />
 
+          {/* Right side: Model + Send - never shrink so they're always visible */}
+          <div className="flex items-center shrink-0">
           {/* 5. Model Selector - Radix DropdownMenu for automatic positioning and submenu support */}
           <DropdownMenu open={modelDropdownOpen} onOpenChange={setModelDropdownOpen}>
             <Tooltip>
@@ -1604,6 +1648,7 @@ export function FreeFormInput({
             </Button>
           )}
           </div>
+          </div>
         </div>
       </div>
     </form>
@@ -1742,7 +1787,7 @@ function WorkingDirectoryBadge({
   return (
     <Popover open={popoverOpen} onOpenChange={setPopoverOpen}>
       <PopoverTrigger asChild>
-        <span>
+        <span className="shrink min-w-0 overflow-hidden">
           <FreeFormInputContextBadge
             icon={<Icon_Home className="h-4 w-4" />}
             label={folderName}

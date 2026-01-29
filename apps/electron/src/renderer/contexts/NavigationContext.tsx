@@ -537,7 +537,11 @@ export function NavigationProvider({
     }
 
     if (isSkillsNavigation(navState) && navState.details) {
-      return skills.some(s => s.slug === navState.details!.skillSlug)
+      if (navState.details.type === 'skill') {
+        const { skillSlug } = navState.details
+        return skills.some(s => s.slug === skillSlug)
+      }
+      return true
     }
 
     return true // Routes without details are always valid

@@ -14,7 +14,7 @@
 
 import type { SessionState, AgentEvent, ProcessResult } from './types'
 import { handleTextDelta, handleTextComplete } from './handlers/text'
-import { handleToolStart, handleToolResult, handleParentUpdate, handleTaskBackgrounded, handleShellBackgrounded, handleTaskProgress } from './handlers/tool'
+import { handleToolStart, handleToolResult, handleTaskBackgrounded, handleShellBackgrounded, handleTaskProgress } from './handlers/tool'
 import {
   handleComplete,
   handleError,
@@ -77,11 +77,6 @@ export function processEvent(
 
     case 'tool_result': {
       const newState = handleToolResult(state, event)
-      return { state: newState, effects: [] }
-    }
-
-    case 'parent_update': {
-      const newState = handleParentUpdate(state, event)
       return { state: newState, effects: [] }
     }
 

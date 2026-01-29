@@ -42,7 +42,7 @@ export function DataTableOverlay({
       isOpen={isOpen}
       onClose={onClose}
       theme={theme}
-      badge={{
+      typeBadge={{
         icon: Table2,
         label: 'Table',
         variant: badgeVariant,
@@ -50,9 +50,8 @@ export function DataTableOverlay({
       title={title}
       subtitle={subtitle}
     >
-      {/* Scrollable container - uses h-full and overflow-auto to enable scrolling
-          within the flex-1 min-h-0 container provided by PreviewOverlay */}
-      <div className="h-full overflow-auto">
+      {/* Table content — scrolling is handled by the parent overlay's scroll container */}
+      <div>
         {children}
       </div>
     </PreviewOverlay>

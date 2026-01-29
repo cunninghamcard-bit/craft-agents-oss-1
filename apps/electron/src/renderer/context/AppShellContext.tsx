@@ -10,6 +10,7 @@ import * as React from 'react'
 import { createContext, useContext, useCallback } from 'react'
 import { useAtomValue } from 'jotai'
 import type { RichTextInputHandle } from '@/components/ui/rich-text-input'
+import type { ChatDisplayHandle } from '@/components/app-shell/ChatDisplay'
 import type {
   Session,
   Workspace,
@@ -123,6 +124,16 @@ export interface AppShellContextType {
 
   // Right sidebar button (for page headers)
   rightSidebarButton?: React.ReactNode
+
+  // Session list search state (for ChatDisplay highlighting)
+  /** Current search query from session list - used to highlight matches in ChatDisplay */
+  sessionListSearchQuery?: string
+  /** Callback to update session list search query */
+  setSessionListSearchQuery?: (query: string) => void
+  /** Ref to ChatDisplay for navigation between matches */
+  chatDisplayRef?: React.RefObject<ChatDisplayHandle>
+  /** Callback when ChatDisplay match info changes (for immediate UI updates) */
+  onChatMatchInfoChange?: (info: { count: number; index: number }) => void
 }
 
 const AppShellContext = createContext<AppShellContextType | null>(null)

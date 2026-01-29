@@ -332,30 +332,6 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
     }
   }, [source])
 
-  // Handle editing guide.md - opens in system default text editor
-  const handleEditGuide = useCallback(async () => {
-    if (!source) return
-
-    const guidePath = `${source.folderPath}/guide.md`
-    await window.electronAPI.openFile(guidePath)
-  }, [source])
-
-  // Handle editing config.json - opens in system default text editor
-  const handleEditConfig = useCallback(async () => {
-    if (!source) return
-
-    const configPath = `${source.folderPath}/config.json`
-    await window.electronAPI.openFile(configPath)
-  }, [source])
-
-  // Handle editing permissions.json - opens in system default text editor
-  const handleEditPermissions = useCallback(async () => {
-    if (!source) return
-
-    const permissionsPath = `${source.folderPath}/permissions.json`
-    await window.electronAPI.openFile(permissionsPath)
-  }, [source])
-
   // Handle deleting source (navigates to source list, preserving current filter)
   const handleDelete = useCallback(async () => {
     if (!source) return
@@ -429,7 +405,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
                 {...getEditConfig('source-config', source.folderPath)}
                 secondaryAction={{
                   label: 'Edit File',
-                  onClick: handleEditConfig,
+                  filePath: `${source.folderPath}/config.json`,
                 }}
               />
             }
@@ -471,7 +447,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
                   {...getEditConfig('source-permissions', source.folderPath)}
                   secondaryAction={{
                     label: 'Edit File',
-                    onClick: handleEditPermissions,
+                    filePath: `${source.folderPath}/permissions.json`,
                   }}
                 />
               }
@@ -492,7 +468,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
                   {...getEditConfig('source-tool-permissions', source.folderPath)}
                   secondaryAction={{
                     label: 'Edit File',
-                    onClick: handleEditPermissions,
+                    filePath: `${source.folderPath}/permissions.json`,
                   }}
                 />
               }
@@ -517,7 +493,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
                   {...getEditConfig('source-permissions', source.folderPath)}
                   secondaryAction={{
                     label: 'Edit File',
-                    onClick: handleEditPermissions,
+                    filePath: `${source.folderPath}/permissions.json`,
                   }}
                 />
               }
@@ -538,7 +514,7 @@ export default function SourceInfoPage({ sourceSlug, workspaceId, onDelete }: So
                   {...getEditConfig('source-guide', source.folderPath)}
                   secondaryAction={{
                     label: 'Edit File',
-                    onClick: handleEditGuide,
+                    filePath: `${source.folderPath}/guide.md`,
                   }}
                 />
               }

@@ -75,17 +75,6 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
     }
   }, [workspaceId, skillSlug])
 
-  // Handle edit button click
-  const handleEdit = useCallback(async () => {
-    if (!skill) return
-
-    try {
-      await window.electronAPI.openSkillInEditor(workspaceId, skillSlug)
-    } catch (err) {
-      console.error('Failed to open skill in editor:', err)
-    }
-  }, [skill, workspaceId, skillSlug])
-
   // Handle open in finder
   const handleOpenInFinder = useCallback(async () => {
     if (!skill) return
@@ -174,7 +163,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
                 {...getEditConfig('skill-metadata', skill.path)}
                 secondaryAction={{
                   label: 'Edit File',
-                  onClick: handleEdit,
+                  filePath: `${skill.path}/SKILL.md`,
                 }}
               />
             }
@@ -199,7 +188,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
           {/* Permission Modes */}
           {skill.metadata.alwaysAllow && skill.metadata.alwaysAllow.length > 0 && (
             <Info_Section title="Permission Modes">
-              <div className="space-y-2">
+              <div className="space-y-2 px-4 py-3">
                 <p className="text-xs text-muted-foreground mb-3">
                   How "Always Allowed Tools" interacts with permission modes:
                 </p>
@@ -244,7 +233,7 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
                 {...getEditConfig('skill-instructions', skill.path)}
                 secondaryAction={{
                   label: 'Edit File',
-                  onClick: handleEdit,
+                  filePath: `${skill.path}/SKILL.md`,
                 }}
               />
             }

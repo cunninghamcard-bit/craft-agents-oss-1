@@ -17,6 +17,7 @@ export const KEYS = {
   sidebarMode: 'sidebar-mode',
   listFilter: 'list-filter',
   labelFilter: 'label-filter',
+  viewFilters: 'view-filters', // Per-view filter map: { [viewKey]: { statuses, labels } }
   expandedFolders: 'expanded-folders',
   collapsedSidebarItems: 'collapsed-sidebar-items',
 

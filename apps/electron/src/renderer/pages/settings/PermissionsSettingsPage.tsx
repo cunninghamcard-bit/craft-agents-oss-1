@@ -239,9 +239,7 @@ export default function PermissionsSettingsPage() {
                           {...getEditConfig('default-permissions', defaultPermissionsPath)}
                           secondaryAction={{
                             label: 'Edit File',
-                            onClick: () => {
-                              window.electronAPI.openFile(defaultPermissionsPath)
-                            },
+                            filePath: defaultPermissionsPath,
                           }}
                         />
                       ) : null
@@ -282,10 +280,7 @@ export default function PermissionsSettingsPage() {
                             context={context}
                             secondaryAction={activeWorkspace ? {
                               label: 'Edit File',
-                              onClick: () => {
-                                const permissionsPath = `${activeWorkspace.rootPath}/permissions.json`
-                                window.electronAPI.openFile(permissionsPath)
-                              },
+                              filePath: `${activeWorkspace.rootPath}/permissions.json`,
                             } : undefined}
                           />
                         )

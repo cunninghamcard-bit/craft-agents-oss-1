@@ -1,3 +1,5 @@
+// Capture errors in the isolated preload context and forward to Sentry
+import '@sentry/electron/preload'
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC_CHANNELS, type SessionEvent, type ElectronAPI, type FileAttachment, type AuthType } from '../shared/types'
 
@@ -60,6 +62,8 @@ const api: ElectronAPI = {
 
   // File operations
   readFile: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE, path),
+  readFileDataUrl: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE_DATA_URL, path),
+  readFileBinary: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE_BINARY, path) as Promise<Uint8Array>,
   openFileDialog: () => ipcRenderer.invoke(IPC_CHANNELS.OPEN_FILE_DIALOG),
   readFileAttachment: (path: string) => ipcRenderer.invoke(IPC_CHANNELS.READ_FILE_ATTACHMENT, path),
   storeAttachment: (sessionId: string, attachment: FileAttachment) => ipcRenderer.invoke(IPC_CHANNELS.STORE_ATTACHMENT, sessionId, attachment),
@@ -243,6 +247,10 @@ const api: ElectronAPI = {
   getMcpTools: (workspaceId: string, sourceSlug: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.SOURCES_GET_MCP_TOOLS, workspaceId, sourceSlug),
 
+  // Session content search (full-text search via ripgrep)
+  searchSessionContent: (workspaceId: string, query: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SEARCH_SESSIONS, workspaceId, query),
+
   // Status management
   listStatuses: (workspaceId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.STATUSES_LIST, workspaceId),
@@ -325,6 +333,9 @@ const api: ElectronAPI = {
   saveViews: (workspaceId: string, views: any[]) =>
     ipcRenderer.invoke(IPC_CHANNELS.VIEWS_SAVE, workspaceId, views),
 
+  // Tool icon mappings (for Appearance settings page)
+  getToolIconMappings: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ICONS_GET_MAPPINGS),
+
   // Theme (app-level only)
   getAppTheme: () => ipcRenderer.invoke(IPC_CHANNELS.THEME_GET_APP),
   // Preset themes (app-level)
@@ -367,6 +378,21 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.NOTIFICATION_GET_ENABLED) as Promise<boolean>,
   setNotificationsEnabled: (enabled: boolean) =>
     ipcRenderer.invoke(IPC_CHANNELS.NOTIFICATION_SET_ENABLED, enabled),
+
+  // Input settings
+  getAutoCapitalisation: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_GET_AUTO_CAPITALISATION) as Promise<boolean>,
+  setAutoCapitalisation: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_SET_AUTO_CAPITALISATION, enabled),
+  getSendMessageKey: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_GET_SEND_MESSAGE_KEY) as Promise<'enter' | 'cmd-enter'>,
+  setSendMessageKey: (key: 'enter' | 'cmd-enter') =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_SET_SEND_MESSAGE_KEY, key),
+  getSpellCheck: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_GET_SPELL_CHECK) as Promise<boolean>,
+  setSpellCheck: (enabled: boolean) =>
+    ipcRenderer.invoke(IPC_CHANNELS.INPUT_SET_SPELL_CHECK, enabled),
+
   updateBadgeCount: (count: number) =>
     ipcRenderer.invoke(IPC_CHANNELS.BADGE_UPDATE, count),
   clearBadgeCount: () =>

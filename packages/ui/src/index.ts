@@ -121,10 +121,15 @@ export {
 export {
   // Base overlay components
   FullscreenOverlayBase,
+  FullscreenOverlayBaseHeader,
   PreviewOverlay,
+  ContentFrame,
   CopyButton,
   type FullscreenOverlayBaseProps,
+  type FullscreenOverlayBaseHeaderProps,
+  type OverlayTypeBadge,
   type PreviewOverlayProps,
+  type ContentFrameProps,
   type BadgeVariant,
   type CopyButtonProps,
   // Specialized overlays
@@ -135,6 +140,8 @@ export {
   JSONPreviewOverlay,
   DataTableOverlay,
   DocumentFormattedMarkdownOverlay,
+  ImagePreviewOverlay,
+  PDFPreviewOverlay,
   detectLanguage,
   detectLanguageFromPath,
   type CodePreviewOverlayProps,
@@ -146,7 +153,16 @@ export {
   type JSONPreviewOverlayProps,
   type DataTableOverlayProps,
   type DocumentFormattedMarkdownOverlayProps,
+  type ImagePreviewOverlayProps,
+  type PDFPreviewOverlayProps,
 } from './components/overlay'
+
+// File classification (for link interceptor)
+export {
+  classifyFile,
+  type FilePreviewType,
+  type FileClassification,
+} from './lib/file-classification'
 
 // Utilities
 export { cn } from './lib/utils'
@@ -175,6 +191,7 @@ export {
   type TerminalOverlayData,
   type GenericOverlayData,
   type JSONOverlayData,
+  type DocumentOverlayData,
   type OverlayData,
 } from './lib/tool-parsers'
 

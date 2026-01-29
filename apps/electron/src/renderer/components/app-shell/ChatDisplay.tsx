@@ -5,9 +5,11 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleAlert,
   ExternalLink,
   Info,
+  PenLine,
   X,
 } from "lucide-react"
 import { motion, AnimatePresence } from "motion/react"
@@ -68,6 +70,8 @@ interface MarkdownOverlayState {
   type: 'markdown'
   content: string
   title: string
+  /** When true, show raw markdown source in code viewer instead of rendered preview */
+  forceCodeView?: boolean
 }
 
 /** Union of all overlay states, or null for no overlay */
@@ -149,6 +153,23 @@ interface ChatDisplayProps {
   // Tutorial
   /** Disable send action (for tutorial guidance) */
   disableSend?: boolean
+  // Search highlighting (from session list search)
+  /** Search query for highlighting matches - passed from session list */
+  searchQuery?: string
+  /** Callback when match count changes - used by session list for navigation */
+  onMatchCountChange?: (count: number) => void
+  /** Callback when match info (count and index) changes - for immediate UI updates */
+  onMatchInfoChange?: (info: { count: number; index: number }) => void
+}
+
+/**
+ * Imperative handle exposed via forwardRef for navigation between matches
+ */
+export interface ChatDisplayHandle {
+  goToNextMatch: () => void
+  goToPrevMatch: () => void
+  matchCount: number
+  currentMatchIndex: number
 }
 
 /**
@@ -323,7 +344,7 @@ function ScrollOnMount({
  *
  * Shows empty state when no session is selected
  */
-export function ChatDisplay({
+export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>(function ChatDisplay({
   session,
   onSendMessage,
   onOpenFile,
@@ -368,7 +389,11 @@ export function ChatDisplay({
   messagesLoading = false,
   // Tutorial
   disableSend = false,
-}: ChatDisplayProps) {
+  // Search highlighting
+  searchQuery: externalSearchQuery,
+  onMatchCountChange,
+  onMatchInfoChange,
+}, ref) {
   // Input is only disabled when explicitly disabled (e.g., agent needs activation)
   // User can type during streaming - submitting will stop the stream and send
   const isInputDisabled = disabled
@@ -414,12 +439,426 @@ export function ChatDisplay({
   // Set when a valued label is selected, cleared once the popover opens.
   const [autoOpenLabelId, setAutoOpenLabelId] = useState<string | null>(null)
 
+  // ============================================================================
+  // Search Highlighting (from session list search)
+  // ============================================================================
+  // Current match index for navigation (internal state, exposed via ref)
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
+  const turnRefs = React.useRef<Map<string, HTMLDivElement>>(new Map())
+  // Track actual match IDs created in DOM (state so it triggers re-renders)
+  const [actualMatchIds, setActualMatchIds] = useState<Set<string>>(new Set())
+  // Flag to control when scrolling to matches should happen
+  // Only scroll when: session changes with search active, or user clicks navigation
+  const shouldScrollToMatchRef = React.useRef(false)
+  const prevSessionIdForScrollRef = React.useRef<string | null>(null)
+
+  // Use the external search query from props
+  const searchQuery = externalSearchQuery || ''
+  const isSearchActive = Boolean(searchQuery.trim())
+
   // Focus textarea when session changes (tab switch) or zone gains focus via keyboard
+  // But NOT when search is active (to avoid stealing focus from search input)
   useEffect(() => {
-    if (session) {
+    if (session && !isSearchActive) {
       textareaRef.current?.focus()
     }
-  }, [session?.id, isFocused])
+  }, [session?.id, isFocused, isSearchActive])
+
+  // Reset match state when session or search query changes
+  useEffect(() => {
+    prevSessionIdForScrollRef.current = session?.id ?? null
+    setCurrentMatchIndex(0)
+    setActualMatchIds(new Set()) // Clear stale match IDs to prevent incorrect counts
+  }, [session?.id, searchQuery, isSearchActive])
+
+  // Helper to count occurrences of a substring
+  const countOccurrences = useCallback((text: string, query: string): number => {
+    const lowerText = text.toLowerCase()
+    const lowerQuery = query.toLowerCase()
+    let count = 0
+    let pos = 0
+    while ((pos = lowerText.indexOf(lowerQuery, pos)) !== -1) {
+      count++
+      pos += lowerQuery.length
+    }
+    return count
+  }, [])
+
+  // Find ALL individual match occurrences (not just turns)
+  // Returns array with unique matchId for each occurrence
+  const matchingOccurrences = useMemo(() => {
+    if (!searchQuery.trim() || !session?.messages) return []
+    const startTime = performance.now()
+    const query = searchQuery.toLowerCase()
+    const turns = groupMessagesByTurn(session.messages)
+    const matches: { matchId: string; turnId: string; turnIndex: number; matchIndexInTurn: number }[] = []
+
+    for (let turnIndex = 0; turnIndex < turns.length; turnIndex++) {
+      const turn = turns[turnIndex]
+      let textContent = ''
+      let turnId = ''
+
+      if (turn.type === 'user') {
+        turnId = `user-${turn.message.id}`
+        // Extract text content from user message
+        const content = turn.message.content as unknown
+        if (typeof content === 'string') {
+          textContent = content
+        } else if (Array.isArray(content)) {
+          textContent = content
+            .filter((block: { type?: string }) => block.type === 'text')
+            .map((block: { text?: string }) => block.text || '')
+            .join('\n')
+        }
+      } else if (turn.type === 'assistant') {
+        turnId = `turn-${turn.turnId}`
+        // Extract text content from assistant response
+        // turn.response is { text: string, isStreaming: boolean } object
+        if (turn.response?.text) {
+          textContent = turn.response.text
+        }
+      } else if (turn.type === 'system') {
+        turnId = `system-${turn.message.id}`
+        textContent = turn.message.content
+      }
+
+      // Count occurrences in this turn's text content
+      const occurrenceCount = countOccurrences(textContent, query)
+      for (let i = 0; i < occurrenceCount; i++) {
+        matches.push({
+          matchId: `${turnId}-match-${i}`,
+          turnId,
+          turnIndex,
+          matchIndexInTurn: i,
+        })
+      }
+    }
+    console.log('[ChatDisplay Perf] matchingOccurrences:', (performance.now() - startTime).toFixed(2), 'ms, found', matches.length, 'matches in', turns.length, 'turns')
+    return matches
+  }, [searchQuery, session?.messages, countOccurrences])
+
+  // Extract unique turn IDs that have matches (for highlighting)
+  const matchingTurnIds = useMemo(() => {
+    const uniqueTurnIds = new Set(matchingOccurrences.map(m => m.turnId))
+    return Array.from(uniqueTurnIds)
+  }, [matchingOccurrences])
+
+  // Filter to only valid matches that exist in DOM (actualMatchIds is updated after highlighting)
+  const validMatches = useMemo(() => {
+    // Before highlighting runs, show all potential matches
+    // After highlighting, filter to only matches that exist in DOM
+    if (actualMatchIds.size === 0) return matchingOccurrences
+    const startTime = performance.now()
+    const filtered = matchingOccurrences.filter(m => actualMatchIds.has(m.matchId))
+    console.log('[ChatDisplay Perf] validMatches filter:', (performance.now() - startTime).toFixed(2), 'ms,', matchingOccurrences.length, '->', filtered.length)
+    return filtered
+  }, [matchingOccurrences, actualMatchIds])
+
+  // Auto-scroll to match ONLY when there's exactly one match
+  // Multiple matches: user navigates with chevrons to avoid jarring scroll
+  useEffect(() => {
+    if (validMatches.length === 1 && isSearchActive) {
+      shouldScrollToMatchRef.current = true
+    }
+  }, [validMatches.length, isSearchActive])
+
+  // Scroll to current match (with delay to wait for DOM rendering)
+  // Only scrolls when shouldScrollToMatchRef is true (single match auto-scroll or nav button click)
+  useEffect(() => {
+    console.log('[ChatDisplay Scroll] Effect triggered, validMatchCount:', validMatches.length, 'currentIndex:', currentMatchIndex, 'shouldScroll:', shouldScrollToMatchRef.current)
+
+    // Only scroll if explicitly requested (session change or navigation click)
+    if (!shouldScrollToMatchRef.current) return
+
+    if (validMatches.length > 0 && currentMatchIndex < validMatches.length) {
+      const matchData = validMatches[currentMatchIndex]
+      const { matchId, turnIndex } = matchData
+      const totalTurns = totalTurnCountRef.current
+
+      // Calculate current visible range
+      const currentStartIndex = Math.max(0, totalTurns - visibleTurnCount)
+      console.log('[ChatDisplay Scroll] Match turnIndex:', turnIndex, 'currentStartIndex:', currentStartIndex, 'visibleTurnCount:', visibleTurnCount)
+
+      // Check if the match is outside the visible range
+      if (turnIndex < currentStartIndex) {
+        // Expand visible turns to include this match (with some buffer)
+        const newVisibleCount = totalTurns - turnIndex + 5 // Add 5 turns buffer
+        console.log('[ChatDisplay Scroll] Expanding visible turns from', visibleTurnCount, 'to', newVisibleCount)
+        setVisibleTurnCount(newVisibleCount)
+        // Keep shouldScroll true - will scroll on next effect run after DOM updates
+        return
+      }
+
+      // Use multiple attempts to ensure DOM is ready (highlights are applied)
+      let attempts = 0
+      const maxAttempts = 5
+
+      const tryScroll = () => {
+        const matchEl = document.getElementById(matchId)
+        console.log('[ChatDisplay Scroll] Try scroll to match:', matchId, 'element found:', !!matchEl)
+        if (matchEl) {
+          matchEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          // Add visual emphasis to current match
+          matchEl.classList.add('ring-2', 'ring-info')
+          // Remove emphasis from other matches
+          document.querySelectorAll('mark.search-highlight.ring-2').forEach(el => {
+            if (el.id !== matchId) el.classList.remove('ring-2', 'ring-info')
+          })
+          shouldScrollToMatchRef.current = false
+        } else if (attempts < maxAttempts) {
+          attempts++
+          setTimeout(tryScroll, 50)
+        } else {
+          // Give up - validMatches should only contain valid matches, but timing can cause this
+          console.log('[ChatDisplay Scroll] Match not found after retries')
+          shouldScrollToMatchRef.current = false
+        }
+      }
+
+      // Start with requestAnimationFrame for initial attempt
+      const rafId = requestAnimationFrame(tryScroll)
+      return () => cancelAnimationFrame(rafId)
+    }
+  }, [validMatches, currentMatchIndex, session?.id, visibleTurnCount])
+
+  // Text highlighting within messages
+  // Uses DOM manipulation after render to highlight matching text
+  useEffect(() => {
+    // Clear previous highlights immediately
+    const clearHighlights = () => {
+      const existingMarks = document.querySelectorAll('mark.search-highlight')
+      existingMarks.forEach(mark => {
+        const parent = mark.parentNode
+        if (parent) {
+          parent.replaceChild(document.createTextNode(mark.textContent || ''), mark)
+          parent.normalize() // Merge adjacent text nodes
+        }
+      })
+    }
+
+    const clearStartTime = performance.now()
+    clearHighlights()
+    console.log('[ChatDisplay Perf] clearHighlights:', (performance.now() - clearStartTime).toFixed(2), 'ms')
+    setActualMatchIds(new Set())
+
+    if (!searchQuery.trim() || !isSearchActive) return
+
+    const query = searchQuery.toLowerCase()
+    const createdMatchIds: string[] = [] // Collect IDs as we create marks
+
+    // Highlighting function - applies highlights only to MATCHING turn refs
+    // Assigns unique IDs to each mark for navigation
+    const applyHighlights = () => {
+      // Only highlight in turns that actually match, not all visible turns
+      const matchingTurnIdSet = new Set(matchingTurnIds)
+      // Track match counter per turn for unique IDs
+      const turnMatchCounters = new Map<string, number>()
+
+      turnRefs.current.forEach((container, turnId) => {
+        // Skip turns that don't contain matches
+        if (!matchingTurnIdSet.has(turnId)) return
+
+        // Initialize counter for this turn
+        turnMatchCounters.set(turnId, 0)
+
+        // Find all text nodes within the container
+        const walker = document.createTreeWalker(
+          container,
+          NodeFilter.SHOW_TEXT,
+          {
+            acceptNode: (node) => {
+              // Skip nodes in script, style, or already marked
+              const parent = node.parentElement
+              if (!parent) return NodeFilter.FILTER_REJECT
+              const tagName = parent.tagName.toLowerCase()
+              if (tagName === 'script' || tagName === 'style' || tagName === 'mark') {
+                return NodeFilter.FILTER_REJECT
+              }
+              // Only process nodes that contain the search text
+              if (node.textContent?.toLowerCase().includes(query)) {
+                return NodeFilter.FILTER_ACCEPT
+              }
+              return NodeFilter.FILTER_REJECT
+            }
+          }
+        )
+
+        const textNodes: Text[] = []
+        let currentNode: Node | null
+        while ((currentNode = walker.nextNode())) {
+          textNodes.push(currentNode as Text)
+        }
+
+        // Process text nodes in FORWARD order to assign IDs correctly
+        // (but we need to be careful about DOM manipulation)
+        // Actually, let's collect all matches first, then apply
+        const allMatches: { textNode: Text; start: number; end: number }[] = []
+        for (const textNode of textNodes) {
+          const text = textNode.textContent || ''
+          const lowerText = text.toLowerCase()
+          let pos = 0
+          let matchPos = lowerText.indexOf(query, pos)
+          while (matchPos !== -1) {
+            allMatches.push({ textNode, start: matchPos, end: matchPos + query.length })
+            pos = matchPos + query.length
+            matchPos = lowerText.indexOf(query, pos)
+          }
+        }
+
+        // Process text nodes in reverse order to avoid invalidating positions
+        // But we need to assign IDs in forward order, so use a reverse counter
+        const totalMatchesInTurn = allMatches.length
+        let reverseCounter = totalMatchesInTurn - 1
+
+        for (let i = textNodes.length - 1; i >= 0; i--) {
+          const textNode = textNodes[i]
+          const text = textNode.textContent || ''
+          const lowerText = text.toLowerCase()
+
+          // Find matches in this node (in reverse order for DOM manipulation)
+          const nodeMatches: number[] = []
+          let pos = 0
+          let matchPos = lowerText.indexOf(query, pos)
+          while (matchPos !== -1) {
+            nodeMatches.push(matchPos)
+            pos = matchPos + query.length
+            matchPos = lowerText.indexOf(query, pos)
+          }
+
+          if (nodeMatches.length === 0) continue
+
+          // Process in reverse to maintain positions
+          let lastIndex = text.length
+          const fragments: (string | HTMLElement)[] = []
+
+          for (let j = nodeMatches.length - 1; j >= 0; j--) {
+            const matchStart = nodeMatches[j]
+            const matchEnd = matchStart + query.length
+
+            // Text after match
+            if (matchEnd < lastIndex) {
+              fragments.unshift(text.slice(matchEnd, lastIndex))
+            }
+
+            // Highlighted match with unique ID
+            const mark = document.createElement('mark')
+            const matchIdIndex = reverseCounter - (nodeMatches.length - 1 - j)
+            const markId = `${turnId}-match-${matchIdIndex}`
+            mark.id = markId
+            mark.className = 'search-highlight px-1 py-0.5 bg-yellow-300 rounded-[4px] text-black/90'
+            mark.textContent = text.slice(matchStart, matchEnd)
+            fragments.unshift(mark)
+            createdMatchIds.push(markId)
+
+            lastIndex = matchStart
+          }
+
+          // Update reverse counter
+          reverseCounter -= nodeMatches.length
+
+          // Text before first match
+          if (lastIndex > 0) {
+            fragments.unshift(text.slice(0, lastIndex))
+          }
+
+          // Replace text node with fragments
+          if (fragments.length > 0 && textNode.parentNode) {
+            const parent = textNode.parentNode
+            fragments.forEach(frag => {
+              if (typeof frag === 'string') {
+                parent.insertBefore(document.createTextNode(frag), textNode)
+              } else {
+                parent.insertBefore(frag, textNode)
+              }
+            })
+            parent.removeChild(textNode)
+          }
+        }
+      })
+    }
+
+    // Retry logic: if no refs available yet, wait and try again
+    let attempts = 0
+    const maxAttempts = 5
+    let highlightTimeoutId: ReturnType<typeof setTimeout> | null = null
+
+    const tryHighlight = () => {
+      // If no turns to highlight, don't retry - there's nothing to wait for
+      if (matchingTurnIds.length === 0) {
+        console.log('[ChatDisplay Highlight] No turns to highlight, skipping')
+        return
+      }
+
+      const refCount = turnRefs.current.size
+      const matchingInRefs = matchingTurnIds.filter(id => turnRefs.current.has(id)).length
+      console.log('[ChatDisplay Highlight] Try highlight, attempt:', attempts, 'refCount:', refCount, 'matchingTurns:', matchingTurnIds.length, 'matchingInRefs:', matchingInRefs)
+      if (matchingInRefs > 0) {
+        const highlightStartTime = performance.now()
+        applyHighlights()
+        const highlightTime = performance.now() - highlightStartTime
+        // Store actual match IDs for navigation (triggers re-render to update validMatches)
+        setActualMatchIds(new Set(createdMatchIds))
+        console.log('[ChatDisplay Perf] applyHighlights:', highlightTime.toFixed(2), 'ms, created', createdMatchIds.length, 'marks in', matchingInRefs, 'turns')
+      } else if (attempts < maxAttempts) {
+        // Refs not ready yet - retry with increasing delay
+        attempts++
+        highlightTimeoutId = setTimeout(tryHighlight, 100)
+      } else {
+        console.log('[ChatDisplay Highlight] Gave up after', maxAttempts, 'attempts')
+      }
+    }
+
+    // Start with initial delay for DOM rendering
+    const timeoutId = setTimeout(tryHighlight, 50)
+
+    // Cleanup function to clear timeout and remove highlights
+    return () => {
+      clearTimeout(timeoutId)
+      if (highlightTimeoutId) clearTimeout(highlightTimeoutId)
+      clearHighlights()
+    }
+  }, [searchQuery, isSearchActive, matchingTurnIds, session?.id, visibleTurnCount]) // Added visibleTurnCount to re-highlight after pagination
+
+  // Navigate to next match (no looping - stops at last match)
+  const goToNextMatch = useCallback(() => {
+    if (validMatches.length === 0) return
+    setCurrentMatchIndex(prev => {
+      // Don't loop - stop at last match
+      if (prev >= validMatches.length - 1) return prev
+      shouldScrollToMatchRef.current = true
+      return prev + 1
+    })
+  }, [validMatches])
+
+  // Navigate to previous match (no looping - stops at first match)
+  const goToPrevMatch = useCallback(() => {
+    if (validMatches.length === 0) return
+    setCurrentMatchIndex(prev => {
+      // Don't loop - stop at first match
+      if (prev <= 0) return prev
+      shouldScrollToMatchRef.current = true
+      return prev - 1
+    })
+  }, [validMatches])
+
+  // Expose navigation via imperative handle (for session list navigation controls)
+  React.useImperativeHandle(ref, () => ({
+    goToNextMatch,
+    goToPrevMatch,
+    matchCount: validMatches.length,
+    currentMatchIndex,
+  }), [goToNextMatch, goToPrevMatch, validMatches.length, currentMatchIndex])
+
+  // Notify parent when match count changes
+  useEffect(() => {
+    onMatchCountChange?.(validMatches.length)
+  }, [validMatches.length, onMatchCountChange])
+
+  // Notify parent when match info (count and index) changes
+  useEffect(() => {
+    console.log('[ChatDisplay MatchInfo] Reporting matches:', validMatches.length, 'index:', currentMatchIndex, 'sessionId:', session?.id)
+    onMatchInfoChange?.({ count: validMatches.length, index: currentMatchIndex })
+  }, [validMatches.length, currentMatchIndex, session?.id, onMatchInfoChange])
 
   // ============================================================================
   // Overlay State Management
@@ -484,6 +923,35 @@ export function ChatDisplay({
       title: 'Message Preview',
     })
   }, [session])
+
+  // Helper to collect Edit/Write activities into FileChange array
+  // Used by both onOpenActivityDetails and onOpenMultiFileDiff
+  const collectFileChanges = useCallback((activities: ActivityItem[]): FileChange[] => {
+    const changes: FileChange[] = []
+    for (const a of activities) {
+      const input = a.toolInput as Record<string, unknown> | undefined
+      if (a.toolName === 'Edit' && input) {
+        changes.push({
+          id: a.id,
+          filePath: (input.file_path as string) || 'unknown',
+          toolType: 'Edit',
+          original: (input.old_string as string) || '',
+          modified: (input.new_string as string) || '',
+          error: a.error || undefined,
+        })
+      } else if (a.toolName === 'Write' && input) {
+        changes.push({
+          id: a.id,
+          filePath: (input.file_path as string) || 'unknown',
+          toolType: 'Write',
+          original: '',
+          modified: (input.content as string) || '',
+          error: a.error || undefined,
+        })
+      }
+    }
+    return changes
+  }, [])
 
   // Ref to track total turn count for scroll handler
   const totalTurnCountRef = React.useRef(0)
@@ -704,11 +1172,31 @@ export function ChatDisplay({
                     </div>
                   )}
                   {turns.map((turn, index) => {
+                    // Compute turn key and check if it's a search match
+                    const getTurnKey = () => {
+                      if (turn.type === 'user') return `user-${turn.message.id}`
+                      if (turn.type === 'system') return `system-${turn.message.id}`
+                      if (turn.type === 'auth-request') return `auth-${turn.message.id}`
+                      return `turn-${turn.turnId}`
+                    }
+                    const turnKey = getTurnKey()
+                    const isCurrentMatch = isSearchActive && matchingTurnIds[currentMatchIndex] === turnKey
+                    const isAnyMatch = isSearchActive && matchingTurnIds.includes(turnKey)
+
                     // User turns - render with MemoizedMessageBubble
                     // Extra padding creates visual separation from AI responses
                     if (turn.type === 'user') {
                       return (
-                        <div key={`user-${turn.message.id}`} className={CHAT_LAYOUT.userMessagePadding}>
+                        <div
+                          key={turnKey}
+                          ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                          className={cn(
+                            CHAT_LAYOUT.userMessagePadding,
+                            "rounded-lg transition-all duration-200",
+                            isCurrentMatch && "ring-2 ring-info ring-offset-2 ring-offset-background",
+                            isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
+                          )}
+                        >
                           <MemoizedMessageBubble
                             message={turn.message}
                             onOpenFile={onOpenFile}
@@ -721,12 +1209,21 @@ export function ChatDisplay({
                     // System turns (error, status, info, warning) - render with MemoizedMessageBubble
                     if (turn.type === 'system') {
                       return (
-                        <MemoizedMessageBubble
-                          key={`system-${turn.message.id}`}
-                          message={turn.message}
-                          onOpenFile={onOpenFile}
-                          onOpenUrl={onOpenUrl}
-                        />
+                        <div
+                          key={turnKey}
+                          ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                          className={cn(
+                            "rounded-lg transition-all duration-200",
+                            isCurrentMatch && "ring-2 ring-info ring-offset-2 ring-offset-background",
+                            isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
+                          )}
+                        >
+                          <MemoizedMessageBubble
+                            message={turn.message}
+                            onOpenFile={onOpenFile}
+                            onOpenUrl={onOpenUrl}
+                          />
+                        </div>
                       )
                     }
 
@@ -736,7 +1233,15 @@ export function ChatDisplay({
                       // Interactive only if no user message follows
                       const isAuthInteractive = !turns.slice(index + 1).some(t => t.type === 'user')
                       return (
-                        <div key={`auth-${turn.message.id}`} className="mt-2">
+                        <div
+                          key={turnKey}
+                          ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                          className={cn(
+                            "mt-2 rounded-lg transition-all duration-200",
+                            isCurrentMatch && "ring-2 ring-info ring-offset-2 ring-offset-background",
+                            isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
+                          )}
+                        >
                           <MemoizedAuthRequestCard
                             message={turn.message}
                             sessionId={session.id}
@@ -752,8 +1257,16 @@ export function ChatDisplay({
 
                     // Assistant turns - render with TurnCard (buffered streaming)
                     return (
+                      <div
+                        key={turnKey}
+                        ref={el => { if (el) turnRefs.current.set(turnKey, el); else turnRefs.current.delete(turnKey) }}
+                        className={cn(
+                          "rounded-lg transition-all duration-200",
+                          isCurrentMatch && "ring-2 ring-info ring-offset-2 ring-offset-background",
+                          isAnyMatch && !isCurrentMatch && "ring-1 ring-info/30"
+                        )}
+                      >
                       <TurnCard
-                        key={`turn-${turn.turnId}`}
                         sessionId={session.id}
                         sessionFolderPath={session.sessionFolderPath}
                         turnId={turn.turnId}
@@ -789,11 +1302,12 @@ export function ChatDisplay({
                           }))
                         }}
                         onPopOut={(text) => {
-                          // Open response text in markdown overlay
+                          // Open raw markdown source in code viewer
                           setOverlayState({
                             type: 'markdown',
                             content: text,
                             title: 'Response Preview',
+                            forceCodeView: true,
                           })
                         }}
                         onOpenDetails={() => {
@@ -806,33 +1320,19 @@ export function ChatDisplay({
                           })
                         }}
                         onOpenActivityDetails={(activity) => {
-                          // Edit/Write tool → Multi-file diff overlay (ungrouped, focused on this change)
-                          if (activity.toolName === 'Edit' || activity.toolName === 'Write') {
-                            // Collect all Edit/Write activities from this turn for context
-                            const changes: FileChange[] = []
-                            for (const a of turn.activities) {
-                              const actInput = a.toolInput as Record<string, unknown> | undefined
-                              if (a.toolName === 'Edit' && actInput) {
-                                changes.push({
-                                  id: a.id,
-                                  filePath: (actInput.file_path as string) || 'unknown',
-                                  toolType: 'Edit',
-                                  original: (actInput.old_string as string) || '',
-                                  modified: (actInput.new_string as string) || '',
-                                  error: a.error || undefined,
-                                })
-                              } else if (a.toolName === 'Write' && actInput) {
-                                changes.push({
-                                  id: a.id,
-                                  filePath: (actInput.file_path as string) || 'unknown',
-                                  toolType: 'Write',
-                                  original: '',
-                                  modified: (actInput.content as string) || '',
-                                  error: a.error || undefined,
-                                })
-                              }
-                            }
+                          // Write tool for .md/.txt → Document overlay (rendered markdown)
+                          // rather than multi-diff, since these are better viewed as formatted documents
+                          const isDocumentWrite = activity.toolName === 'Write' && (() => {
+                            const actInput = activity.toolInput as Record<string, unknown> | undefined
+                            const fp = (actInput?.file_path as string) || ''
+                            const ext = fp.split('.').pop()?.toLowerCase()
+                            return ext === 'md' || ext === 'txt'
+                          })()
 
+                          // Edit/Write tool → Multi-file diff overlay (ungrouped, focused on this change)
+                          // Exception: Write to .md/.txt files goes to document overlay instead
+                          if ((activity.toolName === 'Edit' || activity.toolName === 'Write') && !isDocumentWrite) {
+                            const changes = collectFileChanges(turn.activities)
                             if (changes.length > 0) {
                               setOverlayState({
                                 type: 'multi-diff',
@@ -850,31 +1350,7 @@ export function ChatDisplay({
                           a.toolName === 'Edit' || a.toolName === 'Write'
                         )}
                         onOpenMultiFileDiff={() => {
-                          // Collect all Edit/Write activities from this turn
-                          const changes: FileChange[] = []
-                          for (const a of turn.activities) {
-                            const input = a.toolInput as Record<string, unknown> | undefined
-                            if (a.toolName === 'Edit' && input) {
-                              changes.push({
-                                id: a.id,
-                                filePath: (input.file_path as string) || 'unknown',
-                                toolType: 'Edit',
-                                original: (input.old_string as string) || '',
-                                modified: (input.new_string as string) || '',
-                                error: a.error || undefined,
-                              })
-                            } else if (a.toolName === 'Write' && input) {
-                              changes.push({
-                                id: a.id,
-                                filePath: (input.file_path as string) || 'unknown',
-                                toolType: 'Write',
-                                original: '',
-                                modified: (input.content as string) || '',
-                                error: a.error || undefined,
-                              })
-                            }
-                          }
-
+                          const changes = collectFileChanges(turn.activities)
                           if (changes.length > 0) {
                             setOverlayState({
                               type: 'multi-diff',
@@ -884,6 +1360,7 @@ export function ChatDisplay({
                           }
                         }}
                       />
+                      </div>
                     )
                   })}
                     </motion.div>
@@ -1013,7 +1490,6 @@ export function ChatDisplay({
           numLines={overlayData.numLines}
           theme={isDark ? 'dark' : 'light'}
           error={overlayData.error}
-          onOpenFile={onOpenFile}
         />
       )}
 
@@ -1026,7 +1502,6 @@ export function ChatDisplay({
           consolidated={overlayState.consolidated}
           focusedChangeId={overlayState.focusedChangeId}
           theme={isDark ? 'dark' : 'light'}
-          onOpenFile={onOpenFile}
           diffViewerSettings={diffViewerSettings}
           onDiffViewerSettingsChange={handleDiffViewerSettingsChange}
         />
@@ -1043,6 +1518,7 @@ export function ChatDisplay({
           toolType={overlayData.toolType}
           description={overlayData.description}
           theme={isDark ? 'dark' : 'light'}
+          error={overlayData.error}
         />
       )}
 
@@ -1058,15 +1534,43 @@ export function ChatDisplay({
         />
       )}
 
-      {/* Markdown preview overlay (pop-out, turn details) - renders markdown properly */}
-      {overlayState?.type === 'markdown' && (
+      {/* Document overlay (Write tool → .md/.txt files) — rendered markdown with tool badge */}
+      {overlayData?.type === 'document' && (
         <DocumentFormattedMarkdownOverlay
-          isOpen={true}
+          isOpen={!!overlayState}
           onClose={handleCloseOverlay}
-          content={overlayState.content}
+          content={overlayData.content}
+          filePath={overlayData.filePath}
+          typeBadge={{ icon: PenLine, label: overlayData.toolName, variant: 'write' }}
           onOpenUrl={onOpenUrl}
           onOpenFile={onOpenFile}
+          error={overlayData.error}
         />
+      )}
+
+      {/* Markdown preview overlay (pop-out, turn details) */}
+      {/* forceCodeView: show raw markdown source in code viewer (used by "View as Markdown" button) */}
+      {/* otherwise: render formatted markdown (used by turn details, etc.) */}
+      {overlayState?.type === 'markdown' && (
+        overlayState.forceCodeView ? (
+          <CodePreviewOverlay
+            isOpen={true}
+            onClose={handleCloseOverlay}
+            content={overlayState.content}
+            filePath="response.md"
+            language="markdown"
+            mode="read"
+            theme={isDark ? 'dark' : 'light'}
+          />
+        ) : (
+          <DocumentFormattedMarkdownOverlay
+            isOpen={true}
+            onClose={handleCloseOverlay}
+            content={overlayState.content}
+            onOpenUrl={onOpenUrl}
+            onOpenFile={onOpenFile}
+          />
+        )
       )}
 
       {/* Generic overlay for unknown tool types - route markdown to fullscreen viewer */}
@@ -1078,6 +1582,7 @@ export function ChatDisplay({
             content={overlayData.content}
             onOpenUrl={onOpenUrl}
             onOpenFile={onOpenFile}
+            error={overlayData.error}
           />
         ) : (
           <GenericOverlay
@@ -1086,12 +1591,13 @@ export function ChatDisplay({
             content={overlayData.content}
             title={overlayData.title}
             theme={isDark ? 'dark' : 'light'}
+            error={overlayData.error}
           />
         )
       )}
     </div>
   )
-}
+})
 
 /**
  * MessageBubble - Renders a single message based on its role

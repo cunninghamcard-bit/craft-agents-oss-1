@@ -46,13 +46,10 @@ export default function LabelsSettingsPage() {
   const labelsEditConfig = getEditConfig('edit-labels', rootPath)
   const autoRulesEditConfig = getEditConfig('edit-auto-rules', rootPath)
 
-  // Secondary action: open the labels config file directly in default editor
+  // Secondary action: open the labels config file directly in system editor
   const editFileAction = rootPath ? {
     label: 'Edit File',
-    onClick: () => {
-      const configPath = `${rootPath}/labels/config.json`
-      window.electronAPI?.openFile(configPath)
-    },
+    filePath: `${rootPath}/labels/config.json`,
   } : undefined
 
   return (

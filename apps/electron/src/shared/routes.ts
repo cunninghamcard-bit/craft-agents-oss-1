@@ -144,14 +144,14 @@ export const routes = {
         ? `sources/local/source/${sourceSlug}` as const
         : 'sources/local' as const,
 
-    /** Skills view (skills navigator) */
-    skills: (skillSlug?: string) =>
-      skillSlug
-        ? `skills/skill/${skillSlug}` as const
-        : 'skills' as const,
+    /** Skills view (skills navigator). Pass a slug string for a local skill detail view. */
+    skills: (skillSlug?: string) => {
+      if (!skillSlug) return 'skills' as const
+      return `skills/skill/${skillSlug}` as const
+    },
 
     /** Settings view (settings navigator) */
-    settings: (subpage?: 'app' | 'workspace' | 'permissions' | 'labels' | 'shortcuts' | 'preferences') =>
+    settings: (subpage?: 'app' | 'appearance' | 'input' | 'workspace' | 'permissions' | 'labels' | 'shortcuts' | 'preferences') =>
       subpage && subpage !== 'app'
         ? `settings/${subpage}` as const
         : 'settings' as const,

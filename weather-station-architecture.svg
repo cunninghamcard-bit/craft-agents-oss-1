@@ -1,0 +1,174 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="730" viewBox="0 0 1400 730">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700');
+    text { font-family: 'Inter', Helvetica, sans-serif; }
+  </style>
+
+  <!-- Background -->
+  <rect width="1400" height="730" fill="#FFFFFF"/>
+
+  <!-- ==================== TITLE ==================== -->
+  <text x="700" y="52" text-anchor="middle" font-weight="700" font-size="24" fill="#18181B">Weather Station Network</text>
+  <text x="700" y="74" text-anchor="middle" font-weight="400" font-size="12" fill="#A1A1AA">System Architecture</text>
+
+  <!-- ==================== MONITORING LAYER ==================== -->
+  <text x="70" y="101" font-weight="600" font-size="8" fill="#A1A1AA">MONITORING</text>
+  <line x1="152" y1="105" x2="1330" y2="105" stroke="#D4D4D8" stroke-width="0.5"/>
+
+  <!-- Weather Dashboard (outer box, left column) -->
+  <rect x="70" y="120" width="820" height="210" fill="#FFFFFF" stroke="#D4D4D8" stroke-width="1"/>
+  <rect x="70" y="120" width="820" height="34" fill="#F4F4F5" stroke="#D4D4D8" stroke-width="1"/>
+  <text x="84" y="142" font-weight="600" font-size="11" fill="#27272A">Weather Dashboard</text>
+
+  <!-- Inner: Frontend -->
+  <rect x="86" y="166" width="380" height="150" fill="#FAFAFA" stroke="#E4E4E7" stroke-width="0.75"/>
+  <text x="96" y="184" font-weight="600" font-size="9.5" fill="#52525B">Frontend</text>
+  <text x="96" y="202" font-weight="400" font-size="8.5" fill="#71717A">Real-time Map View</text>
+  <text x="96" y="217" font-weight="400" font-size="8.5" fill="#71717A">Historical Charts</text>
+  <text x="96" y="232" font-weight="400" font-size="8.5" fill="#71717A">Alert Dashboard</text>
+  <text x="96" y="247" font-weight="400" font-size="8.5" fill="#71717A">Station Management</text>
+
+  <!-- Inner: API Server -->
+  <rect x="482" y="166" width="394" height="150" fill="#FAFAFA" stroke="#E4E4E7" stroke-width="0.75"/>
+  <text x="492" y="184" font-weight="600" font-size="9.5" fill="#52525B">API Server</text>
+  <text x="492" y="202" font-weight="400" font-size="8.5" fill="#71717A">REST Endpoints</text>
+  <text x="492" y="217" font-weight="400" font-size="8.5" fill="#71717A">WebSocket Streams</text>
+  <text x="492" y="232" font-weight="400" font-size="8.5" fill="#71717A">Authentication</text>
+  <text x="492" y="247" font-weight="400" font-size="8.5" fill="#71717A">Rate Limiting</text>
+
+  <!-- IPC arrow: Frontend → API Server (smaller 3px arrows for internal) -->
+  <line x1="466" y1="241" x2="478.4" y2="241" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="478.4,238 478.4,244 482,241" fill="#71717A"/>
+  <text x="469" y="238" font-weight="400" font-size="7" fill="#A1A1AA">REST</text>
+
+  <!-- Mobile App (outer box, right column) -->
+  <rect x="940" y="140" width="390" height="170" fill="#FFFFFF" stroke="#D4D4D8" stroke-width="1"/>
+  <rect x="940" y="140" width="390" height="34" fill="#F4F4F5" stroke="#D4D4D8" stroke-width="1"/>
+  <text x="954" y="162" font-weight="600" font-size="11" fill="#27272A">Mobile App</text>
+
+  <!-- Inner: iOS / Android -->
+  <rect x="956" y="186" width="175" height="110" fill="#FAFAFA" stroke="#E4E4E7" stroke-width="0.75"/>
+  <text x="966" y="204" font-weight="600" font-size="9.5" fill="#52525B">iOS / Android</text>
+  <text x="966" y="222" font-weight="400" font-size="8.5" fill="#71717A">Push Notifications</text>
+  <text x="966" y="237" font-weight="400" font-size="8.5" fill="#71717A">Location Services</text>
+  <text x="966" y="252" font-weight="400" font-size="8.5" fill="#71717A">Offline Cache</text>
+
+  <!-- Inner: Widgets -->
+  <rect x="1139" y="186" width="175" height="110" fill="#FAFAFA" stroke="#E4E4E7" stroke-width="0.75"/>
+  <text x="1149" y="204" font-weight="600" font-size="9.5" fill="#52525B">Widgets</text>
+  <text x="1149" y="222" font-weight="400" font-size="8.5" fill="#71717A">Home Screen</text>
+  <text x="1149" y="237" font-weight="400" font-size="8.5" fill="#71717A">Watch Complication</text>
+  <text x="1149" y="252" font-weight="400" font-size="8.5" fill="#71717A">Lock Screen</text>
+
+  <!-- Connector: Dashboard right edge → Mobile App left edge (horizontal) -->
+  <line x1="890" y1="225" x2="935.2" y2="225" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="935.2,221 935.2,229 940,225" fill="#71717A"/>
+
+  <!-- ==================== DATA PROCESSING LAYER ==================== -->
+  <text x="70" y="358" font-weight="600" font-size="8" fill="#A1A1AA">DATA PROCESSING</text>
+  <line x1="177" y1="362" x2="1330" y2="362" stroke="#D4D4D8" stroke-width="0.5"/>
+
+  <!-- Processing Pipeline (outer box, full width) -->
+  <rect x="70" y="378" width="1260" height="120" fill="#FFFFFF" stroke="#D4D4D8" stroke-width="1"/>
+  <rect x="70" y="378" width="1260" height="34" fill="#F4F4F5" stroke="#D4D4D8" stroke-width="1"/>
+  <text x="84" y="400" font-weight="600" font-size="11" fill="#27272A">Processing Pipeline</text>
+
+  <!-- Module pills: 6 across -->
+  <rect x="82" y="424" width="196" height="36" fill="#F4F4F5" stroke="#E4E4E7" stroke-width="0.5"/>
+  <text x="180" y="446" text-anchor="middle" font-weight="500" font-size="8.5" fill="#52525B">Ingestion</text>
+
+  <rect x="286" y="424" width="196" height="36" fill="#F4F4F5" stroke="#E4E4E7" stroke-width="0.5"/>
+  <text x="384" y="446" text-anchor="middle" font-weight="500" font-size="8.5" fill="#52525B">Validation</text>
+
+  <rect x="490" y="424" width="196" height="36" fill="#F4F4F5" stroke="#E4E4E7" stroke-width="0.5"/>
+  <text x="588" y="446" text-anchor="middle" font-weight="500" font-size="8.5" fill="#52525B">Normalization</text>
+
+  <rect x="694" y="424" width="196" height="36" fill="#F4F4F5" stroke="#E4E4E7" stroke-width="0.5"/>
+  <text x="792" y="446" text-anchor="middle" font-weight="500" font-size="8.5" fill="#52525B">Aggregation</text>
+
+  <rect x="898" y="424" width="196" height="36" fill="#F4F4F5" stroke="#E4E4E7" stroke-width="0.5"/>
+  <text x="996" y="446" text-anchor="middle" font-weight="500" font-size="8.5" fill="#52525B">Prediction</text>
+
+  <rect x="1102" y="424" width="196" height="36" fill="#F4F4F5" stroke="#E4E4E7" stroke-width="0.5"/>
+  <text x="1200" y="446" text-anchor="middle" font-weight="500" font-size="8.5" fill="#52525B">Alerting</text>
+
+  <!-- Context text below pills -->
+  <text x="82" y="480" font-weight="400" font-size="7.5" fill="#A1A1AA">Six-stage pipeline processing incoming sensor data with configurable thresholds and ML-based weather prediction</text>
+
+  <!-- ==================== SENSOR NETWORK LAYER ==================== -->
+  <text x="70" y="522" font-weight="600" font-size="8" fill="#A1A1AA">SENSOR NETWORK</text>
+  <line x1="168" y1="526" x2="1330" y2="526" stroke="#D4D4D8" stroke-width="0.5"/>
+
+  <!-- 4 sensor boxes: box_w = (1260 - 54) / 4 = 301.5, gap = 18 -->
+
+  <!-- Temperature Station -->
+  <rect x="70" y="542" width="301.5" height="130" fill="#FFFFFF" stroke="#D4D4D8" stroke-width="1"/>
+  <rect x="70" y="542" width="301.5" height="30" fill="#F4F4F5" stroke="#D4D4D8" stroke-width="1"/>
+  <text x="84" y="561" font-weight="600" font-size="11" fill="#27272A">Temperature Station</text>
+  <text x="84" y="592" font-weight="400" font-size="8.5" fill="#71717A">DHT22 Sensor Array</text>
+  <text x="84" y="607" font-weight="400" font-size="8.5" fill="#71717A">Soil Thermometer</text>
+  <text x="84" y="622" font-weight="400" font-size="8.5" fill="#71717A">MQTT Telemetry</text>
+  <text x="84" y="637" font-weight="400" font-size="8.5" fill="#71717A">Solar Powered</text>
+
+  <!-- Wind Station -->
+  <rect x="389.5" y="542" width="301.5" height="130" fill="#FFFFFF" stroke="#D4D4D8" stroke-width="1"/>
+  <rect x="389.5" y="542" width="301.5" height="30" fill="#F4F4F5" stroke="#D4D4D8" stroke-width="1"/>
+  <text x="403.5" y="561" font-weight="600" font-size="11" fill="#27272A">Wind Station</text>
+  <text x="403.5" y="592" font-weight="400" font-size="8.5" fill="#71717A">Anemometer</text>
+  <text x="403.5" y="607" font-weight="400" font-size="8.5" fill="#71717A">Wind Vane</text>
+  <text x="403.5" y="622" font-weight="400" font-size="8.5" fill="#71717A">Barometric Pressure</text>
+  <text x="403.5" y="637" font-weight="400" font-size="8.5" fill="#71717A">LoRa Radio</text>
+
+  <!-- Rain Gauge -->
+  <rect x="709" y="542" width="301.5" height="130" fill="#FFFFFF" stroke="#D4D4D8" stroke-width="1"/>
+  <rect x="709" y="542" width="301.5" height="30" fill="#F4F4F5" stroke="#D4D4D8" stroke-width="1"/>
+  <text x="723" y="561" font-weight="600" font-size="11" fill="#27272A">Rain Gauge</text>
+  <text x="723" y="592" font-weight="400" font-size="8.5" fill="#71717A">Tipping Bucket</text>
+  <text x="723" y="607" font-weight="400" font-size="8.5" fill="#71717A">UV Index Sensor</text>
+  <text x="723" y="622" font-weight="400" font-size="8.5" fill="#71717A">Humidity Probe</text>
+  <text x="723" y="637" font-weight="400" font-size="8.5" fill="#71717A">Zigbee Mesh</text>
+
+  <!-- Air Quality Monitor -->
+  <rect x="1028.5" y="542" width="301.5" height="130" fill="#FFFFFF" stroke="#D4D4D8" stroke-width="1"/>
+  <rect x="1028.5" y="542" width="301.5" height="30" fill="#F4F4F5" stroke="#D4D4D8" stroke-width="1"/>
+  <text x="1042.5" y="561" font-weight="600" font-size="11" fill="#27272A">Air Quality Monitor</text>
+  <text x="1042.5" y="592" font-weight="400" font-size="8.5" fill="#71717A">PM2.5 / PM10 Sensor</text>
+  <text x="1042.5" y="607" font-weight="400" font-size="8.5" fill="#71717A">CO₂ Detector</text>
+  <text x="1042.5" y="622" font-weight="400" font-size="8.5" fill="#71717A">VOC Analyzer</text>
+  <text x="1042.5" y="637" font-weight="400" font-size="8.5" fill="#71717A">WiFi Direct</text>
+
+  <!-- ==================== CONNECTORS ==================== -->
+
+  <!-- Dashboard bottom center → Pipeline top (solid vertical) -->
+  <line x1="480" y1="330" x2="480" y2="373.2" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="476,373.2 484,373.2 480,378" fill="#71717A"/>
+
+  <!-- Mobile App bottom → Pipeline top (solid vertical) -->
+  <line x1="1135" y1="310" x2="1135" y2="373.2" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="1131,373.2 1139,373.2 1135,378" fill="#71717A"/>
+
+  <!-- Pipeline bottom → Temperature Station top -->
+  <line x1="220.75" y1="498" x2="220.75" y2="537.2" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="216.75,537.2 224.75,537.2 220.75,542" fill="#71717A"/>
+
+  <!-- Pipeline bottom → Wind Station top -->
+  <line x1="540.25" y1="498" x2="540.25" y2="537.2" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="536.25,537.2 544.25,537.2 540.25,542" fill="#71717A"/>
+
+  <!-- Pipeline bottom → Rain Gauge top -->
+  <line x1="859.75" y1="498" x2="859.75" y2="537.2" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="855.75,537.2 863.75,537.2 859.75,542" fill="#71717A"/>
+
+  <!-- Pipeline bottom → Air Quality Monitor top -->
+  <line x1="1179.25" y1="498" x2="1179.25" y2="537.2" stroke="#A1A1AA" stroke-width="0.75"/>
+  <polygon points="1175.25,537.2 1183.25,537.2 1179.25,542" fill="#71717A"/>
+
+  <!-- Dashed connector: Mobile App right edge → Air Quality top (deployment/hosting) -->
+  <!-- Orthogonal route: right stub, down, left to target center, down -->
+  <polyline points="1330,225 1350,225 1350,520 1179.25,520 1179.25,537.2"
+            stroke="#A1A1AA" stroke-width="0.75" fill="none" stroke-dasharray="4 4"/>
+
+  <!-- ==================== FOOTER ==================== -->
+  <text x="700" y="706" text-anchor="middle" font-weight="400" font-size="8" fill="#A1A1AA">Weather Station Network — Neighborhood-scale environmental monitoring infrastructure</text>
+
+</svg>

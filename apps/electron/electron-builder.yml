@@ -16,8 +16,12 @@ files:
   - "!dist/renderer/src/**"
   - "!**/*.map"
   - package.json
-  # Documentation assets loaded at runtime by packages/shared/src/docs/index.ts
+  # Bundled assets loaded at runtime via getBundledAssetsDir()
   - dist/assets/docs/**/*
+  - dist/assets/tool-icons/**/*
+  - dist/assets/themes/**/*
+  - dist/assets/permissions/**/*
+  - dist/assets/config-defaults.json
   # Include SDK for subprocess execution
   - node_modules/@anthropic-ai/claude-agent-sdk/**/*
   # Include network interceptor for API error capture and MCP schema injection

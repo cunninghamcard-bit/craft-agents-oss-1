@@ -2,13 +2,14 @@
  * CodePreviewOverlay - Overlay for code file preview (Read/Write tools)
  *
  * Uses PreviewOverlay for presentation and ShikiCodeViewer for syntax highlighting.
+ * File path badge provides "Open" / "Reveal in Finder" via PlatformContext.
  */
 
 import * as React from 'react'
 import { BookOpen, PenLine } from 'lucide-react'
 import { PreviewOverlay } from './PreviewOverlay'
+import { ContentFrame } from './ContentFrame'
 import { ShikiCodeViewer } from '../code-viewer/ShikiCodeViewer'
-import { truncateFilePath } from '../code-viewer/language-map'
 
 export interface CodePreviewOverlayProps {
   /** Whether the overlay is visible */
@@ -33,8 +34,6 @@ export interface CodePreviewOverlayProps {
   theme?: 'light' | 'dark'
   /** Error message if tool failed */
   error?: string
-  /** Callback to open file in external editor */
-  onOpenFile?: (filePath: string) => void
   /** Render inline without dialog (for playground) */
   embedded?: boolean
 }
@@ -51,7 +50,6 @@ export function CodePreviewOverlay({
   numLines,
   theme = 'light',
   error,
-  onOpenFile,
   embedded,
 }: CodePreviewOverlayProps) {
   // Build subtitle with line info
@@ -65,26 +63,28 @@ export function CodePreviewOverlay({
       isOpen={isOpen}
       onClose={onClose}
       theme={theme}
-      badge={{
+      typeBadge={{
         icon: mode === 'write' ? PenLine : BookOpen,
         label: mode === 'write' ? 'Write' : 'Read',
         variant: mode === 'write' ? 'amber' : 'blue',
       }}
-      title={truncateFilePath(filePath)}
-      onTitleClick={onOpenFile ? () => onOpenFile(filePath) : undefined}
+      filePath={filePath}
       subtitle={subtitle}
       error={error ? { label: mode === 'write' ? 'Write Failed' : 'Read Failed', message: error } : undefined}
       embedded={embedded}
+      className="bg-foreground-3"
     >
-      <div className="h-full">
-        <ShikiCodeViewer
-          code={content}
-          filePath={filePath}
-          language={language}
-          startLine={startLine}
-          theme={theme}
-        />
-      </div>
+      <ContentFrame title="Code" fitContent minWidth={850}>
+        <div>
+          <ShikiCodeViewer
+            code={content}
+            filePath={filePath}
+            language={language}
+            startLine={startLine}
+            theme={theme}
+          />
+        </div>
+      </ContentFrame>
     </PreviewOverlay>
   )
 }

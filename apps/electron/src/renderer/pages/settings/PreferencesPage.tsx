@@ -180,12 +180,6 @@ export default function PreferencesPage() {
     setFormState(prev => ({ ...prev, [field]: value }))
   }, [])
 
-  // Handle opening preferences file in editor
-  const handleEditPreferences = useCallback(async () => {
-    if (!preferencesPath) return
-    await window.electronAPI.openFile(preferencesPath)
-  }, [preferencesPath])
-
   if (isLoading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -270,7 +264,7 @@ export default function PreferencesPage() {
                   {...getEditConfig('preferences-notes', preferencesPath)}
                   secondaryAction={{
                     label: 'Edit File',
-                    onClick: handleEditPreferences,
+                    filePath: preferencesPath!,
                   }}
                 />
               ) : null

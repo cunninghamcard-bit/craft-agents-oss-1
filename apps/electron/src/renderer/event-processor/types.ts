@@ -79,18 +79,6 @@ export interface ToolResultEvent {
 }
 
 /**
- * Parent update event - deferred parent assignment
- * When multiple parent tools (Tasks) are active, we can't determine the correct
- * parent at tool_start time. This event assigns the correct parent once we know it.
- */
-export interface ParentUpdateEvent {
-  type: 'parent_update'
-  sessionId: string
-  toolUseId: string
-  parentToolUseId: string
-}
-
-/**
  * Complete event - agent loop finished
  */
 export interface CompleteEvent {
@@ -408,7 +396,6 @@ export type AgentEvent =
   | TextCompleteEvent
   | ToolStartEvent
   | ToolResultEvent
-  | ParentUpdateEvent
   | CompleteEvent
   | ErrorEvent
   | TypedErrorEvent

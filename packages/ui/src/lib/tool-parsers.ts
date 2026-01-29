@@ -143,6 +143,32 @@ export function parseGlobResult(
   return { output, description, command }
 }
 
+/**
+ * Parse WebSearch tool result to format embedded JSON links properly.
+ * Converts raw JSON arrays in "Links: [...]" to formatted markdown lists.
+ * Handles multiple Links sections in a single result.
+ */
+export function parseWebSearchResult(rawContent: string): string {
+  // Find all Links: [...] patterns (may span multiple lines)
+  // Use a function replacer to process each match individually
+  return rawContent.replace(/Links: (\[[\s\S]*?\])(?=\n|$)/g, (match, jsonArray) => {
+    try {
+      const links = JSON.parse(jsonArray) as Array<{ title: string; url: string }>
+
+      // Format as markdown list with domain prefix
+      const linksList = links.map(link => {
+        const domain = new URL(link.url).hostname.replace(/^www\./, '')
+        return `- [${domain} - ${link.title}](${link.url})`
+      }).join('\n')
+
+      return `**Links:**\n${linksList}`
+    } catch {
+      // If JSON parsing fails, wrap in code block instead
+      return `Links:\n\`\`\`json\n${jsonArray}\n\`\`\``
+    }
+  })
+}
+
 // ============================================================================
 // Overlay Data Types
 // ============================================================================
@@ -165,12 +191,14 @@ export interface TerminalOverlayData {
   exitCode?: number
   toolType: ToolType
   description: string
+  error?: string
 }
 
 export interface GenericOverlayData {
   type: 'generic'
   content: string
   title: string
+  error?: string
 }
 
 export interface JSONOverlayData {
@@ -181,7 +209,17 @@ export interface JSONOverlayData {
   error?: string
 }
 
-export type OverlayData = CodeOverlayData | TerminalOverlayData | GenericOverlayData | JSONOverlayData
+/** Rendered markdown document — used for Write tool results on .md/.txt files */
+export interface DocumentOverlayData {
+  type: 'document'
+  content: string
+  filePath: string
+  /** Tool that produced this content (e.g. "Write") — used for the header type badge */
+  toolName: string
+  error?: string
+}
+
+export type OverlayData = CodeOverlayData | TerminalOverlayData | GenericOverlayData | JSONOverlayData | DocumentOverlayData
 
 // ============================================================================
 // Main Extraction Function
@@ -216,12 +254,23 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     }
   }
 
-  // Write tool → Code overlay (write mode)
+  // Write tool → Document overlay for .md/.txt (rendered markdown), Code overlay for everything else
   if (toolName === 'write') {
+    const content = (input?.content as string) || rawContent
+    const ext = filePath.split('.').pop()?.toLowerCase()
+    if (ext === 'md' || ext === 'txt') {
+      return {
+        type: 'document',
+        filePath,
+        content,
+        toolName: 'Write',
+        error: activity.error,
+      }
+    }
     return {
       type: 'code',
       filePath,
-      content: (input?.content as string) || rawContent,
+      content,
       mode: 'write',
       error: activity.error,
     }
@@ -240,6 +289,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
       exitCode: parsed.exitCode,
       description: (input?.description as string) || activity.displayName || '',
       toolType: 'bash',
+      error: activity.error,
     }
   }
 
@@ -255,6 +305,7 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
       output: parsed.output,
       description: parsed.description,
       toolType: 'grep',
+      error: activity.error,
     }
   }
 
@@ -269,10 +320,23 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
       output: parsed.output,
       description: parsed.description,
       toolType: 'glob',
+      error: activity.error,
     }
   }
 
-  // Try to detect JSON content for unknown tools (MCP tools, WebSearch, WebFetch, etc.)
+  // WebSearch tool → Document overlay with formatted links
+  if (toolName === 'websearch') {
+    const formattedContent = parseWebSearchResult(rawContent)
+    return {
+      type: 'document',
+      filePath: 'Web Search Results',
+      content: formattedContent,
+      toolName: 'WebSearch',
+      error: activity.error,
+    }
+  }
+
+  // Try to detect JSON content for unknown tools (MCP tools, WebFetch, etc.)
   // JSON objects/arrays get interactive tree viewer, other content falls through to generic
   const trimmedContent = rawContent.trim()
   if ((trimmedContent.startsWith('{') && trimmedContent.endsWith('}')) ||
@@ -296,5 +360,6 @@ export function extractOverlayData(activity: ActivityItem): OverlayData | null {
     type: 'generic',
     content: rawContent || (input ? JSON.stringify(input, null, 2) : ''),
     title: activity.displayName || activity.toolName || 'Activity',
+    error: activity.error,
   }
 }

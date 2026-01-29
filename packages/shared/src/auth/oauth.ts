@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'http';
 import { URL } from 'url';
-import open from 'open';
 import { randomBytes, createHash } from 'crypto';
+import { openUrl } from '../utils/open-url.ts';
 import { generateCallbackPage } from './callback-page.ts';
 
 export interface OAuthConfig {
@@ -25,41 +25,6 @@ const CALLBACK_PORT_START = 8914;
 const CALLBACK_PORT_END = 8924;
 const CALLBACK_PATH = '/oauth/callback';
 const CLIENT_NAME = 'Craft Agent';
-
-/**
- * Find an available port in the configured range for the OAuth callback server.
- * Tries ports sequentially starting from CALLBACK_PORT_START.
- * Throws if all ports in the range are in use.
- */
-async function findAvailablePort(): Promise<number> {
-  for (let port = CALLBACK_PORT_START; port <= CALLBACK_PORT_END; port++) {
-    const isAvailable = await checkPortAvailable(port);
-    if (isAvailable) {
-      return port;
-    }
-  }
-  throw new Error(
-    `All OAuth callback ports (${CALLBACK_PORT_START}-${CALLBACK_PORT_END}) are in use. Please restart the application.`
-  );
-}
-
-/**
- * Check if a port is available by attempting to bind to it briefly.
- */
-function checkPortAvailable(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const testServer = createServer();
-    testServer.once('error', () => {
-      resolve(false);
-    });
-    testServer.once('listening', () => {
-      testServer.close(() => {
-        resolve(true);
-      });
-    });
-    testServer.listen(port);
-  });
-}
 
 // Generate PKCE code verifier and challenge
 function generatePKCE(): { verifier: string; challenge: string } {
@@ -239,19 +204,7 @@ export class CraftOAuth {
   async authenticate(): Promise<{ tokens: OAuthTokens; clientId: string }> {
     this.callbacks.onStatus('Fetching OAuth server configuration...');
 
-    // Find an available port first - this must happen before client registration
-    // since the redirect URI includes the port
-    let port: number;
-    try {
-      port = await findAvailablePort();
-      this.callbacks.onStatus(`Found available callback port: ${port}`);
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : 'Unknown error';
-      this.callbacks.onStatus(`Port allocation failed: ${msg}`);
-      throw error;
-    }
-
-    // Get server metadata
+    // 1. Get server metadata — no port dependency
     let metadata;
     try {
       metadata = await this.getServerMetadata();
@@ -262,7 +215,30 @@ export class CraftOAuth {
       throw error;
     }
 
-    // Register client if endpoint available
+    // 2. Generate PKCE and state — no dependencies
+    const pkce = generatePKCE();
+    const state = generateState();
+    this.callbacks.onStatus('Generated PKCE challenge and state');
+
+    // 3. Start callback server — binds directly with retry, returns the bound port.
+    //    This must happen before client registration because the redirect_uri
+    //    includes the port, and we need the *actually bound* port (not a checked-
+    //    then-released one) to avoid a TOCTOU race condition.
+    this.callbacks.onStatus('Starting callback server...');
+    let port: number;
+    let codePromise: Promise<string>;
+    try {
+      const server = await this.startCallbackServer(state);
+      port = server.port;
+      codePromise = server.codePromise;
+      this.callbacks.onStatus(`Callback server listening on port ${port}`);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      this.callbacks.onStatus(`Failed to start callback server: ${msg}`);
+      throw error;
+    }
+
+    // 4. Register client if endpoint available — now has the bound port
     let clientId: string;
     if (metadata.registration_endpoint) {
       this.callbacks.onStatus(`Registering client at ${metadata.registration_endpoint}...`);
@@ -271,6 +247,8 @@ export class CraftOAuth {
         clientId = client.client_id;
         this.callbacks.onStatus(`Registered as client: ${clientId}`);
       } catch (error) {
+        // Clean up the callback server if registration fails
+        this.stopServer();
         const msg = error instanceof Error ? error.message : 'Unknown error';
         this.callbacks.onStatus(`Client registration failed: ${msg}`);
         throw error;
@@ -281,13 +259,8 @@ export class CraftOAuth {
       this.callbacks.onStatus(`Using default client ID: ${clientId}`);
     }
 
-    // Generate PKCE and state
-    const pkce = generatePKCE();
-    const state = generateState();
+    // 5. Build authorization URL
     const redirectUri = `http://localhost:${port}${CALLBACK_PATH}`;
-    this.callbacks.onStatus('Generated PKCE challenge and state');
-
-    // Build authorization URL
     const authUrl = new URL(metadata.authorization_endpoint);
     authUrl.searchParams.set('response_type', 'code');
     authUrl.searchParams.set('client_id', clientId);
@@ -296,20 +269,16 @@ export class CraftOAuth {
     authUrl.searchParams.set('code_challenge', pkce.challenge);
     authUrl.searchParams.set('code_challenge_method', 'S256');
 
-    // Start local server to receive callback
-    this.callbacks.onStatus(`Starting callback server on port ${port}...`);
-    const codePromise = this.startCallbackServer(state, port);
-
-    // Open browser for authorization
+    // 6. Open browser for authorization
     this.callbacks.onStatus('Opening browser for authorization...');
-    await open(authUrl.toString());
+    await openUrl(authUrl.toString());
 
-    // Wait for the authorization code
+    // 7. Wait for the authorization code
     this.callbacks.onStatus('Waiting for you to authorize in browser...');
     const authCode = await codePromise;
     this.callbacks.onStatus('Authorization code received!');
 
-    // Exchange code for tokens
+    // 8. Exchange code for tokens
     this.callbacks.onStatus('Exchanging authorization code for tokens...');
     const tokens = await this.exchangeCodeForTokens(
       metadata.token_endpoint,
@@ -323,15 +292,37 @@ export class CraftOAuth {
     return { tokens, clientId };
   }
 
-  // Start local HTTP server to receive OAuth callback
-  private startCallbackServer(expectedState: string, port: number): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.stopServer();
-        reject(new Error('OAuth timeout - no callback received'));
-      }, 300000); // 5 minute timeout
+  /**
+   * Start the OAuth callback server by binding directly to a port in the range
+   * CALLBACK_PORT_START .. CALLBACK_PORT_END.
+   *
+   * Eliminates the TOCTOU race condition: the port returned is the port the
+   * server is actually listening on — there is no gap between checking and
+   * binding. On EADDRINUSE the candidate server is closed and the next port
+   * is tried.
+   *
+   * Returns immediately once the server is bound, with a `codePromise` that
+   * resolves when the OAuth callback delivers the authorization code.
+   */
+  private async startCallbackServer(
+    expectedState: string
+  ): Promise<{ port: number; codePromise: Promise<string> }> {
+    // Set up the deferred code promise — resolved/rejected by the request handler
+    let resolveCode: (code: string) => void;
+    let rejectCode: (error: Error) => void;
+    const codePromise = new Promise<string>((resolve, reject) => {
+      resolveCode = resolve;
+      rejectCode = reject;
+    });
 
-      this.server = createServer((req, res) => {
+    const timeout = setTimeout(() => {
+      this.stopServer();
+      rejectCode(new Error('OAuth timeout - no callback received'));
+    }, 300000); // 5 minute timeout
+
+    // Try binding on each candidate port in the range
+    for (let port = CALLBACK_PORT_START; port <= CALLBACK_PORT_END; port++) {
+      const candidate = createServer((req, res) => {
         const url = new URL(req.url || '/', `http://localhost:${port}`);
 
         if (url.pathname === CALLBACK_PATH) {
@@ -348,7 +339,7 @@ export class CraftOAuth {
             }));
             clearTimeout(timeout);
             this.stopServer();
-            reject(new Error(`OAuth error: ${error}`));
+            rejectCode(new Error(`OAuth error: ${error}`));
             return;
           }
 
@@ -361,7 +352,7 @@ export class CraftOAuth {
             }));
             clearTimeout(timeout);
             this.stopServer();
-            reject(new Error('OAuth state mismatch'));
+            rejectCode(new Error('OAuth state mismatch'));
             return;
           }
 
@@ -374,7 +365,7 @@ export class CraftOAuth {
             }));
             clearTimeout(timeout);
             this.stopServer();
-            reject(new Error('No authorization code'));
+            rejectCode(new Error('No authorization code'));
             return;
           }
 
@@ -387,22 +378,47 @@ export class CraftOAuth {
 
           clearTimeout(timeout);
           this.stopServer();
-          resolve(code);
+          resolveCode(code);
         } else {
           res.writeHead(404);
           res.end('Not found');
         }
       });
 
-      this.server.listen(port, () => {
-        // Server started
-      });
+      try {
+        await new Promise<void>((resolve, reject) => {
+          candidate.once('error', reject);
+          candidate.listen(port, 'localhost', () => {
+            candidate.removeListener('error', reject);
+            resolve();
+          });
+        });
 
-      this.server.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(new Error(`Failed to start callback server: ${err.message}`));
-      });
-    });
+        // Bind succeeded — keep this server
+        this.server = candidate;
+        this.server.on('error', (err) => {
+          clearTimeout(timeout);
+          rejectCode(new Error(`Callback server error: ${err.message}`));
+        });
+        return { port, codePromise };
+      } catch (err: unknown) {
+        // Port in use — close the candidate and try the next one
+        candidate.close();
+        const isAddressInUse =
+          err instanceof Error && 'code' in err && (err as NodeJS.ErrnoException).code === 'EADDRINUSE';
+        if (!isAddressInUse) {
+          // Unexpected error — clean up and propagate
+          clearTimeout(timeout);
+          throw err instanceof Error ? err : new Error(String(err));
+        }
+      }
+    }
+
+    // All ports exhausted
+    clearTimeout(timeout);
+    throw new Error(
+      `All OAuth callback ports (${CALLBACK_PORT_START}-${CALLBACK_PORT_END}) are in use. Please restart the application.`
+    );
   }
 
   private stopServer(): void {
