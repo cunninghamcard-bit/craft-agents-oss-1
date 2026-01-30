@@ -10,13 +10,22 @@
 import * as React from 'react'
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
 import { GripHorizontal } from 'lucide-react'
+import { motion, AnimatePresence } from 'motion/react' // motion used for backdrop only
 import { Popover, PopoverTrigger, PopoverContent } from './popover'
 import { Button } from './button'
 import { cn } from '@/lib/utils'
 import { usePlatform } from '@craft-agent/ui'
 import type { ContentBadge, Session, CreateSessionOptions } from '../../../shared/types'
 import { useActiveWorkspace, useAppShellContext, useSession } from '@/context/AppShellContext'
+import { useEscapeInterrupt } from '@/context/EscapeInterruptContext'
 import { ChatDisplay } from '../app-shell/ChatDisplay'
+
+/** Rotating placeholders for compact mode input - short, action-oriented */
+const COMPACT_PLACEHOLDERS = [
+  'Just tell me what to change',
+  'Describe the update',
+  'What should I modify?',
+]
 
 /**
  * Context passed to the new chat session so the agent knows exactly
@@ -637,12 +646,16 @@ export function EditPopover({
   const { onOpenFile, onOpenUrl } = usePlatform()
   const workspace = useActiveWorkspace()
 
-  // Build placeholder: use override if provided, otherwise default to "change" wording
+  // Build placeholder: for inline execution use rotating array, otherwise build descriptive string
   // overridePlaceholder allows contexts like add-source/add-skill to say "add" instead of "change"
-  const basePlaceholder = overridePlaceholder ?? "Describe what you'd like to change..."
-  const placeholder = example
-    ? `${basePlaceholder.replace(/\.{3}$/, '')}, e.g., "${example}"`
-    : basePlaceholder
+  const placeholder = inlineExecution
+    ? COMPACT_PLACEHOLDERS
+    : (() => {
+        const basePlaceholder = overridePlaceholder ?? "Describe what you'd like to change..."
+        return example
+          ? `${basePlaceholder.replace(/\.{3}$/, '')}, e.g., "${example}"`
+          : basePlaceholder
+      })()
 
   // Support both controlled and uncontrolled modes:
   // - Uncontrolled (default): internal state manages open/close
@@ -685,10 +698,54 @@ export function EditPopover({
   // Use real session if available, otherwise stub
   const displaySession = inlineSession || stubSession
 
+  // Track processing state for close prevention and backdrop
+  const isProcessing = displaySession.isProcessing
+
+  // Use existing escape interrupt context for double-ESC flow
+  // This shows the "Press Esc again to interrupt" overlay in the input field
+  const { handleEscapePress } = useEscapeInterrupt()
+
   // Reset inline session when popover closes
   const resetInlineSession = useCallback(() => {
     setInlineSessionId(null)
   }, [])
+
+  // Stop/cancel generation for the inline session
+  const handleStopGeneration = useCallback(() => {
+    if (inlineSessionId && isProcessing) {
+      window.electronAPI.cancelProcessing(inlineSessionId, false)
+    }
+  }, [inlineSessionId, isProcessing])
+
+  // Handle ESC key during generation:
+  // Uses EscapeInterruptContext for double-ESC flow (shows overlay, then interrupts)
+  const handleEscapeKeyDown = useCallback((e: KeyboardEvent) => {
+    if (!isProcessing) {
+      // Not processing - allow normal close behavior
+      return
+    }
+
+    // Prevent default close behavior during processing
+    e.preventDefault()
+
+    // Use context's double-ESC handler
+    // Returns true if this is the second press (should interrupt)
+    const shouldInterrupt = handleEscapePress()
+    if (shouldInterrupt) {
+      handleStopGeneration()
+    }
+  }, [isProcessing, handleEscapePress, handleStopGeneration])
+
+  // Handle click outside during generation:
+  // Show the ESC overlay via context, prevent closing
+  const handleInteractOutside = useCallback((e: Event) => {
+    if (isProcessing) {
+      // Prevent close during processing
+      e.preventDefault()
+      // Show the ESC overlay so user knows how to cancel
+      handleEscapePress()
+    }
+  }, [isProcessing, handleEscapePress])
 
   // Drag state for movable popover
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 })
@@ -697,7 +754,7 @@ export function EditPopover({
   const popoverRef = useRef<HTMLDivElement>(null)
 
   // Resize state for dynamic sizing
-  const [containerSize, setContainerSize] = useState({ width: width || 400, height: 400 })
+  const [containerSize, setContainerSize] = useState({ width: width || 400, height: 480 })
   const [isResizing, setIsResizing] = useState(false)
   const resizeStartRef = useRef({ x: 0, y: 0, width: 0, height: 0 })
 
@@ -705,7 +762,7 @@ export function EditPopover({
   useEffect(() => {
     if (open) {
       setDragOffset({ x: 0, y: 0 })
-      setContainerSize({ width: width || 400, height: 400 })
+      setContainerSize({ width: width || 400, height: 480 })
     }
   }, [open, width])
 
@@ -811,12 +868,13 @@ export function EditPopover({
     }
 
     // Send message via App context (includes optimistic user message update)
+    // Pass badges to hide the <edit_request> XML metadata in the user message bubble
     if (sessionId) {
-      onSendMessage(sessionId, prompt)
+      onSendMessage(sessionId, prompt, undefined, undefined, badges)
     }
   }, [context, inlineSessionId, workspace?.id, model, systemPromptPreset, permissionMode, workingDirectory, onCreateSession, onSendMessage])
 
-  // Legacy mode: opens new window with message
+  // Legacy mode: navigates to chat in the same window
   const handleLegacySendMessage = useCallback((message: string) => {
     const { prompt, badges } = buildEditPrompt(context, message)
     const encodedInput = encodeURIComponent(prompt)
@@ -825,61 +883,87 @@ export function EditPopover({
     const workdirParam = workingDirectory ? `&workdir=${encodeURIComponent(workingDirectory)}` : ''
     const modelParam = model ? `&model=${encodeURIComponent(model)}` : ''
     const systemPromptParam = systemPromptPreset ? `&systemPrompt=${encodeURIComponent(systemPromptPreset)}` : ''
-    const url = `craftagents://action/new-chat?window=focused&input=${encodedInput}&send=true&mode=${permissionMode}&badges=${encodedBadges}${workdirParam}${modelParam}${systemPromptParam}`
+    // Navigate in same window by omitting window=focused parameter
+    const url = `craftagents://action/new-chat?input=${encodedInput}&send=true&mode=${permissionMode}&badges=${encodedBadges}${workdirParam}${modelParam}${systemPromptParam}`
 
     window.electronAPI.openUrl(url)
     setOpen(false)
   }, [context, workingDirectory, model, systemPromptPreset, permissionMode, setOpen])
 
   return (
-    <Popover open={open} onOpenChange={setOpen} modal={modal}>
-      <PopoverTrigger asChild className={triggerClassName}>
-        {trigger}
-      </PopoverTrigger>
-      <PopoverContent
-          ref={popoverRef}
-          side={side}
-          align={align}
-          className="p-0 overflow-visible relative"
-          style={{
-            width: containerSize.width,
-            height: containerSize.height,
-            borderRadius: 16,
-            transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)`,
-          }}
-        >
-          {/* Drag handle */}
-          <div
-            onMouseDown={handleDragStart}
-            className={cn(
-              "flex items-center justify-center pt-2.5 pb-1.5 cursor-grab border-b border-border/30",
-              isDragging && "cursor-grabbing"
-            )}
-          >
-            <GripHorizontal className="w-4 h-4 text-muted-foreground/50" />
-          </div>
-
-          {/* Content area - always uses compact ChatDisplay */}
-          <div className="flex-1 flex flex-col" style={{ height: 'calc(100% - 34px)' }}>
-            <ChatDisplay
-              session={displaySession}
-              onSendMessage={inlineExecution ? handleInlineSendMessage : handleLegacySendMessage}
-              onOpenFile={onOpenFile || (() => {})}
-              onOpenUrl={onOpenUrl || (() => {})}
-              currentModel={currentModel}
-              onModelChange={setCurrentModel}
-              compactMode={true}
-              placeholder={placeholder}
-            />
-          </div>
-
-          {/* Bottom-right resize handle - invisible hit area */}
-          <div
-            onMouseDown={handleResizeStart}
-            className="absolute -bottom-2 -right-2 w-6 h-6 cursor-nwse-resize pointer-events-auto"
+    <>
+      {/* Full-screen backdrop - rendered BEHIND the popover during processing */}
+      <AnimatePresence>
+        {open && isProcessing && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.5, ease: 'easeInOut' }}
+            className="fixed inset-0 bg-black/5 z-40"
           />
-        </PopoverContent>
-    </Popover>
+        )}
+      </AnimatePresence>
+
+      <Popover open={open} onOpenChange={setOpen} modal={modal}>
+        <PopoverTrigger asChild className={triggerClassName}>
+          {trigger}
+        </PopoverTrigger>
+        <PopoverContent
+            side={side}
+            align={align}
+            className="p-0 overflow-visible"
+            style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}
+            onInteractOutside={handleInteractOutside}
+            onEscapeKeyDown={handleEscapeKeyDown}
+          >
+            {/* Container */}
+            <div
+              ref={popoverRef}
+              className="relative bg-foreground-2 overflow-hidden"
+              style={{
+                width: containerSize.width,
+                height: containerSize.height,
+                transform: `translate(${dragOffset.x}px, ${dragOffset.y}px)`,
+                borderRadius: 16,
+                boxShadow: '0 4px 24px rgba(0, 0, 0, 0.12), 0 0 0 1px rgba(0, 0, 0, 0.05)',
+              }}
+            >
+              {/* Drag handle - floating overlay */}
+              <div
+                onMouseDown={handleDragStart}
+                className={cn(
+                  "absolute top-0 left-1/2 -translate-x-1/2 z-50 px-4 py-2 cursor-grab rounded pointer-events-auto",
+                  isDragging && "cursor-grabbing"
+                )}
+              >
+                <GripHorizontal className="w-4 h-4 text-muted-foreground/30" />
+              </div>
+
+              {/* Content area - always uses compact ChatDisplay */}
+              <div className="flex-1 flex flex-col bg-foreground-2" style={{ height: '100%' }}>
+                <ChatDisplay
+                  session={displaySession}
+                  onSendMessage={inlineExecution ? handleInlineSendMessage : handleLegacySendMessage}
+                  onOpenFile={onOpenFile || (() => {})}
+                  onOpenUrl={onOpenUrl || (() => {})}
+                  currentModel={currentModel}
+                  onModelChange={setCurrentModel}
+                  compactMode={true}
+                  placeholder={placeholder}
+                  emptyStateLabel={context.label}
+                />
+              </div>
+
+              {/* Bottom-right resize handle - invisible hit area */}
+              <div
+                onMouseDown={handleResizeStart}
+                className="absolute -bottom-2 -right-2 w-6 h-6 cursor-nwse-resize pointer-events-auto z-50"
+              />
+            </div>
+          </PopoverContent>
+      </Popover>
+    </>
   )
 }
 

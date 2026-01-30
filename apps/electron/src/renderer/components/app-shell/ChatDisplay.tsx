@@ -176,7 +176,9 @@ interface ChatDisplayProps {
   /** Enable compact mode - hides non-essential UI elements for popover embedding */
   compactMode?: boolean
   /** Custom placeholder for input (used in compact mode for edit context) */
-  placeholder?: string
+  placeholder?: string | string[]
+  /** Label shown as empty state in compact mode (e.g., "Permission Settings") */
+  emptyStateLabel?: string
 }
 
 /**
@@ -417,6 +419,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Compact mode (for EditPopover embedding)
   compactMode = false,
   placeholder,
+  emptyStateLabel,
 }, ref) {
   // Input is only disabled when explicitly disabled (e.g., agent needs activation)
   // User can type during streaming - submitting will stop the stream and send
@@ -1259,6 +1262,13 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                       skipSmoothScrollUntilRef.current = Date.now() + 500
                     }}
                   />
+                  {/* Empty state for compact mode - inviting conversational prompt, centered in full popover */}
+                  {compactMode && turns.length === 0 && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center select-none gap-1 pointer-events-none">
+                      <span className="text-sm text-muted-foreground">What would you like to change?</span>
+                      <span className="text-xs text-muted-foreground/50">Just describe it — I'll handle the rest</span>
+                    </div>
+                  )}
                   {/* Load more indicator - shown when there are older messages */}
                   {hasMoreAbove && (
                     <div className="text-center text-muted-foreground/60 text-xs py-3 select-none">
@@ -1295,6 +1305,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                             message={turn.message}
                             onOpenFile={onOpenFile}
                             onOpenUrl={onOpenUrl}
+                            compactMode={compactMode}
                           />
                         </div>
                       )
@@ -1485,7 +1496,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           <div className={cn(
             CHAT_LAYOUT.maxWidth,
             "mx-auto w-full px-4 mt-1",
-            compactMode ? "pb-3" : "pb-4"
+            compactMode ? "pb-4" : "pb-4"
           )}>
             {/* Active option badges and tasks - positioned above input */}
             {!compactMode && (
@@ -1725,6 +1736,8 @@ interface MessageBubbleProps {
    * Callback to pop out message into a separate window
    */
   onPopOut?: (message: Message) => void
+  /** Compact mode - reduces padding for popover embedding */
+  compactMode?: boolean
 }
 
 /**
@@ -1783,6 +1796,7 @@ function MessageBubble({
   onOpenUrl,
   renderMode = 'minimal',
   onPopOut,
+  compactMode,
 }: MessageBubbleProps) {
   // === USER MESSAGE: Right-aligned bubble with attachments above ===
   if (message.role === 'user') {
@@ -1796,6 +1810,7 @@ function MessageBubble({
         ultrathink={message.ultrathink}
         onUrlClick={onOpenUrl}
         onFileClick={onOpenFile}
+        compactMode={compactMode}
       />
     )
   }
@@ -1929,6 +1944,7 @@ const MemoizedMessageBubble = React.memo(MessageBubble, (prev, next) => {
   return (
     prev.message.id === next.message.id &&
     prev.message.content === next.message.content &&
-    prev.message.role === next.message.role
+    prev.message.role === next.message.role &&
+    prev.compactMode === next.compactMode
   )
 })

@@ -1109,11 +1109,12 @@ function AppShellContent({
   const sessionMetaMap = useAtomValue(sessionMetaMapAtom)
 
   // Filter session metadata by active workspace
+  // Also exclude hidden sessions (mini-agent sessions) from all counts and lists
   const workspaceSessionMetas = useMemo(() => {
     const metas = Array.from(sessionMetaMap.values())
     return activeWorkspaceId
-      ? metas.filter(s => s.workspaceId === activeWorkspaceId)
-      : metas
+      ? metas.filter(s => s.workspaceId === activeWorkspaceId && !s.hidden)
+      : metas.filter(s => !s.hidden)
   }, [sessionMetaMap, activeWorkspaceId])
 
   // Count sessions by todo state (scoped to workspace)

@@ -390,6 +390,7 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       workingDirectory: workingDir,
       sdkCwd,
       model: header.model,
+      thinkingLevel: header.thinkingLevel,
       // Shared viewer state - must be included for persistence across app restarts
       sharedUrl: header.sharedUrl,
       sharedId: header.sharedId,
@@ -400,6 +401,8 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       lastFinalMessageId: header.lastFinalMessageId,
       // Explicit unread flag - single source of truth for NEW badge (state machine approach)
       hasUnread: header.hasUnread,
+      // Hidden flag for mini-agent sessions (not shown in session list)
+      hidden: header.hidden,
     };
   } catch {
     return null;

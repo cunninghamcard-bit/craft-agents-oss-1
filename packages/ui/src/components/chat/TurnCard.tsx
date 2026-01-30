@@ -1864,7 +1864,7 @@ export const TurnCard = React.memo(function TurnCard({
                     ))
                   )}
                   {/* Thinking/Buffering indicator - shown while waiting for response */}
-                  {isThinking && (
+                  {isThinking && !animateResponse && (
                     <motion.div
                       key="thinking"
                       initial={{ opacity: 0, x: -8 }}
@@ -1893,7 +1893,7 @@ export const TurnCard = React.memo(function TurnCard({
       )}
 
       {/* Standalone thinking indicator - when no activities but still working */}
-      {!hasActivities && isThinking && (
+      {!hasActivities && isThinking && !animateResponse && (
         <div className={cn("flex items-center gap-2 px-3 py-1.5 text-muted-foreground", SIZE_CONFIG.fontSize)}>
           <Spinner className={SIZE_CONFIG.spinnerSize} />
           <span>{isBuffering ? 'Preparing response...' : 'Thinking...'}</span>
