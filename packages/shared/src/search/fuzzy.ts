@@ -58,8 +58,10 @@ export function fuzzyFilter<T>(
 
   // Use sort order position as score (higher position = better match)
   // uFuzzy's sort() orders by relevance but doesn't expose scores directly
+  // Note: order contains indices into idxs, and idxs contains indices into items
+  // Both are guaranteed to be valid by uFuzzy's API contract
   return order.map((i, orderIndex) => ({
-    item: items[idxs[i]],
+    item: items[idxs[i]!]!,
     score: order.length - orderIndex, // Higher score for better matches
     ranges: info.ranges?.[i],
   }))

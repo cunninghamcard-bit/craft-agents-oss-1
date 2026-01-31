@@ -1914,6 +1914,7 @@ function AppShellContent({
               onNewChat={() => handleNewChat(true)}
               onNewWindow={() => window.electronAPI.menuNewWindow()}
               onOpenSettings={onOpenSettings}
+              onOpenSettingsSubpage={handleSettingsClick}
               onOpenKeyboardShortcuts={onOpenKeyboardShortcuts}
               onOpenStoredUserPreferences={onOpenStoredUserPreferences}
               onBack={goBack}

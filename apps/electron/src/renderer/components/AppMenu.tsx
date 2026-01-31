@@ -19,9 +19,11 @@ import {
   EDIT_MENU,
   VIEW_MENU,
   WINDOW_MENU,
+  SETTINGS_ITEMS,
   getShortcutDisplay,
 } from "../../shared/menu-schema"
-import type { MenuItem, MenuSection } from "../../shared/menu-schema"
+import type { MenuItem, MenuSection, SettingsMenuItem } from "../../shared/menu-schema"
+import { SETTINGS_ICONS } from "./icons/SettingsIcons"
 
 // Map of action handlers for menu items that need custom behavior
 type MenuActionHandlers = {
@@ -126,6 +128,8 @@ interface AppMenuProps {
   onNewChat: () => void
   onNewWindow?: () => void
   onOpenSettings: () => void
+  /** Navigate to a specific settings subpage */
+  onOpenSettingsSubpage: (subpage: SettingsMenuItem['id']) => void
   onOpenKeyboardShortcuts: () => void
   onOpenStoredUserPreferences: () => void
   onBack?: () => void
@@ -156,6 +160,7 @@ export function AppMenu({
   onNewChat,
   onNewWindow,
   onOpenSettings,
+  onOpenSettingsSubpage,
   onOpenKeyboardShortcuts,
   onOpenStoredUserPreferences,
   onBack,
@@ -211,22 +216,33 @@ export function AppMenu({
 
           <StyledDropdownMenuSeparator />
 
-          {/* Settings submenu */}
+          {/* Settings submenu - items from shared schema */}
           <DropdownMenuSub>
             <StyledDropdownMenuSubTrigger>
               <Icons.Settings className="h-3.5 w-3.5" />
               Settings
             </StyledDropdownMenuSubTrigger>
             <StyledDropdownMenuSubContent>
+              {/* Main settings entry with keyboard shortcut */}
               <StyledDropdownMenuItem onClick={onOpenSettings}>
-                <Icons.Wrench className="h-3.5 w-3.5" />
+                <Icons.Settings className="h-3.5 w-3.5" />
                 Settings...
                 <DropdownMenuShortcut className="pl-6">{modKey},</DropdownMenuShortcut>
               </StyledDropdownMenuItem>
-              <StyledDropdownMenuItem onClick={onOpenStoredUserPreferences}>
-                <Icons.User className="h-3.5 w-3.5" />
-                Stored User Preferences
-              </StyledDropdownMenuItem>
+              <StyledDropdownMenuSeparator />
+              {/* All settings subpages from shared schema */}
+              {SETTINGS_ITEMS.map((item) => {
+                const Icon = SETTINGS_ICONS[item.id]
+                return (
+                  <StyledDropdownMenuItem
+                    key={item.id}
+                    onClick={() => onOpenSettingsSubpage(item.id)}
+                  >
+                    <Icon className="h-3.5 w-3.5" />
+                    {item.label}
+                  </StyledDropdownMenuItem>
+                )
+              })}
             </StyledDropdownMenuSubContent>
           </DropdownMenuSub>
 
