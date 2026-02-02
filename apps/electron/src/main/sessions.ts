@@ -2120,6 +2120,14 @@ export class SessionManager {
   }
 
   /**
+   * Clear active viewing session for a workspace.
+   * Called when all windows leave a workspace to ensure read/unread state is correct.
+   */
+  clearActiveViewingSession(workspaceId: string): void {
+    this.activeViewingSession.delete(workspaceId)
+  }
+
+  /**
    * Check if a session is currently being viewed by the user
    */
   private isSessionBeingViewed(sessionId: string, workspaceId: string): boolean {

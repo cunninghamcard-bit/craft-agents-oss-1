@@ -1139,10 +1139,24 @@ export default function App() {
       setPendingPermissions(new Map())
       setPendingCredentials(new Map())
 
+      // 6. Clear session options from previous workspace
+      // (session IDs are unique UUIDs, but clearing prevents unbounded memory growth
+      // and ensures no stale state from old workspace persists)
+      setSessionOptions(new Map())
+
+      // 7. Clear message drafts from previous workspace
+      // (prevents memory growth on repeated workspace switches)
+      sessionDraftsRef.current.clear()
+
+      // 8. Reset sources and skills atoms to empty
+      // (prevents stale data flash during workspace switch - AppShell will reload)
+      store.set(sourcesAtom, [])
+      store.set(skillsAtom, [])
+
       // Note: Sessions and theme will reload automatically due to windowWorkspaceId dependency
       // in useEffect hooks
     }
-  }, [windowWorkspaceId, setSession])
+  }, [windowWorkspaceId, setSession, store])
 
   // Handle workspace refresh (e.g., after icon upload)
   const handleRefreshWorkspaces = useCallback(() => {

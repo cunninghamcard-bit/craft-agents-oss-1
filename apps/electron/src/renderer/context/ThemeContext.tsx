@@ -15,18 +15,28 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 export type FontFamily = 'inter' | 'system'
 
 interface ThemeContextType {
-  // Preferences (persisted)
+  // Preferences (persisted at app level)
   mode: ThemeMode
+  /** App-level default color theme (used when workspace has no override) */
   colorTheme: string
   font: FontFamily
   setMode: (mode: ThemeMode) => void
+  /** Set app-level default color theme */
   setColorTheme: (theme: string) => void
   setFont: (font: FontFamily) => void
+
+  // Workspace-level theme override
+  /** Active workspace ID (null if no workspace context) */
+  activeWorkspaceId: string | null
+  /** Workspace-specific color theme override (null = inherit from app default) */
+  workspaceColorTheme: string | null
+  /** Set workspace-specific color theme override (null = inherit) */
+  setWorkspaceColorTheme: (theme: string | null) => void
 
   // Derived/computed
   resolvedMode: 'light' | 'dark'
   systemPreference: 'light' | 'dark'
-  /** Effective color theme for rendering (previewColorTheme ?? colorTheme) */
+  /** Effective color theme for rendering (previewColorTheme ?? workspaceColorTheme ?? colorTheme) */
   effectiveColorTheme: string
   /** Temporary preview theme (hover state) - not persisted */
   previewColorTheme: string | null
@@ -61,6 +71,8 @@ interface ThemeProviderProps {
   defaultMode?: ThemeMode
   defaultColorTheme?: string
   defaultFont?: FontFamily
+  /** Active workspace ID for workspace-level theme overrides */
+  activeWorkspaceId?: string | null
 }
 
 function getSystemPreference(): 'light' | 'dark' {
@@ -83,16 +95,20 @@ export function ThemeProvider({
   children,
   defaultMode = 'system',
   defaultColorTheme = 'default',
-  defaultFont = 'system'
+  defaultFont = 'system',
+  activeWorkspaceId = null
 }: ThemeProviderProps) {
   const stored = loadStoredTheme()
 
-  // === Preference state (persisted) ===
+  // === Preference state (persisted at app level) ===
   const [mode, setModeState] = useState<ThemeMode>(stored?.mode ?? defaultMode)
   const [colorTheme, setColorThemeState] = useState<string>(stored?.colorTheme ?? defaultColorTheme)
   const [font, setFontState] = useState<FontFamily>(stored?.font ?? defaultFont)
   const [systemPreference, setSystemPreference] = useState<'light' | 'dark'>(getSystemPreference)
   const [previewColorTheme, setPreviewColorTheme] = useState<string | null>(null)
+
+  // === Workspace-level theme override ===
+  const [workspaceColorTheme, setWorkspaceColorThemeState] = useState<string | null>(null)
 
   // Track if we're receiving an external update to prevent echo broadcasts
   const isExternalUpdate = useRef(false)
@@ -102,8 +118,23 @@ export function ThemeProvider({
 
   // === Derived values ===
   const resolvedMode = mode === 'system' ? systemPreference : mode
-  const effectiveColorTheme = previewColorTheme ?? colorTheme
+  // Effective theme: preview > workspace override > app default
+  const effectiveColorTheme = previewColorTheme ?? workspaceColorTheme ?? colorTheme
   const isDarkFromMode = resolvedMode === 'dark'
+
+  // Load workspace theme override when workspace changes
+  useEffect(() => {
+    if (!activeWorkspaceId) {
+      setWorkspaceColorThemeState(null)
+      return
+    }
+
+    window.electronAPI?.getWorkspaceColorTheme?.(activeWorkspaceId).then((theme) => {
+      setWorkspaceColorThemeState(theme)
+    }).catch(() => {
+      setWorkspaceColorThemeState(null)
+    })
+  }, [activeWorkspaceId])
 
   // Load preset theme when effectiveColorTheme changes (SINGLETON - only here, not in useTheme)
   useEffect(() => {
@@ -331,16 +362,44 @@ export function ThemeProvider({
     }
   }, [mode, colorTheme])
 
+  // Set workspace-specific color theme override
+  const setWorkspaceColorTheme = useCallback((newTheme: string | null) => {
+    if (!activeWorkspaceId) return
+    setWorkspaceColorThemeState(newTheme)
+    window.electronAPI?.setWorkspaceColorTheme?.(activeWorkspaceId, newTheme)
+    // Broadcast to other windows
+    window.electronAPI?.broadcastWorkspaceThemeChange?.(activeWorkspaceId, newTheme)
+  }, [activeWorkspaceId])
+
+  // Listen for workspace theme changes from other windows
+  useEffect(() => {
+    if (!window.electronAPI?.onWorkspaceThemeChange) return
+
+    const cleanup = window.electronAPI.onWorkspaceThemeChange(({ workspaceId, themeId }) => {
+      // Only update if this is our active workspace
+      if (workspaceId === activeWorkspaceId) {
+        setWorkspaceColorThemeState(themeId)
+      }
+    })
+
+    return cleanup
+  }, [activeWorkspaceId])
+
   return (
     <ThemeContext.Provider
       value={{
-        // Preferences
+        // App-level preferences
         mode,
         colorTheme,
         font,
         setMode,
         setColorTheme,
         setFont,
+
+        // Workspace-level theme override
+        activeWorkspaceId,
+        workspaceColorTheme,
+        setWorkspaceColorTheme,
 
         // Derived
         resolvedMode,

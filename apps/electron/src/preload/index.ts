@@ -346,13 +346,20 @@ const api: ElectronAPI = {
   // Tool icon mappings (for Appearance settings page)
   getToolIconMappings: () => ipcRenderer.invoke(IPC_CHANNELS.TOOL_ICONS_GET_MAPPINGS),
 
-  // Theme (app-level only)
+  // Theme (app-level default)
   getAppTheme: () => ipcRenderer.invoke(IPC_CHANNELS.THEME_GET_APP),
   // Preset themes (app-level)
   loadPresetThemes: () => ipcRenderer.invoke(IPC_CHANNELS.THEME_GET_PRESETS),
   loadPresetTheme: (themeId: string) => ipcRenderer.invoke(IPC_CHANNELS.THEME_LOAD_PRESET, themeId),
   getColorTheme: () => ipcRenderer.invoke(IPC_CHANNELS.THEME_GET_COLOR_THEME),
   setColorTheme: (themeId: string) => ipcRenderer.invoke(IPC_CHANNELS.THEME_SET_COLOR_THEME, themeId),
+  // Workspace-level theme overrides
+  getWorkspaceColorTheme: (workspaceId: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.THEME_GET_WORKSPACE_COLOR_THEME, workspaceId),
+  setWorkspaceColorTheme: (workspaceId: string, themeId: string | null) =>
+    ipcRenderer.invoke(IPC_CHANNELS.THEME_SET_WORKSPACE_COLOR_THEME, workspaceId, themeId),
+  getAllWorkspaceThemes: () =>
+    ipcRenderer.invoke(IPC_CHANNELS.THEME_GET_ALL_WORKSPACE_THEMES),
 
   // Logo URL resolution (uses Node.js filesystem cache for provider domains)
   getLogoUrl: (serviceUrl: string, provider?: string) =>
@@ -378,6 +385,19 @@ const api: ElectronAPI = {
     ipcRenderer.on(IPC_CHANNELS.THEME_PREFERENCES_CHANGED, handler)
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.THEME_PREFERENCES_CHANGED, handler)
+    }
+  },
+
+  // Workspace theme sync across windows
+  broadcastWorkspaceThemeChange: (workspaceId: string, themeId: string | null) =>
+    ipcRenderer.invoke(IPC_CHANNELS.THEME_BROADCAST_WORKSPACE_THEME, workspaceId, themeId),
+  onWorkspaceThemeChange: (callback: (data: { workspaceId: string; themeId: string | null }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { workspaceId: string; themeId: string | null }) => {
+      callback(data)
+    }
+    ipcRenderer.on(IPC_CHANNELS.THEME_WORKSPACE_THEME_CHANGED, handler)
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.THEME_WORKSPACE_THEME_CHANGED, handler)
     }
   },
 

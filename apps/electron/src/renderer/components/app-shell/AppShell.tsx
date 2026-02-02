@@ -763,6 +763,42 @@ function AppShellContent({
     })
   }, [activeWorkspaceId])
 
+  // Reset UI state when workspace changes
+  // This prevents stale search queries, focused items, and filter state from persisting
+  const previousWorkspaceRef = React.useRef<string | null>(null)
+  React.useEffect(() => {
+    if (!activeWorkspaceId) return
+
+    const previousWorkspaceId = previousWorkspaceRef.current
+
+    // Skip on initial mount
+    if (previousWorkspaceId !== null && previousWorkspaceId !== activeWorkspaceId) {
+      // Clear search state
+      setSearchActive(false)
+      setSearchQuery('')
+
+      // Clear filter dropdown state
+      setFilterDropdownQuery('')
+      setFilterDropdownSelectedIdx(0)
+
+      // Clear focused sidebar item
+      setFocusedSidebarItemId(null)
+
+      // Load workspace-scoped filter state from new workspace
+      // (viewFiltersMap, expandedFolders, collapsedItems)
+      const newViewFilters = storage.get<ViewFiltersMap>(storage.KEYS.viewFilters, {}, activeWorkspaceId)
+      setViewFiltersMap(newViewFilters)
+
+      const newExpandedFolders = storage.get<string[]>(storage.KEYS.expandedFolders, [], activeWorkspaceId)
+      setExpandedFolders(new Set(newExpandedFolders))
+
+      const newCollapsedItems = storage.get<string[] | null>(storage.KEYS.collapsedSidebarItems, null, activeWorkspaceId)
+      setCollapsedItems(newCollapsedItems !== null ? new Set(newCollapsedItems) : new Set(['nav:labels']))
+    }
+
+    previousWorkspaceRef.current = activeWorkspaceId
+  }, [activeWorkspaceId])
+
   // Load sources from backend on mount
   React.useEffect(() => {
     if (!activeWorkspaceId) return
@@ -1373,10 +1409,11 @@ function AppShellContent({
     onChatMatchInfoChange: handleChatMatchInfoChange,
   }), [contextValue, handleDeleteSession, sources, skills, labelConfigs, handleSessionLabelsChange, enabledModes, effectiveTodoStates, handleSessionSourcesChange, rightSidebarOpenButton, searchActive, searchQuery, handleChatMatchInfoChange])
 
-  // Persist expanded folders to localStorage
+  // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
-    storage.set(storage.KEYS.expandedFolders, [...expandedFolders])
-  }, [expandedFolders])
+    if (!activeWorkspaceId) return
+    storage.set(storage.KEYS.expandedFolders, [...expandedFolders], activeWorkspaceId)
+  }, [expandedFolders, activeWorkspaceId])
 
   // Persist sidebar visibility to localStorage
   React.useEffect(() => {
@@ -1409,15 +1446,17 @@ function AppShellContent({
     return cleanup
   }, [])
 
-  // Persist per-view filter map to localStorage
+  // Persist per-view filter map to localStorage (workspace-scoped)
   React.useEffect(() => {
-    storage.set(storage.KEYS.viewFilters, viewFiltersMap)
-  }, [viewFiltersMap])
+    if (!activeWorkspaceId) return
+    storage.set(storage.KEYS.viewFilters, viewFiltersMap, activeWorkspaceId)
+  }, [viewFiltersMap, activeWorkspaceId])
 
-  // Persist sidebar section collapsed states
+  // Persist sidebar section collapsed states (workspace-scoped)
   React.useEffect(() => {
-    storage.set(storage.KEYS.collapsedSidebarItems, [...collapsedItems])
-  }, [collapsedItems])
+    if (!activeWorkspaceId) return
+    storage.set(storage.KEYS.collapsedSidebarItems, [...collapsedItems], activeWorkspaceId)
+  }, [collapsedItems, activeWorkspaceId])
 
   const handleAllChatsClick = useCallback(() => {
     navigate(routes.view.allChats())

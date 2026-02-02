@@ -60,6 +60,7 @@ import { inferGoogleServiceFromUrl, inferSlackServiceFromUrl, inferMicrosoftServ
 import { buildAuthorizationHeader } from '../sources/api-tools.ts';
 import { DOC_REFS } from '../docs/index.ts';
 import { renderMermaid } from '@craft-agent/mermaid';
+import { createLLMTool } from './llm-tool.ts';
 
 // ============================================================
 // Session-Scoped Tool Callbacks
@@ -2055,6 +2056,8 @@ export function getSessionScopedTools(sessionId: string, workspaceRootPath: stri
         createSlackOAuthTriggerTool(sessionId, workspaceRootPath),
         createMicrosoftOAuthTriggerTool(sessionId, workspaceRootPath),
         createCredentialPromptTool(sessionId, workspaceRootPath),
+        // LLM tool - invoke secondary Claude calls for subtasks
+        createLLMTool({ sessionId }),
       ],
     });
     sessionScopedToolsCache.set(cacheKey, cached);

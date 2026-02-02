@@ -508,7 +508,8 @@ export function useEntityIcon(opts: UseEntityIconOptions): ResolvedEntityIcon {
 
   // Check if iconValue is an emoji or URL (synchronous, no loading needed)
   const immediateValue = useMemo(() => {
-    if (!iconValue) return null
+    // Guard against non-string values (can happen with malformed config data)
+    if (!iconValue || typeof iconValue !== 'string') return null
     if (isEmoji(iconValue)) return { type: 'emoji' as const, value: iconValue }
     if (iconValue.startsWith('http://') || iconValue.startsWith('https://')) {
       return { type: 'url' as const, value: iconValue }

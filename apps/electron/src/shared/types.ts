@@ -687,7 +687,7 @@ export const IPC_CHANNELS = {
   WORKSPACE_SETTINGS_GET: 'workspaceSettings:get',
   WORKSPACE_SETTINGS_UPDATE: 'workspaceSettings:update',
 
-  // Theme (app-level only)
+  // Theme (app-level default)
   THEME_GET_APP: 'theme:getApp',
   THEME_GET_PRESETS: 'theme:getPresets',
   THEME_LOAD_PRESET: 'theme:loadPreset',
@@ -695,6 +695,13 @@ export const IPC_CHANNELS = {
   THEME_SET_COLOR_THEME: 'theme:setColorTheme',
   THEME_BROADCAST_PREFERENCES: 'theme:broadcastPreferences',  // Send preferences to main for broadcast
   THEME_PREFERENCES_CHANGED: 'theme:preferencesChanged',  // Broadcast: preferences changed in another window
+
+  // Workspace-level theme overrides
+  THEME_GET_WORKSPACE_COLOR_THEME: 'theme:getWorkspaceColorTheme',
+  THEME_SET_WORKSPACE_COLOR_THEME: 'theme:setWorkspaceColorTheme',
+  THEME_GET_ALL_WORKSPACE_THEMES: 'theme:getAllWorkspaceThemes',
+  THEME_BROADCAST_WORKSPACE_THEME: 'theme:broadcastWorkspaceTheme',  // Send workspace theme change to main for broadcast
+  THEME_WORKSPACE_THEME_CHANGED: 'theme:workspaceThemeChanged',  // Broadcast: workspace theme changed in another window
 
   // Tool icon mappings (for Appearance settings)
   TOOL_ICONS_GET_MAPPINGS: 'toolIcons:getMappings',
@@ -963,13 +970,17 @@ export interface ElectronAPI {
   // Tool icon mappings (for Appearance settings page)
   getToolIconMappings(): Promise<ToolIconMapping[]>
 
-  // Theme (app-level only)
+  // Theme (app-level default)
   getAppTheme(): Promise<import('@config/theme').ThemeOverrides | null>
   // Preset themes (app-level)
   loadPresetThemes(): Promise<import('@config/theme').PresetTheme[]>
   loadPresetTheme(themeId: string): Promise<import('@config/theme').PresetTheme | null>
   getColorTheme(): Promise<string>
   setColorTheme(themeId: string): Promise<void>
+  // Workspace-level theme overrides
+  getWorkspaceColorTheme(workspaceId: string): Promise<string | null>
+  setWorkspaceColorTheme(workspaceId: string, themeId: string | null): Promise<void>
+  getAllWorkspaceThemes(): Promise<Record<string, string | undefined>>
 
   // Theme change listeners (live updates when theme.json files change)
   onAppThemeChange(callback: (theme: import('@config/theme').ThemeOverrides | null) => void): () => void
@@ -1001,6 +1012,10 @@ export interface ElectronAPI {
   // Theme preferences sync across windows (mode, colorTheme, font)
   broadcastThemePreferences(preferences: { mode: string; colorTheme: string; font: string }): Promise<void>
   onThemePreferencesChange(callback: (preferences: { mode: string; colorTheme: string; font: string }) => void): () => void
+
+  // Workspace theme sync across windows
+  broadcastWorkspaceThemeChange(workspaceId: string, themeId: string | null): Promise<void>
+  onWorkspaceThemeChange(callback: (data: { workspaceId: string; themeId: string | null }) => void): () => void
 
   // Git operations
   getGitBranch(dirPath: string): Promise<string | null>
