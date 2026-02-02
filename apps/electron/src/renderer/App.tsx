@@ -34,6 +34,7 @@ import {
   updateSessionAtom,
   sessionAtomFamily,
   sessionMetaMapAtom,
+  sessionIdsAtom,
   backgroundTasksAtomFamily,
   extractSessionMeta,
   type SessionMeta,
@@ -1152,6 +1153,13 @@ export default function App() {
       // (prevents stale data flash during workspace switch - AppShell will reload)
       store.set(sourcesAtom, [])
       store.set(skillsAtom, [])
+
+      // 9. Clear session atoms BEFORE navigating
+      // This prevents applyNavigationState from auto-selecting a session from the old workspace.
+      // Without this, getFirstSessionId() would return a session ID from the previous workspace,
+      // causing the detail panel to show a stale chat until sessions reload.
+      store.set(sessionMetaMapAtom, new Map())
+      store.set(sessionIdsAtom, [])
 
       // Note: Sessions and theme will reload automatically due to windowWorkspaceId dependency
       // in useEffect hooks
