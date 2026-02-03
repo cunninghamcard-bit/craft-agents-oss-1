@@ -7,7 +7,13 @@
  */
 
 import { describe, it, expect } from 'bun:test'
+import type { Components } from 'react-markdown'
 import { isValidTagName, wrapWithSafeProxy } from '../safe-components'
+
+/** Helper to access proxy by arbitrary string key without ts-expect-error spam */
+function getComponent(proxy: Partial<Components>, name: string): unknown {
+  return (proxy as Record<string, unknown>)[name]
+}
 
 // ============================================================================
 // isValidTagName — tag name validation
@@ -128,8 +134,7 @@ describe('wrapWithSafeProxy', () => {
     })
 
     it('returns component for defined PascalCase components', () => {
-      // @ts-expect-error - MyCustom is not in standard Components type
-      expect(safeComponents.MyCustom).toBe(mockComponent)
+      expect(getComponent(safeComponents, 'MyCustom')).toBe(mockComponent)
     })
   })
 
@@ -141,47 +146,35 @@ describe('wrapWithSafeProxy', () => {
     })
 
     it('returns undefined for valid PascalCase names not in components', () => {
-      // @ts-expect-error - accessing undefined component
-      expect(safeComponents.SomeOther).toBeUndefined()
+      expect(getComponent(safeComponents, 'SomeOther')).toBeUndefined()
     })
   })
 
   describe('returns fallback for invalid tag names', () => {
     it('returns fallback function for tag with plus sign', () => {
-      // @ts-expect-error - accessing invalid tag name
-      const fallback = safeComponents['sq+qr']
-      expect(typeof fallback).toBe('function')
+      expect(typeof getComponent(safeComponents, 'sq+qr')).toBe('function')
     })
 
     it('returns fallback function for tag with at sign', () => {
-      // @ts-expect-error - accessing invalid tag name
-      const fallback = safeComponents['@mention']
-      expect(typeof fallback).toBe('function')
+      expect(typeof getComponent(safeComponents, '@mention')).toBe('function')
     })
 
     it('returns fallback function for tag with hyphen', () => {
-      // @ts-expect-error - accessing invalid tag name
-      const fallback = safeComponents['my-element']
-      expect(typeof fallback).toBe('function')
+      expect(typeof getComponent(safeComponents, 'my-element')).toBe('function')
     })
 
     it('returns fallback function for various special characters', () => {
       const invalidNames = ['foo+bar', 'user@domain', 'a&b', 'x*y', 'path/to']
       for (const name of invalidNames) {
-        // @ts-expect-error - accessing invalid tag name
-        const fallback = safeComponents[name]
-        expect(typeof fallback).toBe('function')
+        expect(typeof getComponent(safeComponents, name)).toBe('function')
       }
     })
   })
 
   describe('fallback component behavior', () => {
     it('fallback is callable and returns a React element', () => {
-      // @ts-expect-error - accessing invalid tag name
-      const Fallback = safeComponents['sq+qr']
-      // Call the component function
+      const Fallback = getComponent(safeComponents, 'sq+qr') as (props: { children: string }) => unknown
       const result = Fallback({ children: 'test content' })
-      // Should return a React element (object with type and props)
       expect(result).toBeDefined()
       expect(typeof result).toBe('object')
     })
@@ -248,16 +241,13 @@ describe('wrapWithSafeProxy has trap', () => {
 // ============================================================================
 
 describe('wrapWithSafeProxy symbol handling', () => {
-  const safeComponents = wrapWithSafeProxy({})
+  const safeComponents = wrapWithSafeProxy({}) as Record<symbol, unknown>
 
   it('handles Symbol.iterator access without crashing', () => {
-    // This should not throw, should return undefined
-    // @ts-expect-error - accessing symbol
     expect(() => safeComponents[Symbol.iterator]).not.toThrow()
   })
 
   it('handles Symbol.toStringTag access', () => {
-    // @ts-expect-error - accessing symbol
     expect(() => safeComponents[Symbol.toStringTag]).not.toThrow()
   })
 })
@@ -305,8 +295,7 @@ describe('wrapWithSafeProxy getOwnPropertyDescriptor trap', () => {
 
       // This is the exact check from hast-util-to-jsx-runtime
       const result = own.call(safeComponents, name)
-        // @ts-expect-error - accessing invalid tag
-        ? safeComponents[name]
+        ? getComponent(safeComponents, name)
         : name
 
       // Should NOT return the string 'sq+qr', should return a function
@@ -319,7 +308,7 @@ describe('wrapWithSafeProxy getOwnPropertyDescriptor trap', () => {
       const own = Object.hasOwnProperty
 
       const result = own.call(safeComponents, name)
-        ? safeComponents[name]
+        ? getComponent(safeComponents, name)
         : name
 
       // Should return 'div' string for native element rendering
@@ -336,23 +325,17 @@ describe('real-world scenarios', () => {
   const safeComponents = wrapWithSafeProxy({})
 
   it('handles "I love <3 you" heart emoticon case', () => {
-    // The <3 part might be parsed as a tag
-    // @ts-expect-error - accessing potentially invalid tag
-    const fallback = safeComponents['3']
-    // '3' starts with a number, so it's invalid
-    expect(typeof fallback).toBe('function')
+    // The <3 part might be parsed as a tag, '3' starts with a number so it's invalid
+    expect(typeof getComponent(safeComponents, '3')).toBe('function')
   })
 
   it('handles TypeScript generic syntax in text', () => {
-    // If someone types <T> it might be parsed
-    // @ts-expect-error - accessing tag
-    expect(safeComponents.T).toBeUndefined() // Valid uppercase, let React handle
+    // If someone types <T> it might be parsed - valid uppercase, let React handle
+    expect(getComponent(safeComponents, 'T')).toBeUndefined()
   })
 
   it('handles arrow expressions like <=>', () => {
-    // @ts-expect-error - accessing invalid tag
-    const fallback = safeComponents['=']
-    expect(typeof fallback).toBe('function')
+    expect(typeof getComponent(safeComponents, '=')).toBe('function')
   })
 })
 
@@ -366,46 +349,32 @@ describe('actual crash case: QR code label text', () => {
   const safeComponents = wrapWithSafeProxy({})
 
   it('handles <SQ+QR> tag from QR label', () => {
-    // Uppercase with plus sign - must be caught
     expect(isValidTagName('SQ+QR')).toBe(false)
     expect('SQ+QR' in safeComponents).toBe(true)
-    // @ts-expect-error - accessing invalid tag
-    expect(typeof safeComponents['SQ+QR']).toBe('function')
+    expect(typeof getComponent(safeComponents, 'SQ+QR')).toBe('function')
   })
 
   it('handles <P 150> tag (P with space and number)', () => {
-    // Tag with space - must be caught
     expect(isValidTagName('P 150')).toBe(false)
     expect('P 150' in safeComponents).toBe(true)
-    // @ts-expect-error - accessing invalid tag
-    expect(typeof safeComponents['P 150']).toBe('function')
+    expect(typeof getComponent(safeComponents, 'P 150')).toBe('function')
   })
 
   it('handles lowercase version sq+qr (from rehype-raw)', () => {
-    // rehype-raw may lowercase tag names
     expect(isValidTagName('sq+qr')).toBe(false)
     expect('sq+qr' in safeComponents).toBe(true)
-    // @ts-expect-error - accessing invalid tag
-    expect(typeof safeComponents['sq+qr']).toBe('function')
+    expect(typeof getComponent(safeComponents, 'sq+qr')).toBe('function')
   })
 
   it('complete flow: invalid tag in components check then get', () => {
-    // Simulate what react-markdown does:
-    // 1. Check if tag is in components
-    // 2. If yes, get the component
-    // 3. Render it
+    // Simulate what react-markdown does: check → get → render
     const tagName = 'SQ+QR'
 
-    // Step 1: Check (must return true for invalid tags)
-    const hasComponent = tagName in safeComponents
-    expect(hasComponent).toBe(true)
+    expect(tagName in safeComponents).toBe(true)
 
-    // Step 2: Get (must return fallback function)
-    // @ts-expect-error - accessing invalid tag
-    const Component = safeComponents[tagName]
+    const Component = getComponent(safeComponents, tagName) as (props: { children: string }) => unknown
     expect(typeof Component).toBe('function')
 
-    // Step 3: Render (must not crash)
     const result = Component({ children: 'content' })
     expect(result).toBeDefined()
     expect(typeof result).toBe('object')
