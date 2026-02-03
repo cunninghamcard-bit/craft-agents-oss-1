@@ -20,6 +20,11 @@ const DOCS_DIR = join(CONFIG_DIR, 'docs');
 // Track if docs have been initialized this session (prevents re-init on hot reload)
 let docsInitialized = false;
 
+// Lazily loaded bundled docs (populated on first initializeDocs call)
+// Must be lazy because getBundledAssetsDir() depends on setBundledAssetsRoot()
+// being called first, which happens in app.whenReady() — after module imports.
+let _bundledDocs: Record<string, string> | null = null;
+
 // Resolve the bundled docs assets directory using the shared asset resolver.
 // Handles all environments: dev (resources/docs), bundled (dist/resources/docs),
 // and packaged Electron (setBundledAssetsRoot sets the base path at startup).
@@ -141,10 +146,12 @@ export function initializeDocs(): void {
     mkdirSync(DOCS_DIR, { recursive: true });
   }
 
+  // Load bundled docs lazily (after setBundledAssetsRoot has been called)
+  const bundledDocs = getBundledDocs();
+
   // Always write bundled docs to disk on launch.
   // This ensures consistent behavior between debug and release modes —
   // docs are always up-to-date with the running version.
-  const bundledDocs = getBundledDocs();
   for (const [filename, content] of Object.entries(bundledDocs)) {
     const docPath = join(DOCS_DIR, filename);
     writeFileSync(docPath, content, 'utf-8');
