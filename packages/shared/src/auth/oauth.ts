@@ -432,19 +432,6 @@ export class CraftOAuth {
   }
 }
 
-/**
- * Extract the origin (scheme + host + port) from an MCP URL.
- * This is the base URL for OAuth discovery per RFC 8414.
- */
-export function getMcpBaseUrl(mcpUrl: string): string {
-  try {
-    return new URL(mcpUrl).origin;
-  } catch {
-    // If URL parsing fails, return as-is and let caller handle it
-    return mcpUrl;
-  }
-}
-
 export interface OAuthMetadata {
   authorization_endpoint: string;
   token_endpoint: string;

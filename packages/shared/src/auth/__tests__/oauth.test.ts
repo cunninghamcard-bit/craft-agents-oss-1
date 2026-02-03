@@ -1,47 +1,5 @@
 import { describe, it, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { getMcpBaseUrl, discoverOAuthMetadata } from '../oauth';
-
-describe('getMcpBaseUrl', () => {
-  it('extracts origin from standard MCP URL', () => {
-    expect(getMcpBaseUrl('https://example.com/mcp')).toBe('https://example.com');
-  });
-
-  it('extracts origin from double-path URL (Ahrefs case)', () => {
-    expect(getMcpBaseUrl('https://api.ahrefs.com/mcp/mcp')).toBe('https://api.ahrefs.com');
-  });
-
-  it('extracts origin from URL with port', () => {
-    expect(getMcpBaseUrl('http://localhost:3000/mcp')).toBe('http://localhost:3000');
-  });
-
-  it('extracts origin from URL with deep path', () => {
-    expect(getMcpBaseUrl('https://company.com/api/v2/mcp')).toBe('https://company.com');
-  });
-
-  it('extracts origin from URL with query params', () => {
-    expect(getMcpBaseUrl('https://example.com/mcp?version=1')).toBe('https://example.com');
-  });
-
-  it('extracts origin from URL with trailing slash', () => {
-    expect(getMcpBaseUrl('https://example.com/mcp/')).toBe('https://example.com');
-  });
-
-  it('extracts origin from SSE endpoint', () => {
-    expect(getMcpBaseUrl('https://mcp.linear.app/sse')).toBe('https://mcp.linear.app');
-  });
-
-  it('extracts origin from GitHub Copilot MCP', () => {
-    expect(getMcpBaseUrl('https://api.githubcopilot.com/mcp/')).toBe('https://api.githubcopilot.com');
-  });
-
-  it('returns as-is for invalid URL', () => {
-    expect(getMcpBaseUrl('not-a-valid-url')).toBe('not-a-valid-url');
-  });
-
-  it('returns as-is for empty string', () => {
-    expect(getMcpBaseUrl('')).toBe('');
-  });
-});
+import { discoverOAuthMetadata } from '../oauth';
 
 describe('discoverOAuthMetadata', () => {
   const originalFetch = globalThis.fetch;
