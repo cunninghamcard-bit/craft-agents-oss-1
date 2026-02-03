@@ -7,8 +7,10 @@
  *
  * Platform behavior:
  * - macOS: Downloads zip, extracts and swaps app bundle atomically
- * - Windows: Downloads NSIS installer, runs silently on quit
- * - Linux: Downloads AppImage, replaces current file
+ *          NOTE: Squirrel.Mac does NOT fire download-progress events reliably.
+ *          We use -1 (indeterminate) for progress and rely on update-downloaded event.
+ * - Windows: Downloads NSIS installer, runs silently on quit (progress events work)
+ * - Linux: Downloads AppImage, replaces current file (progress events work)
  *
  * All platforms support download-progress events (electron-updater v6.8.0+).
  * quitAndInstall() handles restart natively — no external scripts.
@@ -29,10 +31,12 @@ import { readJsonFileSync } from '@craft-agent/shared/utils/files'
 import type { UpdateInfo } from '../shared/types'
 import type { WindowManager } from './window-manager'
 
-// Platform detection
+// Platform detection for progress event support
+// macOS (Squirrel.Mac) does NOT reliably fire download-progress events
 const PLATFORM = platform()
 const IS_MAC = PLATFORM === 'darwin'
 const IS_WINDOWS = PLATFORM === 'win32'
+const SUPPORTS_PROGRESS = !IS_MAC
 
 // Get the update cache directory path (for file watcher fallback on macOS)
 // electron-updater uses these paths:
@@ -60,6 +64,7 @@ let updateInfo: UpdateInfo = {
   latestVersion: null,
   downloadState: 'idle',
   downloadProgress: 0,
+  supportsProgress: SUPPORTS_PROGRESS,
 }
 
 let windowManager: WindowManager | null = null
@@ -135,6 +140,90 @@ autoUpdater.logger = {
   debug: (msg: unknown) => mainLog.info('[electron-updater:debug]', msg),
 }
 
+// ─── macOS File Watcher Fallback ──────────────────────────────────────────────
+// Squirrel.Mac doesn't fire download-progress events, so we watch the cache directory
+// to detect when the download is complete as a fallback mechanism.
+
+let macOSWatcherInterval: NodeJS.Timeout | null = null
+
+/**
+ * Start watching the update cache directory on macOS for download completion.
+ * Uses polling since chokidar would add a dependency we want to avoid.
+ */
+function startMacOSDownloadWatcher(version: string): void {
+  if (!IS_MAC) return
+
+  const cacheDir = getUpdateCacheDir()
+  mainLog.info(`[auto-update] Starting macOS download watcher on: ${cacheDir}`)
+
+  // Clean up any existing watcher
+  stopMacOSDownloadWatcher()
+
+  // Poll every 2 seconds to check for downloaded file
+  let lastSize = 0
+  let stableCount = 0
+
+  macOSWatcherInterval = setInterval(() => {
+    try {
+      if (!fs.existsSync(cacheDir)) {
+        return // Directory doesn't exist yet, keep waiting
+      }
+
+      const files = fs.readdirSync(cacheDir)
+      const zipFile = files.find(f => f.endsWith('.zip'))
+
+      if (zipFile) {
+        const filePath = path.join(cacheDir, zipFile)
+        const stats = fs.statSync(filePath)
+
+        // Check if file size is stable (download complete)
+        if (stats.size === lastSize && stats.size > 0) {
+          stableCount++
+          // File size stable for 6 seconds (3 checks) = likely complete
+          if (stableCount >= 3) {
+            mainLog.info(`[auto-update] macOS watcher detected complete download: ${zipFile} (${stats.size} bytes)`)
+            stopMacOSDownloadWatcher()
+
+            // Only update state if we're still in 'downloading' state
+            // (the update-downloaded event might have already fired)
+            if (updateInfo.downloadState === 'downloading') {
+              updateInfo = {
+                ...updateInfo,
+                downloadState: 'ready',
+                downloadProgress: 100,
+              }
+              broadcastUpdateInfo()
+            }
+          }
+        } else {
+          lastSize = stats.size
+          stableCount = 0
+        }
+      }
+    } catch (error) {
+      // Ignore errors (directory might not exist yet)
+    }
+  }, 2000)
+
+  // Stop watching after 10 minutes (download should be done by then)
+  setTimeout(() => {
+    if (macOSWatcherInterval) {
+      mainLog.info('[auto-update] macOS watcher timed out after 10 minutes')
+      stopMacOSDownloadWatcher()
+    }
+  }, 10 * 60 * 1000)
+}
+
+/**
+ * Stop the macOS download watcher
+ */
+function stopMacOSDownloadWatcher(): void {
+  if (macOSWatcherInterval) {
+    clearInterval(macOSWatcherInterval)
+    macOSWatcherInterval = null
+  }
+}
+
 // ─── Event handlers ───────────────────────────────────────────────────────────
 
 autoUpdater.on('checking-for-update', () => {
@@ -143,6 +232,7 @@ autoUpdater.on('checking-for-update', () => {
 
 autoUpdater.on('update-available', (info) => {
   mainLog.info(`[auto-update] Update available: ${updateInfo.currentVersion} → ${info.version}`)
+  mainLog.info(`[auto-update] Platform: ${PLATFORM}, supports progress: ${SUPPORTS_PROGRESS}`)
 
   // First, check electron-updater's internal state (most reliable)
   const internalState = checkElectronUpdaterState()
@@ -179,9 +269,16 @@ autoUpdater.on('update-available', (info) => {
     available: true,
     latestVersion: info.version,
     downloadState: 'downloading',
-    downloadProgress: 0,
+    // On macOS, use -1 to indicate indeterminate progress (Squirrel.Mac doesn't fire progress events)
+    // On Windows/Linux, start at 0 and progress will be updated via download-progress event
+    downloadProgress: SUPPORTS_PROGRESS ? 0 : -1,
   }
   broadcastUpdateInfo()
+
+  // On macOS, start file watcher as fallback for download completion detection
+  if (IS_MAC) {
+    startMacOSDownloadWatcher(info.version)
+  }
 })
 
 autoUpdater.on('update-not-available', (info) => {
@@ -205,6 +302,9 @@ autoUpdater.on('download-progress', (progress) => {
 autoUpdater.on('update-downloaded', async (info) => {
   mainLog.info(`[auto-update] Update downloaded: v${info.version}`)
 
+  // Stop macOS watcher if running (no longer needed)
+  stopMacOSDownloadWatcher()
+
   updateInfo = {
     ...updateInfo,
     available: true,
@@ -221,6 +321,9 @@ autoUpdater.on('update-downloaded', async (info) => {
 
 autoUpdater.on('error', (error) => {
   mainLog.error('[auto-update] Error:', error.message)
+
+  // Stop macOS watcher if running
+  stopMacOSDownloadWatcher()
 
   updateInfo = {
     ...updateInfo,
