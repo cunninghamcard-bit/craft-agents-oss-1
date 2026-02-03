@@ -76,33 +76,6 @@ function parseTimeString(timeStr: string): number | null {
 }
 
 /**
- * Get all workspace IDs
- */
-function getWorkspaceIds(): string[] {
-  if (!fs.existsSync(WORKSPACES_DIR)) return [];
-
-  return fs.readdirSync(WORKSPACES_DIR)
-    .filter(name => {
-      const stat = fs.statSync(path.join(WORKSPACES_DIR, name));
-      return stat.isDirectory();
-    });
-}
-
-/**
- * Get all source slugs for a workspace
- */
-function getSourceSlugs(workspaceId: string): string[] {
-  const sourcesDir = path.join(WORKSPACES_DIR, workspaceId, 'sources');
-  if (!fs.existsSync(sourcesDir)) return [];
-
-  return fs.readdirSync(sourcesDir)
-    .filter(name => {
-      const configPath = path.join(sourcesDir, name, 'config.json');
-      return fs.existsSync(configPath);
-    });
-}
-
-/**
  * Load all source credentials and check their status
  */
 async function getAllTokenInfo(): Promise<TokenInfo[]> {
