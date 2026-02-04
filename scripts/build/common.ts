@@ -11,11 +11,8 @@ import {
   cpSync,
   lstatSync,
   statSync,
-  readdirSync,
-  readlinkSync,
-  unlinkSync,
 } from 'fs';
-import { join, dirname, resolve } from 'path';
+import { join, dirname } from 'path';
 import { createHash } from 'crypto';
 
 export type Platform = 'darwin' | 'win32' | 'linux';
@@ -172,7 +169,7 @@ export function cleanBuildArtifacts(config: BuildConfig): void {
 
 /**
  * Install dependencies
- * On Windows, dereferences symlinks after install to avoid esbuild traversal issues
+ * On Windows, reinstalls esbuild with npm to avoid symlink issues
  */
 export async function installDependencies(config: BuildConfig): Promise<void> {
   const { rootDir, platform } = config;
@@ -181,37 +178,11 @@ export async function installDependencies(config: BuildConfig): Promise<void> {
   await $`cd ${rootDir} && bun install`.quiet();
 
   if (platform === 'win32') {
-    // On Windows, dereference symlinks in node_modules because esbuild can't
-    // traverse Bun's symlinks to .bun/ directory ("Access is denied" errors)
-    console.log('Dereferencing symlinks in node_modules (Windows workaround)...');
-    dereferenceNodeModules(join(rootDir, 'node_modules'));
-  }
-}
-
-/**
- * Recursively dereference symlinks in a directory (replace symlinks with actual content)
- */
-function dereferenceNodeModules(dir: string): void {
-  if (!existsSync(dir)) return;
-
-  const entries = readdirSync(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const fullPath = join(dir, entry.name);
-
-    if (entry.isSymbolicLink()) {
-      // Read the symlink target and resolve it to absolute path
-      const target = readlinkSync(fullPath);
-      const resolvedTarget = resolve(dirname(fullPath), target);
-
-      if (existsSync(resolvedTarget)) {
-        // Remove symlink and copy actual content
-        unlinkSync(fullPath);
-        cpSync(resolvedTarget, fullPath, { recursive: true, dereference: true });
-      }
-    } else if (entry.isDirectory() && entry.name !== '.bun') {
-      // Recurse into subdirectories (skip .bun itself)
-      dereferenceNodeModules(fullPath);
-    }
+    // Reinstall esbuild with npm on Windows - Bun creates symlinks to .bun/
+    // that esbuild can't traverse ("Access is denied" errors)
+    // npm installs esbuild's platform binary without symlinks
+    console.log('Reinstalling esbuild for Windows (avoiding symlink issues)...');
+    await $`cd ${rootDir} && npm install esbuild @esbuild/win32-x64 --no-save`.quiet();
   }
 }
 
