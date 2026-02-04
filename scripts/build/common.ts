@@ -161,10 +161,20 @@ export function cleanBuildArtifacts(config: BuildConfig): void {
 
 /**
  * Install dependencies
+ * Uses npm on Windows to avoid Bun symlink issues (esbuild can't read .bun/ directories)
  */
 export async function installDependencies(config: BuildConfig): Promise<void> {
-  console.log('Installing dependencies...');
-  await $`cd ${config.rootDir} && bun install`.quiet();
+  const { rootDir, platform } = config;
+
+  if (platform === 'win32') {
+    // Use npm on Windows - Bun creates symlinks to .bun/ cache that cause
+    // "Access is denied" errors when esbuild tries to traverse them
+    console.log('Installing dependencies with npm (Windows)...');
+    await $`cd ${rootDir} && npm install --legacy-peer-deps`.quiet();
+  } else {
+    console.log('Installing dependencies with bun...');
+    await $`cd ${rootDir} && bun install`.quiet();
+  }
 }
 
 /**
