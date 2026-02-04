@@ -49,6 +49,9 @@ import {
   type PermissionPromptType,
 } from '../codex/app-server-client.ts';
 
+// Codex binary resolver
+import { resolveCodexBinary } from '../codex/binary-resolver.ts';
+
 // ChatGPT OAuth for token refresh
 import { refreshChatGptTokens, type ChatGptTokens } from '../auth/chatgpt-oauth.ts';
 
@@ -269,10 +272,9 @@ export class CodexAgent extends BaseAgent {
     }
 
     // Create and connect new client
-    // CRAFT AGENTS: Support custom codex binary path via environment variable
-    // Set CODEX_PATH to use the Craft Agents fork with PreToolUse support
-    // Download from: https://github.com/lukilabs/craft-agents-codex/releases
-    const codexPath = process.env.CODEX_PATH || 'codex';
+    // Resolve Codex binary path using the binary resolver
+    // Priority: CODEX_PATH env var > bundled binary > local dev fork > system PATH
+    const { path: codexPath, source: codexSource } = resolveCodexBinary();
 
     // Build environment variables for the Codex process
     // CODEX_HOME enables per-session configuration (MCP servers, etc.)
@@ -290,7 +292,7 @@ export class CodexAgent extends BaseAgent {
     };
 
     this.client = new AppServerClient(options);
-    this.debug(`Using codex binary: ${codexPath}`);
+    this.debug(`Using codex binary: ${codexPath} (${codexSource})`);
 
     // Set up event handlers
     this.setupClientEventHandlers();

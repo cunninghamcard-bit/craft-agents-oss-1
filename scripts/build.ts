@@ -3,17 +3,18 @@
  * Unified build script for Craft Agent
  *
  * Usage:
- *   bun run scripts/build.ts --platform=darwin --arch=arm64
- *   bun run scripts/build.ts --platform=win32 --arch=x64
- *   bun run scripts/build.ts --platform=linux --arch=x64 --upload --latest
+ *   bun run scripts/build.ts --platform=darwin --arch=arm64 --codex-version=craft-v0.1.0
+ *   bun run scripts/build.ts --platform=win32 --arch=x64 --codex-version=craft-v0.1.0
+ *   bun run scripts/build.ts --platform=linux --arch=x64 --codex-version=craft-v0.1.0 --upload --latest
  *
  * Options:
- *   --platform    Target platform: darwin, win32, linux (default: current platform)
- *   --arch        Target architecture: x64, arm64 (default: current arch)
- *   --upload      Upload to S3 after building
- *   --latest      Also update electron/latest (requires --upload)
- *   --script      Also upload install scripts (requires --upload)
- *   --help        Show this help message
+ *   --codex-version  REQUIRED: Codex fork version to bundle (e.g., craft-v0.1.0)
+ *   --platform       Target platform: darwin, win32, linux (default: current platform)
+ *   --arch           Target architecture: x64, arm64 (default: current arch)
+ *   --upload         Upload to S3 after building
+ *   --latest         Also update electron/latest (requires --upload)
+ *   --script         Also upload install scripts (requires --upload)
+ *   --help           Show this help message
  */
 
 // Catch uncaught exceptions to ensure we always exit with error code
@@ -39,12 +40,14 @@ import {
   cleanBuildArtifacts,
   installDependencies,
   downloadBun,
+  downloadCodex,
   copySDK,
   copyInterceptor,
   copyBridgeServer,
   buildElectronApp,
   createManifest,
   uploadToS3,
+  CODEX_REPO,
 } from './build/common';
 import { packageDarwin } from './build/darwin';
 import { packageLinux } from './build/linux';
@@ -55,7 +58,11 @@ function showHelp(): void {
 Unified build script for Craft Agent
 
 Usage:
-  bun run scripts/build.ts [options]
+  bun run scripts/build.ts --codex-version=<version> [options]
+
+Required:
+  --codex-version=<version>  Codex fork version to bundle (e.g., craft-v0.1.0)
+                             Releases: https://github.com/${CODEX_REPO}/releases
 
 Options:
   --platform=<platform>  Target platform: darwin, win32, linux
@@ -81,13 +88,13 @@ Environment variables (from .env or environment):
 
 Examples:
   # Build macOS arm64
-  bun run scripts/build.ts --platform=darwin --arch=arm64
+  bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64
 
   # Build Windows x64 and upload
-  bun run scripts/build.ts --platform=win32 --arch=x64 --upload --latest
+  bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=win32 --arch=x64 --upload --latest
 
   # Build Linux x64
-  bun run scripts/build.ts --platform=linux --arch=x64
+  bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=linux --arch=x64
 `);
 }
 
@@ -96,6 +103,7 @@ async function main(): Promise<void> {
   const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
+      'codex-version': { type: 'string' },
       platform: { type: 'string', default: process.platform },
       arch: { type: 'string', default: process.arch === 'arm64' ? 'arm64' : 'x64' },
       upload: { type: 'boolean', default: false },
@@ -109,6 +117,23 @@ async function main(): Promise<void> {
   if (values.help) {
     showHelp();
     process.exit(0);
+  }
+
+  // Validate codex-version (REQUIRED)
+  const codexVersion = values['codex-version'];
+  if (!codexVersion) {
+    console.error('ERROR: --codex-version is required.\n');
+    console.error('The Codex fork binary is bundled with the app and must be explicitly specified.');
+    console.error(`Available releases: https://github.com/${CODEX_REPO}/releases\n`);
+    console.error('Example: bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64');
+    process.exit(1);
+  }
+
+  // Validate codex-version format (should be craft-vX.Y.Z)
+  if (!codexVersion.match(/^craft-v\d+\.\d+\.\d+/)) {
+    console.error(`ERROR: Invalid --codex-version format: ${codexVersion}\n`);
+    console.error('Expected format: craft-vX.Y.Z (e.g., craft-v0.1.0)');
+    process.exit(1);
   }
 
   // Validate platform
@@ -146,37 +171,42 @@ async function main(): Promise<void> {
     uploadScript: values.script ?? false,
     rootDir,
     electronDir,
+    codexVersion,
   };
 
   console.log(`=== Building Craft Agents for ${platform}-${arch} ===`);
+  console.log(`Codex version: ${codexVersion}`);
   if (config.upload) {
     console.log('Will upload to S3 after build');
   }
 
   try {
     // Load environment variables
-    console.log('\n[1/9] Loading environment...');
+    console.log('\n[1/10] Loading environment...');
     await loadEnvFile(config);
 
     // Common build steps
-    console.log('\n[2/9] Cleaning previous builds...');
+    console.log('\n[2/10] Cleaning previous builds...');
     cleanBuildArtifacts(config);
 
-    console.log('\n[3/9] Installing dependencies...');
+    console.log('\n[3/10] Installing dependencies...');
     await installDependencies(config);
 
-    console.log('\n[4/9] Downloading Bun runtime...');
+    console.log('\n[4/10] Downloading Bun runtime...');
     await downloadBun(config);
 
-    console.log('\n[5/9] Copying SDK...');
+    console.log('\n[5/10] Downloading Codex binary...');
+    await downloadCodex(config);
+
+    console.log('\n[6/10] Copying SDK...');
     copySDK(config);
 
-    console.log('\n[6/9] Copying interceptor...');
+    console.log('\n[7/10] Copying interceptor...');
     copyInterceptor(config);
 
     // Build Electron app (Windows has special OAuth injection)
     // This also builds the Bridge MCP Server as part of electron:build:main
-    console.log('\n[7/9] Building Electron app...');
+    console.log('\n[8/10] Building Electron app...');
     if (platform === 'win32') {
       await buildElectronAppWindows(config);
     } else {
@@ -184,11 +214,11 @@ async function main(): Promise<void> {
     }
 
     // Copy Bridge MCP Server to packaged app resources (after build creates it)
-    console.log('\n[8/9] Copying Bridge MCP Server...');
+    console.log('\n[9/10] Copying Bridge MCP Server...');
     copyBridgeServer(config);
 
     // Package for the target platform
-    console.log('\n[9/9] Packaging for platform...');
+    console.log('\n[10/10] Packaging for platform...');
     let artifactPath: string;
     switch (platform) {
       case 'darwin':

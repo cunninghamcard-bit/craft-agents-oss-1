@@ -28,6 +28,8 @@ files:
   - packages/shared/src/network-interceptor.ts
   # Include bundled Bun runtime (platform-specific, set by build script)
   - vendor/bun/**/*
+  # Include bundled Codex binary (platform-specific, downloaded by build script)
+  - vendor/codex/**/*
   # Exclude everything else from node_modules
   - "!node_modules/**/*"
   - node_modules/@anthropic-ai/**/*
@@ -63,11 +65,13 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # Exclude ripgrep binaries for other platforms
+  # Exclude binaries for other platforms
   files:
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-linux"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-linux"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-win32"
+    - "!**/vendor/codex/linux-*/**"
+    - "!**/vendor/codex/win32-*/**"
   # Use predictable naming for macOS packages (applies to zip; dmg uses its own config below)
   artifactName: "Craft-Agent-${arch}.${ext}"
   # Code signing & notarization (disabled by default for local builds)
@@ -104,11 +108,13 @@ win:
   # Use predictable naming: Craft-Agent-x64.exe
   artifactName: "Craft-Agent-${arch}.${ext}"
   files:
-    # Exclude ripgrep binaries for other platforms
+    # Exclude binaries for other platforms
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-linux"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-linux"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-darwin"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-darwin"
+    - "!**/vendor/codex/darwin-*/**"
+    - "!**/vendor/codex/linux-*/**"
     # WORKAROUND: Exclude bun from regular files on Windows.
     # electron-builder's npm node module collector causes EBUSY errors when copying
     # bun.exe because it scans/locks files while simultaneously trying to copy them.
@@ -136,9 +142,11 @@ linux:
       arch:
         - x64
   artifactName: "Craft-Agent-${arch}.${ext}"
-  # Exclude ripgrep binaries for other platforms
+  # Exclude binaries for other platforms
   files:
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-darwin"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-darwin"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-win32"
     - "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-linux"
+    - "!**/vendor/codex/darwin-*/**"
+    - "!**/vendor/codex/win32-*/**"

@@ -3,6 +3,10 @@ name: Build
 on:
   workflow_dispatch:
     inputs:
+      codex-version:
+        description: 'Codex fork version to bundle (e.g., craft-v0.1.0). See: https://github.com/lukilabs/craft-agents-codex/releases'
+        required: true
+        type: string
       targets:
         description: 'Targets to build (comma-separated: macos-arm64, macos-x64, windows, linux, or "all")'
         required: false
@@ -11,6 +15,10 @@ on:
 
 permissions:
   contents: read
+
+env:
+  # Codex fork version - single source of truth for all build jobs
+  CODEX_VERSION: ${{ inputs.codex-version }}
 
 concurrency:
   group: build-${{ github.ref }}
@@ -117,7 +125,7 @@ jobs:
 
       - name: Build (macOS)
         if: matrix.platform == 'darwin'
-        run: bun run scripts/build.ts --platform=darwin --arch=${{ matrix.arch }}
+        run: bun run scripts/build.ts --codex-version=${{ env.CODEX_VERSION }} --platform=darwin --arch=${{ matrix.arch }}
         env:
           # Note: Google OAuth credentials not included - users provide their own via source config
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
@@ -138,7 +146,7 @@ jobs:
 
       - name: Build (Windows)
         if: matrix.platform == 'win32'
-        run: bun run scripts/build.ts --platform=win32 --arch=${{ matrix.arch }}
+        run: bun run scripts/build.ts --codex-version=${{ env.CODEX_VERSION }} --platform=win32 --arch=${{ matrix.arch }}
         env:
           # Note: Google OAuth credentials not included - users provide their own via source config
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
@@ -171,7 +179,7 @@ jobs:
 
       - name: Build (Linux)
         if: matrix.platform == 'linux'
-        run: bun run scripts/build.ts --platform=linux --arch=${{ matrix.arch }}
+        run: bun run scripts/build.ts --codex-version=${{ env.CODEX_VERSION }} --platform=linux --arch=${{ matrix.arch }}
         env:
           # Note: Google OAuth credentials not included - users provide their own via source config
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
@@ -197,6 +205,7 @@ jobs:
           echo ""
           echo "=========================================="
           echo "  Build v${{ needs.prepare.outputs.version }} complete"
+          echo "  Codex: ${{ env.CODEX_VERSION }}"
           echo "=========================================="
           echo ""
           echo "Download artifacts from:"

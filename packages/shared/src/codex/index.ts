@@ -16,3 +16,9 @@ export {
   type ConfigWarning,
   type CredentialCacheEntry,
 } from './config-generator.ts';
+export {
+  resolveCodexBinary,
+  getCodexPath,
+  setVendorRoot,
+  getVendorRoot,
+} from './binary-resolver.ts';

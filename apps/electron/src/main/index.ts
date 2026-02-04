@@ -1,7 +1,13 @@
+// DEBUG: Check env before any imports
+console.log('[DEBUG] VITE_DEV_SERVER_URL at startup:', process.env.VITE_DEV_SERVER_URL)
+
 // Load user's shell environment first (before other imports that may use env)
 // This ensures tools like Homebrew, nvm, etc. are available to the agent
 import { loadShellEnv } from './shell-env'
 loadShellEnv()
+
+// DEBUG: Check env after shell-env
+console.log('[DEBUG] VITE_DEV_SERVER_URL after loadShellEnv:', process.env.VITE_DEV_SERVER_URL)
 
 import { app, BrowserWindow } from 'electron'
 import { createHash } from 'crypto'
@@ -75,6 +81,7 @@ import { initializeDocs } from '@craft-agent/shared/docs'
 import { ensureDefaultPermissions } from '@craft-agent/shared/agent/permissions-config'
 import { ensureToolIcons } from '@craft-agent/shared/config'
 import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
+import { setVendorRoot } from '@craft-agent/shared/codex'
 import { handleDeepLink } from './deep-link'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath } from './logger'
@@ -213,6 +220,10 @@ app.whenReady().then(async () => {
   // Register bundled assets root so all seeding functions can find their files
   // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
   setBundledAssetsRoot(__dirname)
+
+  // Register vendor root so the Codex binary resolver can find bundled binaries
+  // (Codex binary resolves via resolveCodexBinary() which checks vendor/codex/)
+  setVendorRoot(__dirname)
 
   // Initialize bundled docs
   initializeDocs()

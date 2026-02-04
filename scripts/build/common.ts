@@ -18,6 +18,7 @@ export interface BuildConfig {
   uploadScript: boolean;
   rootDir: string;
   electronDir: string;
+  codexVersion: string;
 }
 
 /**
@@ -26,6 +27,12 @@ export interface BuildConfig {
  * This should match or be close to the version used in CI (setup-bun action).
  */
 export const BUN_VERSION = 'bun-v1.3.5';
+
+/**
+ * Codex fork release repository.
+ * The fork includes PreToolUse hook support for permission enforcement.
+ */
+export const CODEX_REPO = 'lukilabs/craft-agents-codex';
 
 /**
  * Get the Bun download filename for a platform/arch combination
@@ -131,6 +138,113 @@ export async function downloadBun(config: BuildConfig): Promise<void> {
     }
 
     console.log(`  Bun installed to ${destPath} ✓`);
+  } finally {
+    // Cleanup temp directory
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Get the Codex download target name for a platform/arch combination.
+ * Must match the target names used in the craft-release.yml workflow.
+ */
+export function getCodexTarget(platform: Platform, arch: Arch): string {
+  // Map to Rust target triples used in the Codex release workflow
+  const targetMap: Record<string, string> = {
+    'darwin-arm64': 'aarch64-apple-darwin',
+    'darwin-x64': 'x86_64-apple-darwin',
+    'linux-x64': 'x86_64-unknown-linux-gnu',
+    'linux-arm64': 'aarch64-unknown-linux-gnu',
+    'win32-x64': 'x86_64-pc-windows-msvc',
+  };
+
+  const key = `${platform}-${arch}`;
+  const target = targetMap[key];
+
+  if (!target) {
+    throw new Error(`Unsupported platform/arch combination: ${key}`);
+  }
+
+  return target;
+}
+
+/**
+ * Download and verify Codex binary from GitHub releases.
+ * Fails if the version doesn't match or the binary can't be downloaded.
+ */
+export async function downloadCodex(config: BuildConfig): Promise<void> {
+  const { platform, arch, electronDir, codexVersion } = config;
+  const target = getCodexTarget(platform, arch);
+  const vendorDir = join(electronDir, 'vendor', 'codex', `${platform}-${arch}`);
+
+  console.log(`Downloading Codex ${codexVersion} for ${platform}-${arch}...`);
+
+  // Create vendor directory
+  mkdirSync(vendorDir, { recursive: true });
+
+  // Create temp directory
+  const tempDir = join(electronDir, '.codex-download-temp');
+  mkdirSync(tempDir, { recursive: true });
+
+  try {
+    const isWindows = platform === 'win32';
+    const archiveExt = isWindows ? 'zip' : 'tar.gz';
+    const archiveUrl = `https://github.com/${CODEX_REPO}/releases/download/${codexVersion}/codex-${target}.${archiveExt}`;
+    const archivePath = join(tempDir, `codex-${target}.${archiveExt}`);
+
+    console.log(`  Downloading ${archiveUrl}...`);
+    const result = await $`curl -fsSL --retry 3 --retry-delay 2 -o ${archivePath} ${archiveUrl}`.nothrow();
+
+    if (result.exitCode !== 0) {
+      throw new Error(
+        `Failed to download Codex ${codexVersion}.\n` +
+        `  URL: ${archiveUrl}\n` +
+        `  Make sure the release exists at: https://github.com/${CODEX_REPO}/releases/tag/${codexVersion}`
+      );
+    }
+    console.log('  Download complete');
+
+    // Extract
+    console.log('  Extracting...');
+    if (isWindows) {
+      await $`unzip -o ${archivePath} -d ${tempDir}`.quiet();
+    } else {
+      await $`tar -xzf ${archivePath} -C ${tempDir}`.quiet();
+    }
+
+    // Copy binary
+    const codexBinary = isWindows ? 'codex.exe' : 'codex';
+    const sourcePath = join(tempDir, codexBinary);
+    const destPath = join(vendorDir, codexBinary);
+
+    if (!existsSync(sourcePath)) {
+      throw new Error(`Codex binary not found in archive at ${sourcePath}`);
+    }
+
+    copyFileSync(sourcePath, destPath);
+
+    // Make executable on Unix
+    if (!isWindows) {
+      await $`chmod +x ${destPath}`.quiet();
+    }
+
+    // Verify version
+    console.log('  Verifying version...');
+    const versionResult = await $`${destPath} --version`.text();
+    const versionOutput = versionResult.trim();
+
+    // The version output should contain the version tag (e.g., "codex craft-v0.1.0" or similar)
+    // We check if the version string contains our expected version
+    if (!versionOutput.toLowerCase().includes(codexVersion.toLowerCase().replace('craft-', ''))) {
+      throw new Error(
+        `Codex version mismatch!\n` +
+        `  Expected version containing: ${codexVersion}\n` +
+        `  Got: ${versionOutput}`
+      );
+    }
+
+    console.log(`  Version verified: ${versionOutput} ✓`);
+    console.log(`  Codex installed to ${destPath} ✓`);
   } finally {
     // Cleanup temp directory
     rmSync(tempDir, { recursive: true, force: true });

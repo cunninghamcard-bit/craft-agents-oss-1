@@ -96,15 +96,17 @@ git tag v0.2.25 && git push --tags
 ### Manual Build
 
 ```bash
-# Unified build script for all platforms
-bun run build --platform=darwin --arch=arm64
-bun run build --platform=darwin --arch=x64
-bun run build --platform=win32 --arch=x64
-bun run build --platform=linux --arch=x64
+# Unified build script - Codex version is REQUIRED
+bun run build --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64
+bun run build --codex-version=craft-v0.1.0 --platform=darwin --arch=x64
+bun run build --codex-version=craft-v0.1.0 --platform=win32 --arch=x64
+bun run build --codex-version=craft-v0.1.0 --platform=linux --arch=x64
 
 # With upload
-bun run build --platform=darwin --arch=arm64 --upload --latest
+bun run build --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64 --upload --latest
 ```
+
+**Note:** `--codex-version` is mandatory. The build script downloads the Codex fork binary from GitHub releases, verifies the version, and bundles it with the app. See [Codex releases](https://github.com/lukilabs/craft-agents-codex/releases) for available versions.
 
 ### Via GitHub Actions
 
@@ -271,8 +273,23 @@ We maintain a fork of OpenAI Codex with additional hooks for Craft Agent integra
 - Unified permission checking matching ClaudeAgent behavior
 - Source blocking for inactive MCP sources with auto-activation support
 
-**Setup:** Set `CODEX_PATH` env var to the fork binary path, or configure `codexPath` in LLM connection config.
-Without the fork, Codex runs with default approval behavior (no pre-tool blocking).
+**Binary bundling:** The Codex fork binary is bundled with the app during build. The build script:
+1. Downloads the specified version from GitHub releases (`--codex-version=craft-vX.Y.Z`)
+2. Verifies the downloaded binary reports the expected version
+3. Bundles it at `vendor/codex/{platform}-{arch}/codex`
+
+**Runtime resolution:** The binary resolver (`packages/shared/src/codex/binary-resolver.ts`) finds the Codex binary at runtime in this priority order:
+1. `CODEX_PATH` environment variable (explicit override)
+2. Bundled binary in app resources (`vendor/codex/{platform}-{arch}/codex`)
+3. Local dev fork at `~/Documents/GitHub/craft-agents-codex/codex-rs/target/release/codex`
+4. System `codex` command in PATH (fallback)
+
+**Updating Codex version:**
+1. Publish a new release on the fork: `git tag craft-vX.Y.Z && git push origin craft-vX.Y.Z`
+2. Update the `--codex-version` in CI workflow (`.github/workflows/build-and-upload.yml`)
+3. Run a new build
+
+**Dev mode:** In development, the binary resolver automatically finds the local fork if you've built it at the expected path. No configuration needed.
 
 **AgentEvent types:** `status`, `text_delta`, `text_complete`, `tool_start`, `tool_result`, `permission_request`, `error`, `complete`, `task_backgrounded`, `shell_backgrounded`, `task_progress`, `typed_error`, `source_activated`
 
@@ -420,7 +437,7 @@ App-level only. **6-color system:** background, foreground, accent, info, succes
 | `agent/core/` | Shared modules: PermissionManager, SourceManager, PromptBuilder, etc. |
 | `agent/backend/` | Backend-specific adapters (event adapters, factory) |
 | `auth/` | oauth, craft-token, claude-token, google-oauth, chatgpt-oauth, state |
-| `codex/` | Codex app-server client (JSON-RPC over stdio) |
+| `codex/` | Codex app-server client, binary resolver, config generator |
 | `config/` | storage, preferences, models, theme, watcher |
 | `credentials/` | manager, backends (secure-storage, env) |
 | `mcp/` | client, validation |

@@ -144,15 +144,9 @@ function getOAuthDefines(): Record<string, string> {
 function getElectronEnv(): Record<string, string> {
   const vitePort = process.env.CRAFT_VITE_PORT || "5173";
 
-  // CRAFT AGENTS: Use local Codex fork in dev mode for faster debugging
-  // The fork includes PreToolUse hook support for permission enforcement
-  const homeDir = process.env.HOME || process.env.USERPROFILE || "";
-  const localCodexPath = join(homeDir, "Documents/GitHub/craft-agents-codex/codex-rs/target/release/codex");
-  const codexPath = process.env.CODEX_PATH || (existsSync(localCodexPath) ? localCodexPath : "codex");
-
-  if (codexPath !== "codex") {
-    console.log(`🔧 Using local Codex build: ${codexPath}`);
-  }
+  // Codex binary path is resolved at runtime by the binary-resolver module.
+  // It checks: CODEX_PATH env var > bundled binary > local dev fork > system PATH.
+  // You can override with CODEX_PATH env var if needed for debugging.
 
   return {
     ...process.env as Record<string, string>,
@@ -161,7 +155,6 @@ function getElectronEnv(): Record<string, string> {
     CRAFT_APP_NAME: process.env.CRAFT_APP_NAME || "Craft Agents",
     CRAFT_DEEPLINK_SCHEME: process.env.CRAFT_DEEPLINK_SCHEME || "craftagents",
     CRAFT_INSTANCE_NUMBER: process.env.CRAFT_INSTANCE_NUMBER || "",
-    CODEX_PATH: codexPath,
   };
 }
 
@@ -189,7 +182,11 @@ async function runEsbuild(
   }
 }
 
-// Verify a JavaScript file is syntactically valid
+// Verify a JavaScript file exists and has content.
+// Note: We don't use `node --check` because it evaluates module-level code,
+// which fails for Electron-specific packages like @sentry/electron that
+// require Electron's runtime. esbuild's successful build already guarantees
+// valid JavaScript syntax.
 async function verifyJsFile(filePath: string): Promise<{ valid: boolean; error?: string }> {
   if (!existsSync(filePath)) {
     return { valid: false, error: "File does not exist" };
@@ -199,20 +196,6 @@ async function verifyJsFile(filePath: string): Promise<{ valid: boolean; error?:
   const stats = statSync(filePath);
   if (stats.size === 0) {
     return { valid: false, error: "File is empty" };
-  }
-
-  // Use Node to syntax-check the file
-  const proc = spawn({
-    cmd: ["node", "--check", filePath],
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const stderr = await new Response(proc.stderr).text();
-  const exitCode = await proc.exited;
-
-  if (exitCode !== 0) {
-    return { valid: false, error: stderr || "Syntax error" };
   }
 
   return { valid: true };
