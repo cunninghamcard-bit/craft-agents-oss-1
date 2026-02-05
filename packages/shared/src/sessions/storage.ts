@@ -415,6 +415,12 @@ function headerToMetadata(header: SessionHeader, workspaceRootPath: string): Ses
       hasUnread: header.hasUnread,
       // Hidden flag for mini-agent sessions (not shown in session list)
       hidden: header.hidden,
+      // Archive state
+      isArchived: header.isArchived,
+      archivedAt: header.archivedAt,
+      // Sub-session hierarchy
+      parentSessionId: header.parentSessionId,
+      siblingOrder: header.siblingOrder,
     };
   } catch {
     return null;
@@ -464,9 +470,10 @@ export async function clearSessionMessages(workspaceRootPath: string, sessionId:
 
 /**
  * Get or create the latest session for a workspace
+ * Uses listActiveSessions to exclude archived sessions
  */
 export async function getOrCreateLatestSession(workspaceRootPath: string): Promise<SessionConfig> {
-  const sessions = listSessions(workspaceRootPath);
+  const sessions = listActiveSessions(workspaceRootPath);
   if (sessions.length > 0 && sessions[0]) {
     const latest = sessions[0];
     return {
@@ -536,6 +543,8 @@ export async function updateSessionMetadata(
     | 'sharedUrl'
     | 'sharedId'
     | 'model'
+    | 'isArchived'
+    | 'archivedAt'
   >>
 ): Promise<void> {
   const session = loadSession(workspaceRootPath, sessionId);
@@ -554,6 +563,8 @@ export async function updateSessionMetadata(
   if ('sharedUrl' in updates) session.sharedUrl = updates.sharedUrl;
   if ('sharedId' in updates) session.sharedId = updates.sharedId;
   if (updates.model !== undefined) session.model = updates.model;
+  if (updates.isArchived !== undefined) session.isArchived = updates.isArchived;
+  if ('archivedAt' in updates) session.archivedAt = updates.archivedAt;
 
   await saveSession(session);
 }
@@ -592,6 +603,26 @@ export async function setSessionLabels(
   labels: string[]
 ): Promise<void> {
   await updateSessionMetadata(workspaceRootPath, sessionId, { labels });
+}
+
+/**
+ * Archive a session
+ */
+export async function archiveSession(workspaceRootPath: string, sessionId: string): Promise<void> {
+  await updateSessionMetadata(workspaceRootPath, sessionId, {
+    isArchived: true,
+    archivedAt: Date.now(),
+  });
+}
+
+/**
+ * Unarchive a session
+ */
+export async function unarchiveSession(workspaceRootPath: string, sessionId: string): Promise<void> {
+  await updateSessionMetadata(workspaceRootPath, sessionId, {
+    isArchived: false,
+    archivedAt: undefined,
+  });
 }
 
 // ============================================================
@@ -667,18 +698,19 @@ export function getPendingPlanExecution(
 // ============================================================
 
 /**
- * List flagged sessions
+ * List flagged sessions (excludes archived)
  */
 export function listFlaggedSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listSessions(workspaceRootPath).filter(s => s.isFlagged === true);
+  return listActiveSessions(workspaceRootPath).filter(s => s.isFlagged === true);
 }
 
 /**
  * List completed sessions (category: closed)
  * Includes done, cancelled, and any custom "closed" statuses
+ * Excludes archived sessions
  */
 export function listCompletedSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listSessions(workspaceRootPath).filter(s => {
+  return listActiveSessions(workspaceRootPath).filter(s => {
     const category = getStatusCategory(workspaceRootPath, s.todoState || 'todo');
     return category === 'closed';
   });
@@ -687,12 +719,286 @@ export function listCompletedSessions(workspaceRootPath: string): SessionMetadat
 /**
  * List inbox sessions (category: open)
  * Includes todo, in-progress, needs-review, and any custom "open" statuses
+ * Excludes archived sessions
  */
 export function listInboxSessions(workspaceRootPath: string): SessionMetadata[] {
-  return listSessions(workspaceRootPath).filter(s => {
+  return listActiveSessions(workspaceRootPath).filter(s => {
     const category = getStatusCategory(workspaceRootPath, s.todoState || 'todo');
     return category === 'open';
   });
+}
+
+/**
+ * List archived sessions
+ */
+export function listArchivedSessions(workspaceRootPath: string): SessionMetadata[] {
+  return listSessions(workspaceRootPath).filter(s => s.isArchived === true);
+}
+
+/**
+ * List active (non-archived) sessions
+ */
+export function listActiveSessions(workspaceRootPath: string): SessionMetadata[] {
+  return listSessions(workspaceRootPath).filter(s => s.isArchived !== true);
+}
+
+/**
+ * Delete archived sessions older than the specified number of days
+ * Returns the number of sessions deleted
+ */
+export function deleteOldArchivedSessions(workspaceRootPath: string, retentionDays: number): number {
+  const cutoffTime = Date.now() - (retentionDays * 24 * 60 * 60 * 1000);
+  const archivedSessions = listArchivedSessions(workspaceRootPath);
+  let deletedCount = 0;
+
+  for (const session of archivedSessions) {
+    // Use archivedAt if available, otherwise fall back to lastUsedAt
+    const archiveTime = session.archivedAt ?? session.lastUsedAt;
+    if (archiveTime < cutoffTime) {
+      if (deleteSession(workspaceRootPath, session.id)) {
+        deletedCount++;
+      }
+    }
+  }
+
+  return deletedCount;
+}
+
+// ============================================================
+// Sub-Session Hierarchy (1 level max)
+// ============================================================
+
+/**
+ * Sort siblings by explicit order or creation time.
+ * Uses siblingOrder if any sibling has it set, otherwise falls back to createdAt.
+ */
+export function sortSiblings(sessions: SessionMetadata[]): SessionMetadata[] {
+  const hasExplicitOrder = sessions.some(s => s.siblingOrder !== undefined);
+
+  return [...sessions].sort((a, b) => {
+    if (hasExplicitOrder) {
+      // Explicit order takes precedence (undefined = end)
+      return (a.siblingOrder ?? Infinity) - (b.siblingOrder ?? Infinity);
+    }
+    // Default: creation order
+    return a.createdAt - b.createdAt;
+  });
+}
+
+/**
+ * Create a sub-session under a parent session.
+ * Sub-sessions share the same workspace but have a parentSessionId reference.
+ */
+export async function createSubSession(
+  workspaceRootPath: string,
+  parentSessionId: string,
+  options?: {
+    name?: string;
+    workingDirectory?: string;
+    permissionMode?: SessionConfig['permissionMode'];
+    enabledSourceSlugs?: string[];
+    model?: string;
+    todoState?: SessionConfig['todoState'];
+    labels?: string[];
+  }
+): Promise<SessionConfig> {
+  // Verify parent exists
+  const parent = loadSession(workspaceRootPath, parentSessionId);
+  if (!parent) {
+    throw new Error(`Parent session not found: ${parentSessionId}`);
+  }
+
+  // Prevent nested sub-sessions (max 1 level)
+  if (parent.parentSessionId) {
+    throw new Error('Cannot create sub-session of a sub-session (max 1 level)');
+  }
+
+  // Create child session with parentSessionId set
+  const session = await createSession(workspaceRootPath, {
+    name: options?.name,
+    workingDirectory: options?.workingDirectory ?? parent.workingDirectory,
+    permissionMode: options?.permissionMode ?? parent.permissionMode,
+    enabledSourceSlugs: options?.enabledSourceSlugs ?? parent.enabledSourceSlugs,
+    model: options?.model ?? parent.model,
+    todoState: options?.todoState,
+    labels: options?.labels,
+  });
+
+  // Set parentSessionId
+  const storedSession = loadSession(workspaceRootPath, session.id);
+  if (storedSession) {
+    storedSession.parentSessionId = parentSessionId;
+    await saveSession(storedSession);
+  }
+
+  return { ...session, parentSessionId };
+}
+
+/**
+ * Get all direct children of a session.
+ * Returns sessions where parentSessionId matches the given sessionId.
+ */
+export function getChildSessions(workspaceRootPath: string, parentSessionId: string): SessionMetadata[] {
+  const allSessions = listSessions(workspaceRootPath);
+  const children = allSessions.filter(s => s.parentSessionId === parentSessionId);
+  return sortSiblings(children);
+}
+
+/**
+ * Get parent session metadata (if this is a sub-session).
+ */
+export function getParentSession(workspaceRootPath: string, sessionId: string): SessionMetadata | null {
+  const session = loadSession(workspaceRootPath, sessionId);
+  if (!session?.parentSessionId) {
+    return null;
+  }
+
+  const allSessions = listSessions(workspaceRootPath);
+  return allSessions.find(s => s.id === session.parentSessionId) ?? null;
+}
+
+/**
+ * Get sibling sessions (same parent, excluding self).
+ * Returns empty array if session has no parent.
+ */
+export function getSiblingsSessions(workspaceRootPath: string, sessionId: string): SessionMetadata[] {
+  const session = loadSession(workspaceRootPath, sessionId);
+  if (!session?.parentSessionId) {
+    return [];
+  }
+
+  const children = getChildSessions(workspaceRootPath, session.parentSessionId);
+  return children.filter(s => s.id !== sessionId);
+}
+
+/**
+ * Get full session family (parent + siblings) for a sub-session.
+ * Returns null if session is a root session (no parent).
+ */
+export function getSessionFamily(workspaceRootPath: string, sessionId: string): {
+  parent: SessionMetadata;
+  siblings: SessionMetadata[];
+  self: SessionMetadata;
+} | null {
+  const session = loadSession(workspaceRootPath, sessionId);
+  if (!session?.parentSessionId) {
+    return null;
+  }
+
+  const parent = getParentSession(workspaceRootPath, sessionId);
+  if (!parent) {
+    return null;
+  }
+
+  const allChildren = getChildSessions(workspaceRootPath, session.parentSessionId);
+  const self = allChildren.find(s => s.id === sessionId);
+  const siblings = allChildren.filter(s => s.id !== sessionId);
+
+  if (!self) {
+    return null;
+  }
+
+  return { parent, siblings, self };
+}
+
+/**
+ * Check if a session has any children.
+ */
+export function hasChildren(workspaceRootPath: string, sessionId: string): boolean {
+  return getChildSessions(workspaceRootPath, sessionId).length > 0;
+}
+
+/**
+ * Update sibling order for multiple sessions at once.
+ * Used when user reorders siblings via drag-drop.
+ */
+export async function updateSiblingOrder(
+  workspaceRootPath: string,
+  orderedSessionIds: string[]
+): Promise<void> {
+  for (let i = 0; i < orderedSessionIds.length; i++) {
+    const sessionId = orderedSessionIds[i];
+    if (!sessionId) continue;
+
+    const session = loadSession(workspaceRootPath, sessionId);
+    if (session) {
+      session.siblingOrder = i;
+      await saveSession(session);
+    }
+  }
+}
+
+/**
+ * Archive a session and all its children.
+ * Returns the count of sessions archived.
+ */
+export async function archiveSessionCascade(workspaceRootPath: string, sessionId: string): Promise<number> {
+  const children = getChildSessions(workspaceRootPath, sessionId);
+  let count = 0;
+
+  // Archive children first
+  for (const child of children) {
+    await archiveSession(workspaceRootPath, child.id);
+    count++;
+  }
+
+  // Archive parent
+  await archiveSession(workspaceRootPath, sessionId);
+  count++;
+
+  return count;
+}
+
+/**
+ * Unarchive a session and optionally its children.
+ * Returns the count of sessions unarchived.
+ */
+export async function unarchiveSessionCascade(
+  workspaceRootPath: string,
+  sessionId: string,
+  includeChildren: boolean = true
+): Promise<number> {
+  let count = 0;
+
+  // Unarchive parent first
+  await unarchiveSession(workspaceRootPath, sessionId);
+  count++;
+
+  // Optionally unarchive children
+  if (includeChildren) {
+    const children = getChildSessions(workspaceRootPath, sessionId);
+    for (const child of children) {
+      if (child.isArchived) {
+        await unarchiveSession(workspaceRootPath, child.id);
+        count++;
+      }
+    }
+  }
+
+  return count;
+}
+
+/**
+ * Delete a session and all its children.
+ * Returns the count of sessions deleted.
+ */
+export function deleteSessionCascade(workspaceRootPath: string, sessionId: string): number {
+  const children = getChildSessions(workspaceRootPath, sessionId);
+  let count = 0;
+
+  // Delete children first
+  for (const child of children) {
+    if (deleteSession(workspaceRootPath, child.id)) {
+      count++;
+    }
+  }
+
+  // Delete parent
+  if (deleteSession(workspaceRootPath, sessionId)) {
+    count++;
+  }
+
+  return count;
 }
 
 // ============================================================

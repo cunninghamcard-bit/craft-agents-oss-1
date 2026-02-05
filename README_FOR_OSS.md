@@ -286,11 +286,11 @@ Tool responses exceeding ~60KB are automatically summarized using Claude Haiku w
 External apps can navigate using `craftagents://` URLs:
 
 ```
-craftagents://allChats                    # All chats view
-craftagents://allChats/chat/session123    # Specific chat
-craftagents://settings                    # Settings
-craftagents://sources/source/github       # Source info
-craftagents://action/new-chat             # Create new chat
+craftagents://allSessions                      # All sessions view
+craftagents://allSessions/session/session123   # Specific session
+craftagents://settings                         # Settings
+craftagents://sources/source/github            # Source info
+craftagents://action/new-chat                  # Create new session
 ```
 
 ## Tech Stack

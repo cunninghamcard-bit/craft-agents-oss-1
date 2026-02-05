@@ -31,7 +31,7 @@ Target a specific workspace by adding the workspace ID to the path:
 ```
 craftagents://workspace/{workspaceId}/action/new-chat
 craftagents://workspace/{workspaceId}/action/new-chat?input=Hello&send=true
-craftagents://workspace/{workspaceId}/allChats
+craftagents://workspace/{workspaceId}/allSessions
 ```
 
 Without workspace targeting, deep links use the currently focused window.
@@ -40,14 +40,14 @@ Without workspace targeting, deep links use the currently focused window.
 
 Navigate directly to specific views:
 
-**Chats:**
+**Sessions:**
 ```
-craftagents://allChats
-craftagents://allChats/chat/{sessionId}
+craftagents://allSessions
+craftagents://allSessions/session/{sessionId}
 craftagents://flagged
-craftagents://flagged/chat/{sessionId}
+craftagents://flagged/session/{sessionId}
 craftagents://state/{statusId}
-craftagents://state/{statusId}/chat/{sessionId}
+craftagents://state/{statusId}/session/{sessionId}
 ```
 
 **Sources:**
@@ -88,7 +88,7 @@ Open links in a new window instead of the current one:
 
 ```
 craftagents://action/new-chat?window=focused
-craftagents://allChats?window=full
+craftagents://allSessions?window=full
 ```
 
 | Mode | Description |

@@ -170,7 +170,7 @@ export const DEFAULT_CODEX_MODEL = 'gpt-5.2-codex';
 export const EXTRACTION_MODEL = 'claude-opus-4-5-20251101';
 
 /** Model for API response summarization (cost efficient) */
-export const SUMMARIZATION_MODEL = 'claude-haiku-4-5-latest';
+export const SUMMARIZATION_MODEL = 'claude-haiku-4-5-20251001';
 
 /** Model for instruction updates (high quality for accurate document editing) */
 export const INSTRUCTION_UPDATE_MODEL = 'claude-opus-4-5-20251101';

@@ -112,6 +112,15 @@ export interface SessionConfig {
   };
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean;
+  /** Whether this session is archived */
+  isArchived?: boolean;
+  /** Timestamp when session was archived (for retention policy) */
+  archivedAt?: number;
+  // Sub-session hierarchy (1 level max)
+  /** Parent session ID (if this is a sub-session). Null/undefined = root session. */
+  parentSessionId?: string;
+  /** Explicit sibling order (lazy - only populated when user reorders). */
+  siblingOrder?: number;
 }
 
 /**
@@ -187,6 +196,15 @@ export interface SessionHeader {
   };
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean;
+  /** Whether this session is archived */
+  isArchived?: boolean;
+  /** Timestamp when session was archived (for retention policy) */
+  archivedAt?: number;
+  // Sub-session hierarchy (1 level max)
+  /** Parent session ID (if this is a sub-session). Null/undefined = root session. */
+  parentSessionId?: string;
+  /** Explicit sibling order (lazy - only populated when user reorders). */
+  siblingOrder?: number;
   // Pre-computed fields for fast list loading
   /** Number of messages in session */
   messageCount: number;
@@ -257,4 +275,13 @@ export interface SessionMetadata {
   tokenUsage?: SessionTokenUsage;
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean;
+  /** Whether this session is archived */
+  isArchived?: boolean;
+  /** Timestamp when session was archived (for retention policy) */
+  archivedAt?: number;
+  // Sub-session hierarchy (1 level max)
+  /** Parent session ID (if this is a sub-session). Null/undefined = root session. */
+  parentSessionId?: string;
+  /** Explicit sibling order (lazy - only populated when user reorders). */
+  siblingOrder?: number;
 }

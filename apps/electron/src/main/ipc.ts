@@ -11,7 +11,7 @@ import { WindowManager } from './window-manager'
 import { registerOnboardingHandlers } from './onboarding'
 import { IPC_CHANNELS, type FileAttachment, type StoredAttachment, type AuthType, type ApiSetupInfo, type SendMessageOptions } from '../shared/types'
 import { readFileAttachment, perf, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
-import { getAuthType, setAuthType, getPreferencesPath, getCustomModel, setCustomModel, getModel, setModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, getAnthropicBaseUrl, setAnthropicBaseUrl, loadStoredConfig, saveConfig, type Workspace, SUMMARIZATION_MODEL, getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, type LlmConnection, type LlmConnectionWithStatus } from '@craft-agent/shared/config'
+import { getAuthType, setAuthType, getPreferencesPath, getCustomModel, setCustomModel, getModel, setModel, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId, addWorkspace, setActiveWorkspace, getAnthropicBaseUrl, setAnthropicBaseUrl, loadStoredConfig, saveConfig, type Workspace, DEFAULT_MODEL, SUMMARIZATION_MODEL, getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, type LlmConnection, type LlmConnectionWithStatus } from '@craft-agent/shared/config'
 import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, getSourcesBySlugs, type LoadedSource } from '@craft-agent/shared/sources'
 import { isValidThinkingLevel } from '@craft-agent/shared/agent/thinking-levels'
@@ -181,7 +181,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   // Open a session in a new window
   ipcMain.handle(IPC_CHANNELS.OPEN_SESSION_IN_NEW_WINDOW, async (_event, workspaceId: string, sessionId: string) => {
     // Build deep link for session navigation
-    const deepLink = `craftagents://allChats/chat/${sessionId}`
+    const deepLink = `craftagents://allSessions/session/${sessionId}`
     windowManager.createWindow({
       workspaceId,
       focused: true,
@@ -251,6 +251,14 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
   ipcMain.handle(IPC_CHANNELS.CREATE_SESSION, async (_event, workspaceId: string, options?: import('../shared/types').CreateSessionOptions) => {
     const end = perf.start('ipc.createSession', { workspaceId })
     const session = sessionManager.createSession(workspaceId, options)
+    end()
+    return session
+  })
+
+  // Create a sub-session under a parent session
+  ipcMain.handle(IPC_CHANNELS.CREATE_SUB_SESSION, async (_event, workspaceId: string, parentSessionId: string, options?: import('../shared/types').CreateSessionOptions) => {
+    const end = perf.start('ipc.createSubSession', { workspaceId, parentSessionId })
+    const session = await sessionManager.createSubSession(workspaceId, parentSessionId, options)
     end()
     return session
   })
@@ -341,6 +349,10 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         return sessionManager.flagSession(sessionId)
       case 'unflag':
         return sessionManager.unflagSession(sessionId)
+      case 'archive':
+        return sessionManager.archiveSession(sessionId)
+      case 'unarchive':
+        return sessionManager.unarchiveSession(sessionId)
       case 'rename':
         return sessionManager.renameSession(sessionId, command.name)
       case 'setTodoState':
@@ -400,6 +412,15 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         return sessionManager.markCompactionComplete(sessionId)
       case 'clearPendingPlanExecution':
         return sessionManager.clearPendingPlanExecution(sessionId)
+      // Sub-session hierarchy
+      case 'getSessionFamily':
+        return sessionManager.getSessionFamily(sessionId)
+      case 'updateSiblingOrder':
+        return sessionManager.updateSiblingOrder(command.orderedSessionIds)
+      case 'archiveCascade':
+        return sessionManager.archiveSessionCascade(sessionId)
+      case 'deleteCascade':
+        return sessionManager.deleteSessionCascade(sessionId)
       default: {
         const _exhaustive: never = command
         throw new Error(`Unknown session command: ${JSON.stringify(command)}`)
@@ -1309,7 +1330,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       })
 
       // Determine test model: user-specified model takes priority, otherwise use
-      // the default Haiku model for known providers (validates full pipeline).
+      // the default Sonnet model for known providers (validates full pipeline).
       // Custom endpoints MUST specify a model — there's no sensible default.
       const userModel = modelName?.trim()
       let testModel: string
@@ -1317,7 +1338,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         testModel = userModel
       } else if (!trimmedUrl || trimmedUrl.includes('openrouter.ai') || trimmedUrl.includes('ai-gateway.vercel.sh')) {
         // Anthropic, OpenRouter, and Vercel are all Anthropic-compatible — same model IDs
-        testModel = SUMMARIZATION_MODEL
+        testModel = DEFAULT_MODEL
       } else {
         // Custom endpoint with no model specified — can't test without knowing the model
         return { success: false, error: 'Please specify a model for custom endpoints' }
@@ -1375,7 +1396,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
         lowerMsg.includes('tool use is not supported') ||
         (lowerMsg.includes('tool') && lowerMsg.includes('not') && lowerMsg.includes('support'))
       if (isToolSupportError) {
-        const displayModel = modelName?.trim() || SUMMARIZATION_MODEL
+        const displayModel = modelName?.trim() || DEFAULT_MODEL
         return { success: false, error: `Model "${displayModel}" does not support tool/function calling. Craft Agent requires a model with tool support (e.g. Claude, GPT-4, Gemini).` }
       }
 

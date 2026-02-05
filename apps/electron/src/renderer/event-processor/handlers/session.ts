@@ -16,6 +16,8 @@ import type {
   TodoStateChangedEvent,
   SessionFlaggedEvent,
   SessionUnflaggedEvent,
+  SessionArchivedEvent,
+  SessionUnarchivedEvent,
   NameChangedEvent,
   PermissionRequestEvent,
   CredentialRequestEvent,
@@ -570,6 +572,40 @@ export function handleSessionUnflagged(
   return {
     state: {
       session: { ...session, isFlagged: false },
+      streaming,
+    },
+    effects: [],
+  }
+}
+
+/**
+ * Handle session_archived - mark session as archived
+ */
+export function handleSessionArchived(
+  state: SessionState,
+  _event: SessionArchivedEvent
+): ProcessResult {
+  const { session, streaming } = state
+  return {
+    state: {
+      session: { ...session, isArchived: true, archivedAt: Date.now() },
+      streaming,
+    },
+    effects: [],
+  }
+}
+
+/**
+ * Handle session_unarchived - mark session as unarchived
+ */
+export function handleSessionUnarchived(
+  state: SessionState,
+  _event: SessionUnarchivedEvent
+): ProcessResult {
+  const { session, streaming } = state
+  return {
+    state: {
+      session: { ...session, isArchived: false, archivedAt: undefined },
       streaming,
     },
     effects: [],

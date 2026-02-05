@@ -335,7 +335,7 @@ A workspace that auto-tags Linear issues, deadlines, contacts, and budgets:
 Labels appear in the left sidebar as a multi-level expandable section:
 
 ```
-All Chats    (flat, total count)
+All Sessions (flat, total count)
 Flagged      (flat, flagged count)
 States       (expandable → status sub-items)
 Labels       (expandable)

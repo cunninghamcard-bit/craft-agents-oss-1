@@ -577,7 +577,7 @@ src/renderer/contexts/NavigationContext.tsx  # React context for navigation
 
 | Type | Purpose | Example |
 |------|---------|---------|
-| **view** | Navigate to views | `allChats`, `settings/shortcuts`, `sources/source/github` |
+| **view** | Navigate to views | `allSessions`, `settings/shortcuts`, `sources/source/github` |
 | **action** | Trigger actions | `action/new-chat`, `action/delete-session/abc123` |
 
 #### Using Routes
@@ -588,9 +588,9 @@ import { navigate, routes } from '@/lib/navigate'
 // View routes (compound format)
 navigate('settings')                       // Open settings
 navigate('settings/shortcuts')             // Open shortcuts settings
-navigate('allChats')                       // All chats view
-navigate('allChats/chat/session123')       // Specific chat
-navigate('flagged/chat/session123')        // Flagged chat
+navigate('allSessions')                    // All sessions view
+navigate('allSessions/session/session123') // Specific session
+navigate('flagged/session/session123')     // Flagged session
 navigate('sources')                        // Sources view
 navigate('sources/source/github')          // Source info
 
@@ -639,8 +639,8 @@ buildDeepLink('settings')
 // → 'craftagents://settings'
 
 // With workspace
-buildDeepLink('allChats/chat/abc', 'workspace123')
-// → 'craftagents://workspace/workspace123/allChats/chat/abc'
+buildDeepLink('allSessions/session/abc', 'workspace123')
+// → 'craftagents://workspace/workspace123/allSessions/session/abc'
 ```
 
 ### Deep Links
@@ -649,9 +649,9 @@ The app registers the `craftagents://` URL scheme for external deep linking.
 
 **URL Format (Compound Routes):**
 ```
-craftagents://allChats[/chat/{sessionId}]
-craftagents://flagged[/chat/{sessionId}]
-craftagents://state/{stateId}[/chat/{sessionId}]
+craftagents://allSessions[/session/{sessionId}]
+craftagents://flagged[/session/{sessionId}]
+craftagents://state/{stateId}[/session/{sessionId}]
 craftagents://sources[/source/{sourceSlug}]
 craftagents://settings[/{subpage}]
 craftagents://action/{actionName}[/{id}][?params]
@@ -663,12 +663,12 @@ craftagents://workspace/{workspaceId}/{compoundRoute}
 |----------|-----|
 | Settings | `craftagents://settings` |
 | Shortcuts | `craftagents://settings/shortcuts` |
-| All chats | `craftagents://allChats` |
-| Chat session | `craftagents://allChats/chat/session456` |
+| All sessions | `craftagents://allSessions` |
+| Specific session | `craftagents://allSessions/session/session456` |
 | Sources | `craftagents://sources` |
 | Source info | `craftagents://sources/source/github` |
-| New chat | `craftagents://action/new-chat` |
-| With workspace | `craftagents://workspace/ws123/allChats/chat/abc` |
+| New session | `craftagents://action/new-chat` |
+| With workspace | `craftagents://workspace/ws123/allSessions/session/abc` |
 
 **Flow:**
 1. User clicks `craftagents://` URL or app launched with URL

@@ -10,20 +10,26 @@
  *
  * In focused mode (single window), wraps content with StoplightProvider
  * so PanelHeader components automatically compensate for macOS traffic lights.
+ *
+ * When multiple sessions are selected (multi-select mode), shows the
+ * MultiSelectPanel with batch action buttons instead of a single chat.
  */
 
 import * as React from 'react'
+import { useCallback } from 'react'
 import { Panel } from './Panel'
+import { MultiSelectPanel } from './MultiSelectPanel'
 import { cn } from '@/lib/utils'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { StoplightProvider } from '@/context/StoplightContext'
 import {
   useNavigationState,
-  isChatsNavigation,
+  isSessionsNavigation,
   isSourcesNavigation,
   isSettingsNavigation,
   isSkillsNavigation,
 } from '@/contexts/NavigationContext'
+import { useSessionSelection, useIsMultiSelectActive, useSelectedIds, useSelectionCount } from '@/hooks/useSession'
 import { SourceInfoPage, ChatPage } from '@/pages'
 import SkillInfoPage from '@/pages/SkillInfoPage'
 import { getSettingsPageComponent } from '@/pages/settings/settings-pages'
@@ -40,7 +46,32 @@ export function MainContentPanel({
   className,
 }: MainContentPanelProps) {
   const navState = useNavigationState()
-  const { activeWorkspaceId } = useAppShellContext()
+  const { activeWorkspaceId, onTodoStateChange, onDeleteSession } = useAppShellContext()
+
+  // Multi-select state
+  const isMultiSelectActive = useIsMultiSelectActive()
+  const selectedIds = useSelectedIds()
+  const selectionCount = useSelectionCount()
+  const { clearMultiSelect } = useSessionSelection()
+
+  // Batch operations for multi-select
+  const handleBatchSetStatus = useCallback((status: 'done' | 'todo') => {
+    selectedIds.forEach(sessionId => {
+      onTodoStateChange(sessionId, status)
+    })
+  }, [selectedIds, onTodoStateChange])
+
+  const handleBatchDelete = useCallback(async () => {
+    // Delete all selected sessions (with confirmation for first one)
+    const ids = [...selectedIds]
+    for (let i = 0; i < ids.length; i++) {
+      // Only show confirmation for first session (user confirms "delete X sessions")
+      const skipConfirmation = i > 0
+      await onDeleteSession(ids[i], skipConfirmation)
+    }
+    // Clear selection after deletion
+    clearMultiSelect()
+  }, [selectedIds, onDeleteSession, clearMultiSelect])
 
   // Wrap content with StoplightProvider so PanelHeaders auto-compensate in focused mode
   const wrapWithStoplight = (content: React.ReactNode) => (
@@ -103,8 +134,22 @@ export function MainContentPanel({
     )
   }
 
-  // Chats navigator - show chat or empty state
-  if (isChatsNavigation(navState)) {
+  // Chats navigator - show chat, multi-select panel, or empty state
+  if (isSessionsNavigation(navState)) {
+    // Multi-select mode: show batch actions panel
+    if (isMultiSelectActive) {
+      return wrapWithStoplight(
+        <Panel variant="grow" className={className}>
+          <MultiSelectPanel
+            count={selectionCount}
+            onSetStatus={handleBatchSetStatus}
+            onDelete={handleBatchDelete}
+            onClearSelection={clearMultiSelect}
+          />
+        </Panel>
+      )
+    }
+
     if (navState.details) {
       return wrapWithStoplight(
         <Panel variant="grow" className={className}>

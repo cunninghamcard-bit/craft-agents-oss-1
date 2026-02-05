@@ -6,12 +6,12 @@
  *
  * Route Formats:
  * - action/{name}[/{id}] - Trigger side effects
- * - {filter}[/chat/{sessionId}] - Compound view routes for full navigation state
+ * - {filter}[/session/{sessionId}] - Compound view routes for full navigation state
  *
  * Usage:
  *   import { routes } from '@/shared/routes'
- *   navigate(routes.action.newChat())
- *   navigate(routes.view.allChats())
+ *   navigate(routes.action.newSession())
+ *   navigate(routes.view.allSessions())
  *   navigate(routes.view.settings('shortcuts'))
  */
 
@@ -37,15 +37,15 @@ export const routes = {
   // ============================================
   action: {
     /**
-     * Create a new chat session
+     * Create a new session
      * @param input - Optional initial message to pre-fill or send
      * @param name - Optional session name
      * @param send - If true and input is provided, immediately sends the message
      * @param status - Optional status/todo-state ID to apply to the new session
      * @param label - Optional label ID to apply to the new session
      */
-    newChat: (params?: { input?: string; name?: string; send?: boolean; status?: string; label?: string }) =>
-      `action/new-chat${toQueryString(params ? { ...params, send: params.send ? 'true' : undefined } : undefined)}` as const,
+    newSession: (params?: { input?: string; name?: string; send?: boolean; status?: string; label?: string }) =>
+      `action/new-session${toQueryString(params ? { ...params, send: params.send ? 'true' : undefined } : undefined)}` as const,
 
     /** Rename a session */
     renameSession: (sessionId: string, name: string) =>
@@ -91,30 +91,34 @@ export const routes = {
   // View Routes - Compound sidebar/navigator/details routes
   // ============================================
   view: {
-    /** All chats view (chats navigator, allChats filter) */
-    allChats: (sessionId?: string) =>
-      sessionId ? `allChats/chat/${sessionId}` as const : 'allChats' as const,
+    /** All sessions view (sessions navigator, allSessions filter) */
+    allSessions: (sessionId?: string) =>
+      sessionId ? `allSessions/session/${sessionId}` as const : 'allSessions' as const,
 
-    /** Flagged view (chats navigator, flagged filter) */
+    /** Flagged view (sessions navigator, flagged filter) */
     flagged: (sessionId?: string) =>
-      sessionId ? `flagged/chat/${sessionId}` as const : 'flagged' as const,
+      sessionId ? `flagged/session/${sessionId}` as const : 'flagged' as const,
 
-    /** Todo state filter view (chats navigator, state filter) */
+    /** Archived view (sessions navigator, archived filter) */
+    archived: (sessionId?: string) =>
+      sessionId ? `archived/session/${sessionId}` as const : 'archived' as const,
+
+    /** Todo state filter view (sessions navigator, state filter) */
     state: (stateId: string, sessionId?: string) =>
       sessionId
-        ? `state/${stateId}/chat/${sessionId}` as const
+        ? `state/${stateId}/session/${sessionId}` as const
         : `state/${stateId}` as const,
 
-    /** Label filter view (chats navigator, label filter — includes descendants via tree hierarchy) */
+    /** Label filter view (sessions navigator, label filter — includes descendants via tree hierarchy) */
     label: (labelId: string, sessionId?: string) =>
       sessionId
-        ? `label/${encodeURIComponent(labelId)}/chat/${sessionId}` as const
+        ? `label/${encodeURIComponent(labelId)}/session/${sessionId}` as const
         : `label/${encodeURIComponent(labelId)}` as const,
 
-    /** View filter (chats navigator, view filter — evaluated dynamically) */
+    /** View filter (sessions navigator, view filter — evaluated dynamically) */
     view: (viewId: string, sessionId?: string) =>
       sessionId
-        ? `view/${encodeURIComponent(viewId)}/chat/${sessionId}` as const
+        ? `view/${encodeURIComponent(viewId)}/session/${sessionId}` as const
         : `view/${encodeURIComponent(viewId)}` as const,
 
     /** Sources view (sources navigator) - supports type filtering */

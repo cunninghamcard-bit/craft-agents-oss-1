@@ -381,6 +381,15 @@ export interface Session {
   }
   /** When true, session is hidden from session list (e.g., mini edit sessions) */
   hidden?: boolean
+  /** Whether this session is archived */
+  isArchived?: boolean
+  /** Timestamp when session was archived (for retention policy) */
+  archivedAt?: number
+  // Sub-session hierarchy (1 level max)
+  /** Parent session ID (if this is a sub-session). Null/undefined = root session. */
+  parentSessionId?: string
+  /** Explicit sibling order (lazy - only populated when user reorders). */
+  siblingOrder?: number
 }
 
 /**
@@ -388,6 +397,8 @@ export interface Session {
  * Note: Session creation itself has no options - auto-send is handled by NavigationContext
  */
 export interface CreateSessionOptions {
+  /** Session name (optional, AI-generated if not provided) */
+  name?: string
   /** Initial permission mode for the session (overrides workspace default) */
   permissionMode?: PermissionMode
   /**
@@ -411,6 +422,8 @@ export interface CreateSessionOptions {
   labels?: string[]
   /** Whether the session should be flagged */
   isFlagged?: boolean
+  /** Per-session source selection (source slugs) */
+  enabledSourceSlugs?: string[]
 }
 
 // Events sent from main to renderer
@@ -449,10 +462,17 @@ export type SessionEvent =
   // Session metadata events (for multi-window sync)
   | { type: 'session_flagged'; sessionId: string }
   | { type: 'session_unflagged'; sessionId: string }
+  | { type: 'session_archived'; sessionId: string }
+  | { type: 'session_unarchived'; sessionId: string }
   | { type: 'name_changed'; sessionId: string; name?: string }
   | { type: 'session_model_changed'; sessionId: string; model: string | null }
   | { type: 'todo_state_changed'; sessionId: string; todoState: TodoState }
   | { type: 'session_deleted'; sessionId: string }
+  // Sub-session events
+  | { type: 'session_created'; sessionId: string; parentSessionId?: string }
+  | { type: 'sessions_reordered' }
+  | { type: 'session_archived_cascade'; sessionId: string; count: number }
+  | { type: 'session_deleted_cascade'; sessionId: string; count: number }
   | { type: 'session_shared'; sessionId: string; sharedUrl: string }
   | { type: 'session_unshared'; sessionId: string }
   // Auth request events (unified auth flow)
@@ -496,6 +516,8 @@ export interface SendMessageOptions {
 export type SessionCommand =
   | { type: 'flag' }
   | { type: 'unflag' }
+  | { type: 'archive' }
+  | { type: 'unarchive' }
   | { type: 'rename'; name: string }
   | { type: 'setTodoState'; state: TodoState }
   | { type: 'markRead' }
@@ -520,6 +542,20 @@ export type SessionCommand =
   | { type: 'setPendingPlanExecution'; planPath: string }
   | { type: 'markCompactionComplete' }
   | { type: 'clearPendingPlanExecution' }
+  // Sub-session hierarchy
+  | { type: 'getSessionFamily' }
+  | { type: 'updateSiblingOrder'; orderedSessionIds: string[] }
+  | { type: 'archiveCascade' }
+  | { type: 'deleteCascade' }
+
+/**
+ * Session family information (parent + siblings)
+ */
+export interface SessionFamily {
+  parent: SessionMeta
+  siblings: SessionMeta[]
+  self: SessionMeta
+}
 
 /**
  * Parameters for opening a new chat session
@@ -536,6 +572,7 @@ export const IPC_CHANNELS = {
   // Session management
   GET_SESSIONS: 'sessions:get',
   CREATE_SESSION: 'sessions:create',
+  CREATE_SUB_SESSION: 'sessions:createSubSession',
   DELETE_SESSION: 'sessions:delete',
   GET_SESSION_MESSAGES: 'sessions:getMessages',
   SEND_MESSAGE: 'sessions:sendMessage',
@@ -835,6 +872,7 @@ export interface ElectronAPI {
   getSessions(): Promise<Session[]>
   getSessionMessages(sessionId: string): Promise<Session | null>
   createSession(workspaceId: string, options?: CreateSessionOptions): Promise<Session>
+  createSubSession(workspaceId: string, parentSessionId: string, options?: CreateSessionOptions): Promise<Session>
   deleteSession(sessionId: string): Promise<void>
   sendMessage(sessionId: string, message: string, attachments?: FileAttachment[], storedAttachments?: StoredAttachmentType[], options?: SendMessageOptions): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
@@ -844,7 +882,7 @@ export interface ElectronAPI {
   respondToCredential(sessionId: string, requestId: string, response: CredentialResponse): Promise<boolean>
 
   // Consolidated session command handler
-  sessionCommand(sessionId: string, command: SessionCommand): Promise<void | ShareResult | RefreshTitleResult>
+  sessionCommand(sessionId: string, command: SessionCommand): Promise<void | ShareResult | RefreshTitleResult | SessionFamily | { count: number }>
 
   // Pending plan execution (for reload recovery)
   getPendingPlanExecution(sessionId: string): Promise<{ planPath: string; awaitingCompaction: boolean } | null>
@@ -1192,7 +1230,7 @@ export interface WorkspaceSettings {
  * Navigation payload for deep links (main → renderer)
  */
 export interface DeepLinkNavigation {
-  /** Compound route format (e.g., 'allChats/chat/abc123', 'settings/shortcuts') */
+  /** Compound route format (e.g., 'allSessions/session/abc123', 'settings/shortcuts') */
   view?: string
   /** Tab type */
   tabType?: string
@@ -1216,18 +1254,20 @@ export type RightSidebarPanel =
   | { type: 'none' }
 
 /**
- * Chat filter options - determines which sessions to show
- * - 'allChats': All sessions regardless of status
+ * Session filter options - determines which sessions to show
+ * - 'allSessions': All sessions regardless of status (excludes archived)
  * - 'flagged': Only flagged sessions
  * - 'state': Sessions with specific status ID
  * - 'label': Sessions with specific label (includes descendants via tree hierarchy)
+ * - 'archived': Only archived sessions
  */
-export type ChatFilter =
-  | { kind: 'allChats' }
+export type SessionFilter =
+  | { kind: 'allSessions' }
   | { kind: 'flagged' }
   | { kind: 'state'; stateId: string }
   | { kind: 'label'; labelId: string }
   | { kind: 'view'; viewId: string }
+  | { kind: 'archived' }
 
 /**
  * Settings subpage options - re-exported from settings-registry (single source of truth)
@@ -1236,13 +1276,13 @@ export type { SettingsSubpage } from './settings-registry'
 import { isValidSettingsSubpage, type SettingsSubpage } from './settings-registry'
 
 /**
- * Chats navigation state - shows SessionList in navigator
+ * Sessions navigation state - shows SessionList in navigator
  */
-export interface ChatsNavigationState {
-  navigator: 'chats'
-  filter: ChatFilter
-  /** Selected chat details, or null for empty state */
-  details: { type: 'chat'; sessionId: string } | null
+export interface SessionsNavigationState {
+  navigator: 'sessions'
+  filter: SessionFilter
+  /** Selected session details, or null for empty state */
+  details: { type: 'session'; sessionId: string } | null
   /** Optional right sidebar panel state */
   rightSidebar?: RightSidebarPanel
 }
@@ -1299,17 +1339,17 @@ export interface SkillsNavigationState {
  * - MainContentPanel: what details to display (from details or subpage)
  */
 export type NavigationState =
-  | ChatsNavigationState
+  | SessionsNavigationState
   | SourcesNavigationState
   | SettingsNavigationState
   | SkillsNavigationState
 
 /**
- * Type guard to check if state is chats navigation
+ * Type guard to check if state is sessions navigation
  */
-export const isChatsNavigation = (
+export const isSessionsNavigation = (
   state: NavigationState
-): state is ChatsNavigationState => state.navigator === 'chats'
+): state is SessionsNavigationState => state.navigator === 'sessions'
 
 /**
  * Type guard to check if state is sources navigation
@@ -1333,11 +1373,11 @@ export const isSkillsNavigation = (
 ): state is SkillsNavigationState => state.navigator === 'skills'
 
 /**
- * Default navigation state - allChats with no selection
+ * Default navigation state - allSessions with no selection
  */
 export const DEFAULT_NAVIGATION_STATE: NavigationState = {
-  navigator: 'chats',
-  filter: { kind: 'allChats' },
+  navigator: 'sessions',
+  filter: { kind: 'allSessions' },
   details: null,
 }
 
@@ -1407,11 +1447,12 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
     }
   }
 
-  // Handle chats - parse filter and optional session
-  const parseChatsKey = (filterKey: string, sessionId?: string): NavigationState | null => {
-    let filter: ChatFilter
-    if (filterKey === 'allChats') filter = { kind: 'allChats' }
+  // Handle sessions - parse filter and optional session
+  const parseSessionsKey = (filterKey: string, sessionId?: string): NavigationState | null => {
+    let filter: SessionFilter
+    if (filterKey === 'allSessions') filter = { kind: 'allSessions' }
     else if (filterKey === 'flagged') filter = { kind: 'flagged' }
+    else if (filterKey === 'archived') filter = { kind: 'archived' }
     else if (filterKey.startsWith('state:')) {
       const stateId = filterKey.slice(6)
       if (!stateId) return null
@@ -1428,20 +1469,20 @@ export const parseNavigationStateKey = (key: string): NavigationState | null => 
       return null
     }
     return {
-      navigator: 'chats',
+      navigator: 'sessions',
       filter,
-      details: sessionId ? { type: 'chat', sessionId } : null,
+      details: sessionId ? { type: 'session', sessionId } : null,
     }
   }
 
-  // Check for chat details
-  if (key.includes('/chat/')) {
+  // Check for session details
+  if (key.includes('/session/')) {
     const [filterPart, , sessionId] = key.split('/')
-    return parseChatsKey(filterPart, sessionId)
+    return parseSessionsKey(filterPart, sessionId)
   }
 
   // Simple filter key
-  return parseChatsKey(key)
+  return parseSessionsKey(key)
 }
 
 declare global {

@@ -362,8 +362,8 @@ export default function App() {
 
   // Notification system - shows native OS notifications and badge count
   const handleNavigateToSession = useCallback((sessionId: string) => {
-    // Navigate to the session via central routing (uses allChats filter)
-    navigate(routes.view.allChats(sessionId))
+    // Navigate to the session via central routing (uses allSessions filter)
+    navigate(routes.view.allSessions(sessionId))
   }, [])
 
   const { isWindowFocused, showSessionNotification } = useNotifications({
@@ -406,7 +406,7 @@ export default function App() {
       if (initialSessionId && windowWorkspaceId) {
         const session = loadedSessions.find(s => s.id === initialSessionId)
         if (session) {
-          navigate(routes.view.allChats(session.id))
+          navigate(routes.view.allSessions(session.id))
         }
       }
     })
@@ -712,6 +712,16 @@ export default function App() {
     window.electronAPI.sessionCommand(sessionId, { type: 'unflag' })
   }, [updateSessionById])
 
+  const handleArchiveSession = useCallback((sessionId: string) => {
+    updateSessionById(sessionId, { isArchived: true, archivedAt: Date.now() })
+    window.electronAPI.sessionCommand(sessionId, { type: 'archive' })
+  }, [updateSessionById])
+
+  const handleUnarchiveSession = useCallback((sessionId: string) => {
+    updateSessionById(sessionId, { isArchived: false, archivedAt: undefined })
+    window.electronAPI.sessionCommand(sessionId, { type: 'unarchive' })
+  }, [updateSessionById])
+
   /**
    * Set which session user is actively viewing (for unread state machine).
    * Called when user navigates to a session. Main process uses this to determine
@@ -999,7 +1009,7 @@ export default function App() {
     }
 
     // Navigate to the chat view - this sets both selectedSession and activeView
-    navigate(routes.view.allChats(session.id))
+    navigate(routes.view.allSessions(session.id))
 
     // Pre-fill input if provided (after a small delay to ensure component is mounted)
     if (params.input) {
@@ -1172,9 +1182,9 @@ export default function App() {
       // This prevents showing stale session data from the wrong workspace.
       setSession({ selected: null })
 
-      // 4. Navigate to allChats view without a specific session selected
+      // 4. Navigate to allSessions view without a specific session selected
       // This ensures the UI is in a clean state for the new workspace
-      navigate(routes.view.allChats())
+      navigate(routes.view.allSessions())
 
       // 5. Clear pending permissions/credentials (not relevant to new workspace)
       setPendingPermissions(new Map())
@@ -1242,6 +1252,8 @@ export default function App() {
     onRenameSession: handleRenameSession,
     onFlagSession: handleFlagSession,
     onUnflagSession: handleUnflagSession,
+    onArchiveSession: handleArchiveSession,
+    onUnarchiveSession: handleUnarchiveSession,
     onMarkSessionRead: handleMarkSessionRead,
     onMarkSessionUnread: handleMarkSessionUnread,
     onSetActiveViewingSession: handleSetActiveViewingSession,
@@ -1288,6 +1300,8 @@ export default function App() {
     handleRenameSession,
     handleFlagSession,
     handleUnflagSession,
+    handleArchiveSession,
+    handleUnarchiveSession,
     handleMarkSessionRead,
     handleMarkSessionUnread,
     handleSetActiveViewingSession,

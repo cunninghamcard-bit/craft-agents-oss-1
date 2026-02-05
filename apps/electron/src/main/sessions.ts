@@ -49,6 +49,13 @@ import {
   getSessionAttachmentsPath,
   getSessionPath as getSessionStoragePath,
   sessionPersistenceQueue,
+  // Sub-session functions
+  createSubSession as createStoredSubSession,
+  getSessionFamily as getStoredSessionFamily,
+  updateSiblingOrder as updateStoredSiblingOrder,
+  archiveSessionCascade as archiveStoredSessionCascade,
+  deleteSessionCascade as deleteStoredSessionCascade,
+  getChildSessions as getStoredChildSessions,
   type StoredSession,
   type StoredMessage,
   type SessionMetadata,
@@ -432,6 +439,10 @@ interface ManagedSession {
   // Session name (user-defined or AI-generated)
   name?: string
   isFlagged: boolean
+  /** Whether this session is archived */
+  isArchived?: boolean
+  /** Timestamp when session was archived (for retention policy) */
+  archivedAt?: number
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
   // SDK session ID for conversation continuity
@@ -523,6 +534,9 @@ interface ManagedSession {
   authRetryInProgress?: boolean
   // Whether this session is hidden from session list (e.g., mini edit sessions)
   hidden?: boolean
+  // Sub-session hierarchy (1 level max)
+  parentSessionId?: string
+  siblingOrder?: number
 }
 
 // Convert runtime Message to StoredMessage for persistence
@@ -1090,6 +1104,8 @@ export class SessionManager {
             createdAt: meta.createdAt,
             messageCount: meta.messageCount,
             isFlagged: meta.isFlagged ?? false,
+            isArchived: meta.isArchived,
+            archivedAt: meta.archivedAt,
             permissionMode: meta.permissionMode,
             sdkSessionId: meta.sdkSessionId,
             tokenUsage: meta.tokenUsage,  // From JSONL header (updated on save)
@@ -1145,6 +1161,8 @@ export class SessionManager {
         lastMessageAt: managed.lastMessageAt,  // Preserve actual message time (not persist time)
         sdkSessionId: managed.sdkSessionId,
         isFlagged: managed.isFlagged,
+        isArchived: managed.isArchived,
+        archivedAt: managed.archivedAt,
         permissionMode: managed.permissionMode,
         todoState: managed.todoState,
         lastReadMessageId: managed.lastReadMessageId,  // For unread detection
@@ -1471,6 +1489,8 @@ export class SessionManager {
         messages: [],  // Never send all messages - use getSession(id) for specific session
         isProcessing: m.isProcessing,
         isFlagged: m.isFlagged,
+        isArchived: m.isArchived,
+        archivedAt: m.archivedAt,
         permissionMode: m.permissionMode,
         thinkingLevel: m.thinkingLevel,
         todoState: m.todoState,
@@ -1514,6 +1534,8 @@ export class SessionManager {
       messages: m.messages,
       isProcessing: m.isProcessing,
       isFlagged: m.isFlagged,
+      isArchived: m.isArchived,
+      archivedAt: m.archivedAt,
       permissionMode: m.permissionMode,
       thinkingLevel: m.thinkingLevel,
       todoState: m.todoState,
@@ -1689,6 +1711,175 @@ export class SessionManager {
       sessionFolderPath: getSessionStoragePath(workspaceRootPath, storedSession.id),
       hidden: options?.hidden,
     }
+  }
+
+  /**
+   * Create a sub-session under a parent session.
+   * Sub-sessions inherit workspace config but have a reference to their parent.
+   */
+  async createSubSession(workspaceId: string, parentSessionId: string, options?: import('../shared/types').CreateSessionOptions): Promise<Session> {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      throw new Error(`Workspace ${workspaceId} not found`)
+    }
+
+    const workspaceRootPath = workspace.rootPath
+
+    // Create the sub-session using storage layer (validates parent exists and prevents nesting)
+    const storedSession = await createStoredSubSession(workspaceRootPath, parentSessionId, {
+      name: options?.name,
+      workingDirectory: options?.workingDirectory,
+      permissionMode: options?.permissionMode,
+      enabledSourceSlugs: options?.enabledSourceSlugs,
+      model: options?.model,
+      todoState: options?.todoState,
+      labels: options?.labels,
+    })
+
+    // Get workspace defaults for managed session
+    const wsConfig = loadWorkspaceConfig(workspaceRootPath)
+    const globalDefaults = loadConfigDefaults()
+    const defaultPermissionMode = options?.permissionMode
+      ?? wsConfig?.defaults?.permissionMode
+      ?? globalDefaults.workspaceDefaults.permissionMode
+    const defaultThinkingLevel = wsConfig?.defaults?.thinkingLevel ?? globalDefaults.workspaceDefaults.thinkingLevel
+
+    const managed: ManagedSession = {
+      id: storedSession.id,
+      workspace,
+      agent: null,
+      messages: [],
+      isProcessing: false,
+      lastMessageAt: storedSession.lastMessageAt ?? storedSession.lastUsedAt,
+      streamingText: '',
+      processingGeneration: 0,
+      isFlagged: options?.isFlagged ?? false,
+      todoState: options?.todoState,
+      labels: options?.labels,
+      permissionMode: defaultPermissionMode,
+      workingDirectory: storedSession.workingDirectory,
+      sdkCwd: storedSession.sdkCwd,
+      model: options?.model || storedSession.model,
+      thinkingLevel: defaultThinkingLevel,
+      messageQueue: [],
+      backgroundShellCommands: new Map(),
+      messagesLoaded: true,
+      parentSessionId,
+    }
+
+    this.sessions.set(storedSession.id, managed)
+
+    // Notify all windows that a sub-session was created (for session list updates)
+    this.sendEvent({
+      type: 'session_created',
+      sessionId: storedSession.id,
+      parentSessionId,
+    }, workspace.id)
+
+    return {
+      id: storedSession.id,
+      workspaceId: workspace.id,
+      workspaceName: workspace.name,
+      lastMessageAt: managed.lastMessageAt,
+      messages: [],
+      isProcessing: false,
+      isFlagged: options?.isFlagged ?? false,
+      permissionMode: defaultPermissionMode,
+      todoState: options?.todoState,
+      labels: options?.labels,
+      workingDirectory: storedSession.workingDirectory,
+      model: managed.model,
+      thinkingLevel: defaultThinkingLevel,
+      sessionFolderPath: getSessionStoragePath(workspaceRootPath, storedSession.id),
+      parentSessionId,
+    }
+  }
+
+  /**
+   * Get session family (parent + siblings) for a sub-session.
+   * Returns null if the session is a root session (no parent).
+   */
+  getSessionFamily(sessionId: string): import('../shared/types').SessionFamily | null {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return null
+
+    return getStoredSessionFamily(managed.workspace.rootPath, sessionId)
+  }
+
+  /**
+   * Update sibling order for multiple sessions.
+   * Used when user reorders siblings via drag-drop.
+   */
+  async updateSiblingOrder(orderedSessionIds: string[]): Promise<void> {
+    if (orderedSessionIds.length === 0) return
+
+    // Get workspace from first session
+    const firstSession = this.sessions.get(orderedSessionIds[0]!)
+    if (!firstSession) return
+
+    await updateStoredSiblingOrder(firstSession.workspace.rootPath, orderedSessionIds)
+
+    // Notify all windows for session list refresh
+    this.sendEvent({ type: 'sessions_reordered' }, firstSession.workspace.id)
+  }
+
+  /**
+   * Archive a session and all its children.
+   * Returns the count of sessions archived.
+   */
+  async archiveSessionCascade(sessionId: string): Promise<{ count: number }> {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return { count: 0 }
+
+    // Get children before archiving
+    const children = getStoredChildSessions(managed.workspace.rootPath, sessionId)
+
+    // Archive via storage layer
+    const count = await archiveStoredSessionCascade(managed.workspace.rootPath, sessionId)
+
+    // Update in-memory state for parent
+    managed.isArchived = true
+    managed.archivedAt = Date.now()
+
+    // Update in-memory state for children
+    for (const child of children) {
+      const childManaged = this.sessions.get(child.id)
+      if (childManaged) {
+        childManaged.isArchived = true
+        childManaged.archivedAt = Date.now()
+      }
+    }
+
+    // Notify all windows
+    this.sendEvent({ type: 'session_archived_cascade', sessionId, count }, managed.workspace.id)
+
+    return { count }
+  }
+
+  /**
+   * Delete a session and all its children.
+   * Returns the count of sessions deleted.
+   */
+  deleteSessionCascade(sessionId: string): { count: number } {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) return { count: 0 }
+
+    // Get children before deleting
+    const children = getStoredChildSessions(managed.workspace.rootPath, sessionId)
+
+    // Delete via storage layer
+    const count = deleteStoredSessionCascade(managed.workspace.rootPath, sessionId)
+
+    // Remove from in-memory state
+    this.sessions.delete(sessionId)
+    for (const child of children) {
+      this.sessions.delete(child.id)
+    }
+
+    // Notify all windows
+    this.sendEvent({ type: 'session_deleted_cascade', sessionId, count }, managed.workspace.id)
+
+    return { count }
   }
 
   /**
@@ -2167,6 +2358,32 @@ export class SessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_unflagged', sessionId }, managed.workspace.id)
+    }
+  }
+
+  async archiveSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.isArchived = true
+      managed.archivedAt = Date.now()
+      // Persist in-memory state directly to avoid race with pending queue writes
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+      // Notify all windows for this workspace
+      this.sendEvent({ type: 'session_archived', sessionId }, managed.workspace.id)
+    }
+  }
+
+  async unarchiveSession(sessionId: string): Promise<void> {
+    const managed = this.sessions.get(sessionId)
+    if (managed) {
+      managed.isArchived = false
+      managed.archivedAt = undefined
+      // Persist in-memory state directly to avoid race with pending queue writes
+      this.persistSession(managed)
+      await this.flushSession(managed.id)
+      // Notify all windows for this workspace
+      this.sendEvent({ type: 'session_unarchived', sessionId }, managed.workspace.id)
     }
   }
 

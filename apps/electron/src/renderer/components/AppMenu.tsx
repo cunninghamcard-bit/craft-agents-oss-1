@@ -12,6 +12,7 @@ import {
   StyledDropdownMenuSubContent,
 } from "@/components/ui/styled-dropdown"
 import * as Icons from "lucide-react"
+import { Tooltip, TooltipTrigger, TooltipContent } from "@craft-agent/ui"
 import { CraftAgentsSymbol } from "./icons/CraftAgentsSymbol"
 import { SquarePenRounded } from "./icons/SquarePenRounded"
 import { TopBarButton } from "./ui/TopBarButton"
@@ -309,22 +310,32 @@ export function AppMenu({
       <div className="flex-1" />
 
       {/* Back Navigation */}
-      <TopBarButton
-        onClick={onBack}
-        disabled={!canGoBack}
-        aria-label="Go back"
-      >
-        <Icons.ChevronLeft className="h-[22px] w-[22px] text-foreground/70" strokeWidth={1.5} />
-      </TopBarButton>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <TopBarButton
+            onClick={onBack}
+            disabled={!canGoBack}
+            aria-label="Go back"
+          >
+            <Icons.ChevronLeft className="h-[22px] w-[22px] text-foreground/70" strokeWidth={1.5} />
+          </TopBarButton>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Back {isMac ? '⌘←' : 'Ctrl+←'}</TooltipContent>
+      </Tooltip>
 
       {/* Forward Navigation */}
-      <TopBarButton
-        onClick={onForward}
-        disabled={!canGoForward}
-        aria-label="Go forward"
-      >
-        <Icons.ChevronRight className="h-[22px] w-[22px] text-foreground/70" strokeWidth={1.5} />
-      </TopBarButton>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <TopBarButton
+            onClick={onForward}
+            disabled={!canGoForward}
+            aria-label="Go forward"
+          >
+            <Icons.ChevronRight className="h-[22px] w-[22px] text-foreground/70" strokeWidth={1.5} />
+          </TopBarButton>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">Forward {isMac ? '⌘→' : 'Ctrl+→'}</TooltipContent>
+      </Tooltip>
     </div>
   )
 }

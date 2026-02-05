@@ -1,6 +1,6 @@
 import { ClaudeAgent, type ClaudeAgentConfig, type PermissionMode, type SdkMcpServerConfig } from '../agent/claude-agent.ts';
 import { createApiServer } from '../sources/api-tools.ts';
-import { listSessions, getOrCreateSessionById, updateSessionSdkId } from '../sessions/storage.ts';
+import { listActiveSessions, getOrCreateSessionById, updateSessionSdkId } from '../sessions/storage.ts';
 import { debug } from '../utils/debug.ts';
 import { DEFAULT_MODEL } from '../config/models.ts';
 import { getCredentialManager } from '../credentials/index.ts';
@@ -245,8 +245,8 @@ ${this.config.prompt}
         // Fresh SDK session - will be saved after run
       }
     } else if (this.config.sessionResume && this.workspaceRootPath) {
-      // --session-resume: continue the last session for this workspace
-      const sessions = listSessions(this.workspaceRootPath);
+      // --session-resume: continue the last active (non-archived) session for this workspace
+      const sessions = listActiveSessions(this.workspaceRootPath);
       if (sessions.length > 0 && sessions[0]) {
         this.sessionIdToUpdate = sessions[0].id;  // Save to update SDK session ID after run
         if (sessions[0].sdkSessionId) {

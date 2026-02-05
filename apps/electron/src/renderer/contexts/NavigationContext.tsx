@@ -17,7 +17,7 @@
  *   const { navigate } = useNavigation()
  *   const navState = useNavigationState()
  *
- *   navigate(routes.view.allChats())
+ *   navigate(routes.view.allSessions())
  *   navigate(routes.action.newChat())
  */
 
@@ -47,13 +47,13 @@ import type {
   DeepLinkNavigation,
   Session,
   NavigationState,
-  ChatFilter,
+  SessionFilter,
   SourceFilter,
   RightSidebarPanel,
   ContentBadge,
 } from '../../shared/types'
 import {
-  isChatsNavigation,
+  isSessionsNavigation,
   isSourcesNavigation,
   isSettingsNavigation,
   isSkillsNavigation,
@@ -68,8 +68,8 @@ export { routes }
 export type { Route }
 
 // Re-export navigation state types for consumers
-export type { NavigationState, ChatFilter }
-export { isChatsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation }
+export type { NavigationState, SessionFilter }
+export { isSessionsNavigation, isSourcesNavigation, isSettingsNavigation, isSkillsNavigation }
 
 interface NavigationContextValue {
   /** Navigate to a route */
@@ -153,21 +153,40 @@ export function NavigationProvider({
     return session.todoState === 'done' || session.todoState === 'cancelled'
   }, [])
 
-  // Helper: Filter sessions by ChatFilter
+  // Helper: Filter sessions by SessionFilter
   // Always excludes hidden sessions - they should never appear in navigation
   const filterSessionsByFilter = useCallback(
-    (filter: ChatFilter): SessionMeta[] => {
+    (filter: SessionFilter): SessionMeta[] => {
       // First filter out hidden sessions - they should never appear in any view
       const visibleSessions = sessionMetas.filter(s => !s.hidden)
 
       return visibleSessions.filter((session) => {
         switch (filter.kind) {
-          case 'allChats':
-            return true
+          case 'allSessions':
+            // Exclude archived sessions from all sessions
+            return session.isArchived !== true
           case 'flagged':
-            return session.isFlagged === true
+            // Exclude archived sessions from flagged view
+            return session.isFlagged === true && session.isArchived !== true
+          case 'archived':
+            return session.isArchived === true
           case 'state':
-            return session.todoState === filter.stateId
+            // Exclude archived sessions from state views
+            return session.todoState === filter.stateId && session.isArchived !== true
+          case 'label': {
+            // Exclude archived sessions from label views
+            if (session.isArchived === true) return false
+            if (!session.labels?.length) return false
+            if (filter.labelId === '__all__') return true
+            // Simple match - check if session has the label (handles valued labels like "priority::3")
+            return session.labels.some(l => l === filter.labelId || l.startsWith(`${filter.labelId}::`))
+          }
+          case 'view':
+            // Exclude archived sessions from view filters
+            // Note: Full view evaluation requires evaluateViews which isn't available here
+            // Return all non-archived sessions as fallback - SessionList does the real filtering
+            if (session.isArchived === true) return false
+            return true
           default:
             return false
         }
@@ -178,7 +197,7 @@ export function NavigationProvider({
 
   // Helper: Get first session ID for a filter
   const getFirstSessionId = useCallback(
-    (filter: ChatFilter): string | null => {
+    (filter: SessionFilter): string | null => {
       const filtered = filterSessionsByFilter(filter)
       return filtered[0]?.id ?? null
     },
@@ -213,7 +232,7 @@ export function NavigationProvider({
       if (!workspaceId) return
 
       switch (parsed.name) {
-        case 'new-chat': {
+        case 'new-session': {
           // Create session with optional permission mode and working directory from params
           const createOptions: import('../../shared/types').CreateSessionOptions = {}
           if (parsed.params.mode && ['safe', 'ask', 'allow-all'].includes(parsed.params.mode)) {
@@ -265,16 +284,16 @@ export function NavigationProvider({
           }
 
           // Determine navigation filter — preserve status/label context if the new session was created with one
-          const filter: import('../../shared/types').ChatFilter =
+          const filter: import('../../shared/types').SessionFilter =
             parsed.params.status ? { kind: 'state', stateId: parsed.params.status } :
             parsed.params.label ? { kind: 'label', labelId: parsed.params.label } :
-            { kind: 'allChats' }
+            { kind: 'allSessions' }
 
           setSession({ selected: session.id })
           setNavigationState({
-            navigator: 'chats',
+            navigator: 'sessions',
             filter,
-            details: { type: 'chat', sessionId: session.id },
+            details: { type: 'session', sessionId: session.id },
           })
 
           // Parse badges from params (JSON-encoded, used for EditPopover context hiding)
@@ -384,7 +403,7 @@ export function NavigationProvider({
   const applyNavigationState = useCallback(
     (newState: NavigationState): NavigationState => {
       // For chats: auto-select first session if no details provided
-      if (isChatsNavigation(newState) && !newState.details) {
+      if (isSessionsNavigation(newState) && !newState.details) {
         const firstSessionId = getFirstSessionId(newState.filter)
         if (firstSessionId) {
           const stateWithSelection: NavigationState = {
@@ -434,7 +453,7 @@ export function NavigationProvider({
       }
 
       // For chats with explicit session: update session selection
-      if (isChatsNavigation(newState) && newState.details) {
+      if (isSessionsNavigation(newState) && newState.details) {
         setSession({ selected: newState.details.sessionId })
       }
 
@@ -533,7 +552,7 @@ export function NavigationProvider({
     const navState = parseRouteToNavigationState(route)
     if (!navState) return true // Non-navigation routes are always valid
 
-    if (isChatsNavigation(navState) && navState.details) {
+    if (isSessionsNavigation(navState) && navState.details) {
       const meta = sessionMetaMap.get(navState.details.sessionId)
       // Session must exist and not be hidden
       return meta != null && !meta.hidden
@@ -707,7 +726,7 @@ export function NavigationProvider({
     // Only initialize once
     if (historyStackRef.current.length === 0) {
       const params = new URLSearchParams(window.location.search)
-      const initialRoute = (params.get('route') || 'allChats') as Route
+      const initialRoute = (params.get('route') || 'allSessions') as Route
       historyStackRef.current = [initialRoute]
       historyIndexRef.current = 0
       console.log('[Navigation] Initialized history stack with:', initialRoute)
@@ -764,11 +783,11 @@ export function NavigationProvider({
       // Convert DeepLinkNavigation to route string and navigate
       let route: string | null = null
 
-      // Compound route format (e.g., 'allChats/chat/abc123', 'settings/shortcuts')
+      // Compound route format (e.g., 'allSessions/session/abc123', 'settings/shortcuts')
       if (nav.view) {
         route = nav.view
       } else if (nav.action) {
-        // Action routes (e.g., 'action/new-chat', 'action/delete-session/abc123')
+        // Action routes (e.g., 'action/new-session', 'action/delete-session/abc123')
         route = `action/${nav.action}`
         if (nav.actionParams?.id) {
           route += `/${nav.actionParams.id}`

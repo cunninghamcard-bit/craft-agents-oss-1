@@ -21,6 +21,8 @@
 
 import * as React from 'react'
 import {
+  Archive,
+  ArchiveRestore,
   Trash2,
   Pencil,
   Flag,
@@ -51,6 +53,8 @@ export interface SessionMenuProps {
   sessionName: string
   /** Whether session is flagged */
   isFlagged: boolean
+  /** Whether session is archived */
+  isArchived?: boolean
   /** Shared URL if session is shared */
   sharedUrl?: string | null
   /** Whether session has messages */
@@ -71,6 +75,8 @@ export interface SessionMenuProps {
   onRename: () => void
   onFlag: () => void
   onUnflag: () => void
+  onArchive: () => void
+  onUnarchive: () => void
   onMarkUnread: () => void
   onTodoStateChange: (state: TodoStateId) => void
   onOpenInNewWindow: () => void
@@ -85,6 +91,7 @@ export function SessionMenu({
   sessionId,
   sessionName,
   isFlagged,
+  isArchived = false,
   sharedUrl,
   hasMessages,
   hasUnreadMessages,
@@ -96,6 +103,8 @@ export function SessionMenu({
   onRename,
   onFlag,
   onUnflag,
+  onArchive,
+  onUnarchive,
   onMarkUnread,
   onTodoStateChange,
   onOpenInNewWindow,
@@ -298,6 +307,19 @@ export function SessionMenu({
         <MenuItem onClick={onUnflag}>
           <FlagOff className="h-3.5 w-3.5" />
           <span className="flex-1">Unflag</span>
+        </MenuItem>
+      )}
+
+      {/* Archive/Unarchive */}
+      {!isArchived ? (
+        <MenuItem onClick={onArchive}>
+          <Archive className="h-3.5 w-3.5" />
+          <span className="flex-1">Archive</span>
+        </MenuItem>
+      ) : (
+        <MenuItem onClick={onUnarchive}>
+          <ArchiveRestore className="h-3.5 w-3.5" />
+          <span className="flex-1">Unarchive</span>
         </MenuItem>
       )}
 

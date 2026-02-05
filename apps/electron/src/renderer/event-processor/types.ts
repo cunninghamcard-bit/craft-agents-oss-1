@@ -153,6 +153,19 @@ export interface SessionUnflaggedEvent {
 }
 
 /**
+ * Session archived/unarchived events (external metadata change)
+ */
+export interface SessionArchivedEvent {
+  type: 'session_archived'
+  sessionId: string
+}
+
+export interface SessionUnarchivedEvent {
+  type: 'session_unarchived'
+  sessionId: string
+}
+
+/**
  * Session name changed event (external metadata change)
  */
 export interface NameChangedEvent {
@@ -422,6 +435,8 @@ export type AgentEvent =
   | TodoStateChangedEvent
   | SessionFlaggedEvent
   | SessionUnflaggedEvent
+  | SessionArchivedEvent
+  | SessionUnarchivedEvent
   | NameChangedEvent
   | PlanSubmittedEvent
   | StatusEvent

@@ -24,6 +24,8 @@ import {
   handleTodoStateChanged,
   handleSessionFlagged,
   handleSessionUnflagged,
+  handleSessionArchived,
+  handleSessionUnarchived,
   handleNameChanged,
   handlePermissionRequest,
   handleCredentialRequest,
@@ -146,6 +148,12 @@ export function processEvent(
 
     case 'session_unflagged':
       return handleSessionUnflagged(state, event)
+
+    case 'session_archived':
+      return handleSessionArchived(state, event)
+
+    case 'session_unarchived':
+      return handleSessionUnarchived(state, event)
 
     case 'name_changed':
       return handleNameChanged(state, event)
