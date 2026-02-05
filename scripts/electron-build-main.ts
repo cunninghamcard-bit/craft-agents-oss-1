@@ -12,6 +12,9 @@ const DIST_DIR = join(ROOT_DIR, "apps/electron/dist");
 const OUTPUT_FILE = join(DIST_DIR, "main.cjs");
 const BRIDGE_SERVER_DIR = join(ROOT_DIR, "packages/bridge-mcp-server");
 const BRIDGE_SERVER_OUTPUT = join(BRIDGE_SERVER_DIR, "dist/index.js");
+const SESSION_TOOLS_CORE_DIR = join(ROOT_DIR, "packages/session-tools-core");
+const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
+const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
 
 // Load .env file if it exists
 function loadEnvFile(): void {
@@ -112,6 +115,21 @@ async function verifyJsFile(filePath: string): Promise<{ valid: boolean; error?:
   return { valid: true };
 }
 
+// Verify Session Tools Core package exists (raw TypeScript, bundled by consumers)
+// No build step needed - it exports TypeScript directly like other packages
+function verifySessionToolsCore(): void {
+  console.log("🔍 Verifying Session Tools Core...");
+
+  // Verify source exists
+  const sourceFile = join(SESSION_TOOLS_CORE_DIR, "src/index.ts");
+  if (!existsSync(sourceFile)) {
+    console.error("❌ Session tools core source not found at", sourceFile);
+    process.exit(1);
+  }
+
+  console.log("✅ Session tools core verified");
+}
+
 // Build the Bridge MCP Server (used for API sources in Codex sessions)
 async function buildBridgeServer(): Promise<void> {
   console.log("🌉 Building Bridge MCP Server...");
@@ -150,6 +168,44 @@ async function buildBridgeServer(): Promise<void> {
   console.log("✅ Bridge server built successfully");
 }
 
+// Build the Session MCP Server (provides session-scoped tools like SubmitPlan for Codex sessions)
+async function buildSessionServer(): Promise<void> {
+  console.log("📋 Building Session MCP Server...");
+
+  // Ensure dist directory exists
+  const distDir = join(SESSION_SERVER_DIR, "dist");
+  if (!existsSync(distDir)) {
+    mkdirSync(distDir, { recursive: true });
+  }
+
+  const proc = spawn({
+    cmd: [
+      "bun", "build",
+      join(SESSION_SERVER_DIR, "src/index.ts"),
+      "--outfile", SESSION_SERVER_OUTPUT,
+      "--target", "node",
+    ],
+    cwd: ROOT_DIR,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+
+  const exitCode = await proc.exited;
+
+  if (exitCode !== 0) {
+    console.error("❌ Session server build failed with exit code", exitCode);
+    process.exit(exitCode);
+  }
+
+  // Verify output exists
+  if (!existsSync(SESSION_SERVER_OUTPUT)) {
+    console.error("❌ Session server output not found at", SESSION_SERVER_OUTPUT);
+    process.exit(1);
+  }
+
+  console.log("✅ Session server built successfully");
+}
+
 async function main(): Promise<void> {
   loadEnvFile();
 
@@ -158,8 +214,15 @@ async function main(): Promise<void> {
     mkdirSync(DIST_DIR, { recursive: true });
   }
 
-  // Build bridge server first (needed for API sources in Codex sessions)
+  // Verify session tools core exists (shared utilities for session-scoped tools)
+  verifySessionToolsCore();
+
+  // Build bridge server (needed for API sources in Codex sessions)
   await buildBridgeServer();
+
+  // Build session server (provides session-scoped tools like SubmitPlan for Codex sessions)
+  // Depends on session-tools-core being built first
+  await buildSessionServer();
 
   const buildDefines = getBuildDefines();
 

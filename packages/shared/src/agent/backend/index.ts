@@ -42,6 +42,8 @@ export type {
   ChatOptions,
   RecoveryMessage,
   SdkMcpServerConfig,
+  LlmAuthType,
+  LlmProviderType,
 } from './types.ts';
 
 // Enums need to be exported as values, not just types

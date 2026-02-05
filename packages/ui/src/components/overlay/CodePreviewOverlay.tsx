@@ -36,6 +36,8 @@ export interface CodePreviewOverlayProps {
   error?: string
   /** Render inline without dialog (for playground) */
   embedded?: boolean
+  /** Original shell command (for Codex reads) - shown above code */
+  command?: string
 }
 
 export function CodePreviewOverlay({
@@ -51,6 +53,7 @@ export function CodePreviewOverlay({
   theme = 'light',
   error,
   embedded,
+  command,
 }: CodePreviewOverlayProps) {
   // Build subtitle with line info
   const subtitle =
@@ -74,6 +77,16 @@ export function CodePreviewOverlay({
       embedded={embedded}
       className="bg-foreground-3"
     >
+      {/* Show command if present (Codex reads via shell commands) */}
+      {command && (
+        <ContentFrame title="Command" fitContent minWidth={850}>
+          <div className="font-mono text-sm bg-background/50 p-3 rounded-md border overflow-x-auto">
+            <span className="text-muted-foreground select-none">$ </span>
+            <span className="text-foreground">{command}</span>
+          </div>
+        </ContentFrame>
+      )}
+
       <ContentFrame title="Code" fitContent minWidth={850}>
         <div>
           <ShikiCodeViewer

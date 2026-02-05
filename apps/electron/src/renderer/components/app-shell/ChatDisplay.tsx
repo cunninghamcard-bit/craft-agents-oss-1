@@ -1010,19 +1010,38 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
 
   // Helper to collect Edit/Write activities into FileChange array
   // Used by both onOpenActivityDetails and onOpenMultiFileDiff
+  // Supports both Claude Code format (file_path, old_string, new_string) and
+  // Codex format (changes array with path and diff fields)
   const collectFileChanges = useCallback((activities: ActivityItem[]): FileChange[] => {
     const changes: FileChange[] = []
     for (const a of activities) {
       const input = a.toolInput as Record<string, unknown> | undefined
       if (a.toolName === 'Edit' && input) {
-        changes.push({
-          id: a.id,
-          filePath: (input.file_path as string) || 'unknown',
-          toolType: 'Edit',
-          original: (input.old_string as string) || '',
-          modified: (input.new_string as string) || '',
-          error: a.error || undefined,
-        })
+        // Check for Codex format: { changes: Array<{ path, kind, diff }> }
+        if (input.changes && Array.isArray(input.changes)) {
+          // Codex fileChange format - extract each change
+          for (const codexChange of input.changes as Array<{ path?: string; kind?: unknown; diff?: string }>) {
+            changes.push({
+              id: `${a.id}-${codexChange.path || 'unknown'}`,
+              filePath: codexChange.path || 'unknown',
+              toolType: 'Edit',
+              original: '',
+              modified: '',
+              unifiedDiff: codexChange.diff,
+              error: a.error || undefined,
+            })
+          }
+        } else {
+          // Claude Code format: { file_path, old_string, new_string }
+          changes.push({
+            id: a.id,
+            filePath: (input.file_path as string) || 'unknown',
+            toolType: 'Edit',
+            original: (input.old_string as string) || '',
+            modified: (input.new_string as string) || '',
+            error: a.error || undefined,
+          })
+        }
       } else if (a.toolName === 'Write' && input) {
         changes.push({
           id: a.id,
@@ -1608,6 +1627,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
           numLines={overlayData.numLines}
           theme={isDark ? 'dark' : 'light'}
           error={overlayData.error}
+          command={overlayData.command}
         />
       )}
 

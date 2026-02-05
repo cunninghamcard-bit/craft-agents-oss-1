@@ -137,8 +137,7 @@ function ConnectionRow({ connection, isLastConnection, onEdit, onDelete, onSetDe
       case 'anthropic': parts.push('Anthropic API'); break
       case 'anthropic_compat': parts.push('Anthropic Compatible'); break
       case 'openai': parts.push('OpenAI API'); break
-      case 'openai_compat':
-      case 'openai-compat': parts.push('OpenAI Compatible'); break
+      case 'openai_compat': parts.push('OpenAI Compatible'); break
       case 'bedrock': parts.push('AWS Bedrock'); break
       case 'vertex': parts.push('Google Vertex'); break
       default: parts.push(provider || 'Unknown')

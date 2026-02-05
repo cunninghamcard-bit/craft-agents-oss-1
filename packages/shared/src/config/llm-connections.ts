@@ -6,8 +6,8 @@
  * Workspaces can set a default connection.
  */
 
-// Import model type from centralized registry
-import type { ModelDefinition } from './models.ts';
+// Import model types and lists from centralized registry
+import { type ModelDefinition, ANTHROPIC_MODELS, OPENAI_MODELS } from './models';
 
 // ============================================================
 // Types
@@ -239,6 +239,62 @@ export function authTypeToCredentialType(authType: LlmAuthType): 'api_key' | 'oa
  */
 export function authTypeRequiresEndpoint(authType: LlmAuthType): boolean {
   return authType === 'api_key_with_endpoint';
+}
+
+/**
+ * Check if a provider type is a "compat" provider.
+ * Compat providers use custom endpoints and require explicit model lists.
+ * @param providerType - Provider type to check
+ * @returns true if this is a compat provider (anthropic_compat or openai_compat)
+ */
+export function isCompatProvider(providerType: LlmProviderType): boolean {
+  return providerType === 'anthropic_compat' || providerType === 'openai_compat';
+}
+
+/**
+ * Check if a provider type uses Anthropic models (Claude).
+ * Includes direct Anthropic, compat endpoints, and cloud providers (Bedrock, Vertex).
+ * @param providerType - Provider type to check
+ * @returns true if this provider uses Anthropic/Claude models
+ */
+export function isAnthropicProvider(providerType: LlmProviderType): boolean {
+  return (
+    providerType === 'anthropic' ||
+    providerType === 'anthropic_compat' ||
+    providerType === 'bedrock' ||
+    providerType === 'vertex'
+  );
+}
+
+/**
+ * Check if a provider type uses OpenAI models (Codex).
+ * @param providerType - Provider type to check
+ * @returns true if this provider uses OpenAI/Codex models
+ */
+export function isOpenAIProvider(providerType: LlmProviderType): boolean {
+  return providerType === 'openai' || providerType === 'openai_compat';
+}
+
+/**
+ * Get the default model list for a provider type from the registry.
+ * For *_compat providers, returns empty array - those should use connection.models instead.
+ *
+ * @param providerType - Provider type
+ * @returns Model list from registry, or empty array for compat providers
+ */
+export function getModelsForProviderType(providerType: LlmProviderType): ModelDefinition[] {
+  // Compat providers require explicit model lists from the connection
+  if (isCompatProvider(providerType)) {
+    return [];
+  }
+
+  // Standard providers use registry models
+  if (providerType === 'openai') {
+    return OPENAI_MODELS;
+  }
+
+  // Anthropic, Bedrock, Vertex all use Claude models
+  return ANTHROPIC_MODELS;
 }
 
 /**

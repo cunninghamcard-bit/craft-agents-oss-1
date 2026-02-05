@@ -187,8 +187,10 @@ export class ConfigWatcherManager {
       },
 
       onValidationError: (file, result) => {
-        this.debug(`Config validation error: ${file} - ${result.errors.join(', ')}`);
-        this.callbacks.onValidationError?.(file, result.errors);
+        // Map ValidationIssue objects to string messages for the callback
+        const errorMessages = result.errors.map(e => e.message);
+        this.debug(`Config validation error: ${file} - ${errorMessages.join(', ')}`);
+        this.callbacks.onValidationError?.(file, errorMessages);
       },
 
       onError: (file, error) => {

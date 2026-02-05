@@ -177,14 +177,20 @@ export function connectionTypeToProvider(connectionType: LlmConnectionType): Age
  * @returns The corresponding backend auth type
  */
 export function connectionAuthTypeToBackendAuthType(
-  authType: 'api_key' | 'oauth' | 'none'
-): 'api_key' | 'oauth_token' | undefined {
+  authType: LlmAuthType
+): LlmAuthType | undefined {
   switch (authType) {
     case 'api_key':
-      return 'api_key';
+    case 'api_key_with_endpoint':
     case 'oauth':
-      return 'oauth_token';
+    case 'bearer_token':
+    case 'iam_credentials':
+    case 'service_account_file':
+      // Pass through auth types that the backend handles
+      return authType;
     case 'none':
+    case 'environment':
+      // These auth types don't require explicit credential passing
       return undefined;
   }
 }

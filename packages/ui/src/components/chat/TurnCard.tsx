@@ -27,7 +27,7 @@ import { Markdown } from '../markdown'
 import { Spinner } from '../ui/LoadingIndicator'
 import { Tooltip, TooltipTrigger, TooltipContent } from '../tooltip'
 import { parseDiffFromFile, type FileContents } from '@pierre/diffs'
-import { getDiffStats } from '../code-viewer'
+import { getDiffStats, getUnifiedDiffStats } from '../code-viewer'
 import { TurnCardActionsMenu } from './TurnCardActionsMenu'
 import { computeLastChildSet, groupActivitiesByParent, isActivityGroup, formatDuration, formatTokens, deriveTurnPhase, shouldShowThinkingIndicator, type ActivityGroup, type AssistantTurn } from './turn-utils'
 import { DocumentFormattedMarkdownOverlay } from '../overlay'
@@ -72,6 +72,10 @@ function stripMarkdown(text: string): string {
  * Compute diff stats for Edit/Write tool inputs.
  * Uses @pierre/diffs for accurate line-by-line diff calculation.
  *
+ * Supports both:
+ * - Claude Code format: { file_path, old_string, new_string }
+ * - Codex format: { changes: Array<{ path, kind, diff }> }
+ *
  * @param toolName - 'Edit' or 'Write'
  * @param toolInput - The tool input containing old_string/new_string (Edit) or content (Write)
  * @returns { additions, deletions } or null if not applicable
@@ -83,6 +87,24 @@ function computeEditWriteDiffStats(
   if (!toolInput) return null
 
   if (toolName === 'Edit') {
+    // Check for Codex format: { changes: Array<{ path, kind, diff }> }
+    if (toolInput.changes && Array.isArray(toolInput.changes)) {
+      let totalAdditions = 0
+      let totalDeletions = 0
+      for (const change of toolInput.changes as Array<{ path?: string; diff?: string }>) {
+        if (change.diff) {
+          const stats = getUnifiedDiffStats(change.diff, change.path || 'file')
+          if (stats) {
+            totalAdditions += stats.additions
+            totalDeletions += stats.deletions
+          }
+        }
+      }
+      if (totalAdditions === 0 && totalDeletions === 0) return null
+      return { additions: totalAdditions, deletions: totalDeletions }
+    }
+
+    // Claude Code format: { file_path, old_string, new_string }
     const oldString = (toolInput.old_string as string) ?? ''
     const newString = (toolInput.new_string as string) ?? ''
     if (!oldString && !newString) return null
@@ -453,6 +475,17 @@ function formatToolInput(
 
   // For Edit/Write tools, only show file_path (skip old_string, new_string, replace_all, content)
   const isEditOrWrite = toolName === 'Edit' || toolName === 'Write'
+
+  // Handle Codex format: { changes: Array<{ path, kind, diff }> }
+  // Extract path from first change if present
+  if (isEditOrWrite && input.changes && Array.isArray(input.changes)) {
+    const firstChange = input.changes[0] as { path?: string } | undefined
+    if (firstChange?.path) {
+      const pathStr = stripSessionFolderPath(firstChange.path, sessionFolderPath)
+      parts.push(pathStr)
+    }
+    return parts.join(' ')
+  }
 
   for (const [key, value] of Object.entries(input)) {
     // Skip meta fields and description (shown separately)
@@ -910,12 +943,29 @@ function ActivityRow({ activity, onOpenDetails, isLastChild, sessionFolderPath, 
                 style={{ '--shadow-color': 'var(--success-rgb)' } as React.CSSProperties}
               >{diffStats.additions}</span>
             )}
-            {/* Filename badge */}
-            {typeof activity.toolInput?.file_path === 'string' && (
-              <span className="px-1.5 py-0.5 bg-background shadow-minimal rounded-[4px] text-[11px] text-foreground/70">
-                {activity.toolInput.file_path.split('/').pop()}
-              </span>
-            )}
+            {/* Filename badge - supports both Claude Code and Codex formats */}
+            {(() => {
+              // Claude Code format: file_path
+              if (typeof activity.toolInput?.file_path === 'string') {
+                return (
+                  <span className="px-1.5 py-0.5 bg-background shadow-minimal rounded-[4px] text-[11px] text-foreground/70">
+                    {activity.toolInput.file_path.split('/').pop()}
+                  </span>
+                )
+              }
+              // Codex format: changes[0].path
+              if (Array.isArray(activity.toolInput?.changes)) {
+                const firstChange = activity.toolInput.changes[0] as { path?: string } | undefined
+                if (firstChange?.path) {
+                  return (
+                    <span className="px-1.5 py-0.5 bg-background shadow-minimal rounded-[4px] text-[11px] text-foreground/70">
+                      {firstChange.path.split('/').pop()}
+                    </span>
+                  )
+                }
+              }
+              return null
+            })()}
           </span>
         )}
         {/* Filename badge for Read tool (no diff stats) */}

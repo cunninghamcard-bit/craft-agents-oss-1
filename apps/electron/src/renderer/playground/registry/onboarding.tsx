@@ -306,7 +306,7 @@ export const onboardingComponents: ComponentEntry[] = [
       {
         name: 'Credentials - API Key',
         props: {
-          state: createOnboardingState({ step: 'credentials', apiSetupMethod: 'api_key' }),
+          state: createOnboardingState({ step: 'credentials', apiSetupMethod: 'anthropic_api_key' }),
         },
       },
       {

@@ -338,6 +338,26 @@ export function copyBridgeServer(config: BuildConfig): void {
 }
 
 /**
+ * Copy Session MCP Server to packaged app resources.
+ * The session server provides session-scoped tools (SubmitPlan, config_validate, etc.) for Codex sessions.
+ */
+export function copySessionServer(config: BuildConfig): void {
+  const { rootDir, electronDir } = config;
+
+  const sessionSource = join(rootDir, 'packages', 'session-mcp-server', 'dist', 'index.js');
+  const sessionDest = join(electronDir, 'resources', 'session-mcp-server', 'index.js');
+
+  if (!existsSync(sessionSource)) {
+    console.warn(`Warning: Session server not found at ${sessionSource}. Session-scoped tools in Codex sessions will not work.`);
+    return;
+  }
+
+  console.log('Copying Session MCP Server...');
+  mkdirSync(dirname(sessionDest), { recursive: true });
+  copyFileSync(sessionSource, sessionDest);
+}
+
+/**
  * Build the Electron app (main, preload, renderer)
  */
 export async function buildElectronApp(config: BuildConfig): Promise<void> {

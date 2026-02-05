@@ -343,14 +343,19 @@ export interface TypedError {
 }
 
 /**
+ * Permission request type categories
+ */
+export type PermissionRequestType = 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation';
+
+/**
  * Permission request from agent (e.g., bash command approval)
  */
 export interface PermissionRequest {
   requestId: string;
   toolName: string;
-  command: string;
+  command?: string;  // Optional: bash commands have it, MCP tools may not
   description: string;
-  type?: 'bash';  // Type of permission request
+  type?: PermissionRequestType;  // Type of permission request
 }
 
 /**

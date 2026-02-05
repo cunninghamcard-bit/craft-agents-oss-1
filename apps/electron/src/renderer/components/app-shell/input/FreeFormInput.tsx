@@ -54,7 +54,8 @@ import { cn } from '@/lib/utils'
 import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
-import { MODELS, getModelShortName, getModelContextWindow, isClaudeModel } from '@config/models'
+import { ANTHROPIC_MODELS, getModelShortName, getModelContextWindow, isClaudeModel } from '@config/models'
+import { isCompatProvider, getModelsForProviderType } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
 import { SourceAvatar } from '@/components/ui/source-avatar'
@@ -254,14 +255,32 @@ export function FreeFormInput({
   const llmConnections = appShellCtx?.llmConnections ?? []
   const workspaceDefaultConnection = appShellCtx?.workspaceDefaultLlmConnection
 
-  // Compute available models from capabilities, falling back to hardcoded MODELS
-  // This allows the UI to adapt when switching between Claude and OpenAI backends
+  // Compute available models based on the effective connection's provider type.
+  // Order of precedence:
+  // 1. Backend capabilities (active session has a running backend)
+  // 2. For *_compat providers: use connection's explicit models array
+  // 3. For standard providers: use registry models based on provider type
   const availableModels = React.useMemo(() => {
+    // Backend capabilities take precedence (active session)
     if (capabilities?.models && capabilities.models.length > 0) {
       return capabilities.models
     }
-    return MODELS
-  }, [capabilities?.models])
+
+    // Determine effective connection (defined after this memo, so we inline the lookup)
+    const connection = llmConnections.find(c => c.slug === (currentConnection || workspaceDefaultConnection || llmConnections[0]?.slug))
+
+    if (!connection) {
+      return ANTHROPIC_MODELS // Safe default
+    }
+
+    // For compat providers, use the connection's explicit models
+    if (isCompatProvider(connection.providerType)) {
+      return connection.models || []
+    }
+
+    // For standard providers, use registry models
+    return getModelsForProviderType(connection.providerType)
+  }, [capabilities?.models, llmConnections, currentConnection, workspaceDefaultConnection])
 
   // Compute available thinking levels from capabilities, falling back to hardcoded THINKING_LEVELS
   const availableThinkingLevels = React.useMemo(() => {
@@ -299,6 +318,14 @@ export function FreeFormInput({
 
   // Effective connection: use prop, fall back to workspace default, then first available
   const effectiveConnection = currentConnection || workspaceDefaultConnection || llmConnections[0]?.slug
+
+  // Effective connection details (with fallbacks) for model list
+  // Unlike currentConnectionDetails which is null when no explicit connection is set,
+  // this resolves to the actual connection being used (including workspace default)
+  const effectiveConnectionDetails = React.useMemo(() => {
+    if (!effectiveConnection) return null
+    return llmConnections.find(c => c.slug === effectiveConnection) ?? null
+  }, [llmConnections, effectiveConnection])
 
   // Access todoStates and onTodoStateChange from context for the # menu state picker
   const todoStates = appShellCtx?.todoStates ?? []
@@ -1647,8 +1674,8 @@ export function FreeFormInput({
                           </StyledDropdownMenuSubTrigger>
                           {isAuthenticated && (
                             <StyledDropdownMenuSubContent className="min-w-[220px]">
-                              {/* Show models for this connection */}
-                              {(conn.models || availableModels).map((model) => {
+                              {/* Show models for this connection - use provider-specific models as fallback */}
+                              {(conn.models || getModelsForProviderType(conn.providerType || 'anthropic')).map((model) => {
                                 const modelId = typeof model === 'string' ? model : model.id
                                 const modelName = typeof model === 'string' ? getModelShortName(model) : model.name
                                 const isSelectedModel = isCurrentConnection && currentModel === modelId
@@ -1692,8 +1719,8 @@ export function FreeFormInput({
                       <StyledDropdownMenuSeparator className="my-1" />
                     </>
                   )}
-                  {/* Model options from capabilities (adapts to Claude/OpenAI backends) */}
-                  {(currentConnectionDetails?.models || availableModels).map((model) => {
+                  {/* Model options based on effective connection's provider type */}
+                  {availableModels.map((model) => {
                     const isSelected = currentModel === model.id
                     // Fallback descriptions for common models (when capabilities don't provide descriptions)
                     const defaultDescriptions: Record<string, string> = {

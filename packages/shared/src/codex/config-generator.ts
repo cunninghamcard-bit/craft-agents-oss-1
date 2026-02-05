@@ -110,6 +110,30 @@ export interface CodexConfigGeneratorOptions {
    * Used for OpenRouter, Vercel AI Gateway, or custom OpenAI-compatible endpoints.
    */
   modelProvider?: ModelProviderConfig;
+
+  /**
+   * Path to the Session MCP Server executable.
+   * Provides session-scoped tools (SubmitPlan, config_validate, etc.) to Codex.
+   */
+  sessionServerPath?: string;
+
+  /**
+   * Session ID for the session MCP server.
+   * Used to identify callbacks from the session server.
+   */
+  sessionId?: string;
+
+  /**
+   * Workspace root path for the session MCP server.
+   * Used for config validation and source operations.
+   */
+  workspaceRootPath?: string;
+
+  /**
+   * Plans folder path for the session MCP server.
+   * Where plan files are stored for SubmitPlan tool.
+   */
+  plansFolderPath?: string;
 }
 
 /**
@@ -309,6 +333,36 @@ function generateBridgeServerSection(
 }
 
 /**
+ * Generate a TOML section for the Session MCP Server.
+ * Provides session-scoped tools (SubmitPlan, config_validate, etc.) to Codex.
+ */
+function generateSessionServerSection(
+  sessionServerPath: string,
+  sessionId: string,
+  workspaceRootPath: string,
+  plansFolderPath: string
+): string {
+  const lines: string[] = [];
+  lines.push('[mcp_servers.session]');
+  lines.push(`command = "node"`);
+
+  // Build args array
+  const args: string[] = [sessionServerPath];
+  args.push('--session-id', sessionId);
+  args.push('--workspace-root', workspaceRootPath);
+  args.push('--plans-folder', plansFolderPath);
+
+  lines.push(`args = ${formatTomlValue(args)}`);
+
+  // Session server should start quickly
+  lines.push('startup_timeout_sec = 10');
+  // Some tools (like config validation) may take time
+  lines.push('tool_timeout_sec = 60');
+
+  return lines.join('\n');
+}
+
+/**
  * Generate TOML sections for a custom model provider.
  * Creates both [model_providers.*] and [profiles.*] sections.
  *
@@ -353,6 +407,10 @@ export function generateCodexConfig(options: CodexConfigGeneratorOptions): Codex
     sessionPath,
     workspaceId,
     modelProvider,
+    sessionServerPath,
+    sessionId,
+    workspaceRootPath,
+    plansFolderPath,
   } = options;
 
   const mcpSources: string[] = [];
@@ -430,6 +488,19 @@ export function generateCodexConfig(options: CodexConfigGeneratorOptions): Codex
       bridgeConfigPath,
       sessionPath,
       workspaceId
+    ));
+    sections.push('');
+  }
+
+  // Add session server for session-scoped tools (SubmitPlan, config_validate, etc.)
+  // This is always included when the session server path is provided
+  if (sessionServerPath && sessionId && workspaceRootPath && plansFolderPath) {
+    sections.push('# Session-scoped tools (SubmitPlan, config_validate, mermaid_validate, etc.)');
+    sections.push(generateSessionServerSection(
+      sessionServerPath,
+      sessionId,
+      workspaceRootPath,
+      plansFolderPath
     ));
     sections.push('');
   }

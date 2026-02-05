@@ -11,8 +11,6 @@ import {
   saveConfig,
   loadStoredConfig,
   generateWorkspaceId,
-  ANTHROPIC_MODELS,
-  OPENAI_MODELS,
   type AuthType,
   type StoredConfig,
   type LlmConnection,
@@ -172,13 +170,15 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
             let connection: LlmConnection | null = null
             const hasCustomEndpoint = !!config.anthropicBaseUrl
 
+            // Note: models are NOT included for built-in providers (anthropic, openai).
+            // The centralized MODEL_REGISTRY is the source of truth.
+            // Only *_compat providers need models specified in config.
             if (config.authType === 'api_key') {
               connection = {
                 slug: 'anthropic-api',
                 name: hasCustomEndpoint ? 'Custom Anthropic-Compatible' : 'Anthropic (API Key)',
                 providerType: hasCustomEndpoint ? 'anthropic_compat' : 'anthropic',
                 authType: hasCustomEndpoint ? 'api_key_with_endpoint' : 'api_key',
-                models: ANTHROPIC_MODELS,
                 createdAt: Date.now(),
               }
             } else if (config.authType === 'oauth_token') {
@@ -187,7 +187,6 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
                 name: 'Claude Max',
                 providerType: 'anthropic',
                 authType: 'oauth',
-                models: ANTHROPIC_MODELS,
                 createdAt: Date.now(),
               }
             } else if (config.authType === 'codex_oauth') {
@@ -196,7 +195,6 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
                 name: 'Codex (ChatGPT Plus)',
                 providerType: 'openai',
                 authType: 'oauth',
-                models: OPENAI_MODELS,
                 createdAt: Date.now(),
               }
             } else if (config.authType === 'codex_api_key') {
@@ -205,7 +203,6 @@ export function registerOnboardingHandlers(sessionManager: SessionManager): void
                 name: hasCustomEndpoint ? 'Codex (Custom Endpoint)' : 'Codex (OpenAI API Key)',
                 providerType: 'openai',
                 authType: hasCustomEndpoint ? 'api_key_with_endpoint' : 'api_key',
-                models: OPENAI_MODELS,
                 createdAt: Date.now(),
               }
             }

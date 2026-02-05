@@ -9,7 +9,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
-import type { Workspace } from '../../../shared/types'
+import type { Workspace } from '../../shared/types'
 
 // Module-level cache to avoid redundant fetches across component instances
 // Key: workspaceId, Value: { dataUrl, sourceUrl }
