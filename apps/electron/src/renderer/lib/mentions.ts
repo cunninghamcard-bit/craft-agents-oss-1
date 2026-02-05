@@ -77,7 +77,8 @@ export function parseMentions(
 
   // Match skill mentions: [skill:slug] or [skill:workspaceId:slug]
   // The pattern captures the last component (slug) after any number of colons
-  const skillPattern = /\[skill:(?:[\w\s-]+:)?([\w-]+)\]/g
+  // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
+  const skillPattern = /\[skill:(?:[\w\s.-]+:)?([\w-]+)\]/g
   while ((match = skillPattern.exec(text)) !== null) {
     const slug = match[1]
     if (availableSkillSlugs.includes(slug) && !result.skills.includes(slug)) {
@@ -138,7 +139,8 @@ export function findMentionMatches(
 
   // Match skill mentions: [skill:slug] or [skill:workspaceId:slug]
   // The pattern captures the full match and extracts the slug (last component)
-  const skillPattern = /(\[skill:(?:[\w\s-]+:)?([\w-]+)\])/g
+  // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
+  const skillPattern = /(\[skill:(?:[\w\s.-]+:)?([\w-]+)\])/g
   while ((match = skillPattern.exec(text)) !== null) {
     const slug = match[2]
     if (availableSkillSlugs.includes(slug)) {
@@ -201,7 +203,8 @@ export function removeMention(text: string, type: MentionItemType, id: string): 
     case 'skill':
     default:
       // Match both [skill:slug] and [skill:workspaceId:slug]
-      pattern = new RegExp(`\\[skill:(?:[\\w\\s-]+:)?${escapeRegExp(id)}\\]`, 'g')
+      // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
+      pattern = new RegExp(`\\[skill:(?:[\\w\\s.-]+:)?${escapeRegExp(id)}\\]`, 'g')
       break
   }
 
@@ -222,7 +225,8 @@ export function stripAllMentions(text: string): string {
     // Remove [source:slug]
     .replace(/\[source:[\w-]+\]/g, '')
     // Remove [skill:slug] or [skill:workspaceId:slug]
-    .replace(/\[skill:(?:[\w\s-]+:)?[\w-]+\]/g, '')
+    // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
+    .replace(/\[skill:(?:[\w\s.-]+:)?[\w-]+\]/g, '')
     // Remove [file:path]
     .replace(/\[file:[^\]]+\]/g, '')
     // Remove [folder:path]
