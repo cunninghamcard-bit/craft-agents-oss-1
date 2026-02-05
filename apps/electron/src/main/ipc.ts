@@ -612,7 +612,7 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
           let shouldResize = validation.needsResize
           let targetSize = validation.suggestedSize
 
-          if (!validation.valid && validation.error?.includes('dimensions')) {
+          if (!validation.valid && validation.errorCode === 'dimension_exceeded') {
             // Image exceeds 8000px limit - calculate resize to fit within limits
             const maxDim = IMAGE_LIMITS.MAX_DIMENSION
             const scale = Math.min(maxDim / imageSize.width, maxDim / imageSize.height)
@@ -640,14 +640,14 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
               // Get as PNG for best quality (or JPEG for photos to save space)
               const isPhoto = attachment.mimeType === 'image/jpeg'
-              decoded = isPhoto ? resized.toJPEG(90) : resized.toPNG()
+              decoded = isPhoto ? resized.toJPEG(IMAGE_LIMITS.JPEG_QUALITY_HIGH) : resized.toPNG()
               wasResized = true
               finalSize = decoded.length
 
               // Re-validate final size after resize (should be much smaller)
               if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
                 // Even after resize it's too big - try more aggressive compression
-                decoded = resized.toJPEG(75)
+                decoded = resized.toJPEG(IMAGE_LIMITS.JPEG_QUALITY_FALLBACK)
                 finalSize = decoded.length
                 if (decoded.length > IMAGE_LIMITS.MAX_SIZE) {
                   throw new Error(`Image still too large after resize (${(decoded.length / 1024 / 1024).toFixed(1)}MB). Please use a smaller image.`)
@@ -661,7 +661,8 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
               resizedBase64 = decoded.toString('base64')
             } catch (resizeError) {
               ipcLog.error('Image resize failed:', resizeError)
-              throw new Error(`Image too large (${imageSize.width}×${imageSize.height}) and automatic resize failed. The image may be corrupted or in an unsupported format. Please manually resize it before attaching.`)
+              const reason = resizeError instanceof Error ? resizeError.message : String(resizeError)
+              throw new Error(`Image too large (${imageSize.width}×${imageSize.height}) and automatic resize failed: ${reason}. Please manually resize it before attaching.`)
             }
           }
         }

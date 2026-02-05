@@ -14,6 +14,14 @@ import type { LoadedSkill, LoadedSource } from '../../shared/types'
 import { getSourceIconSync, getSkillIconSync } from './icon-cache'
 
 // ============================================================================
+// Constants
+// ============================================================================
+
+// Workspace ID character class for regex: word chars, spaces (NOT newlines), hyphens, dots
+// Using literal space instead of \s to avoid matching newlines which would break parsing
+const WS_ID_CHARS = '[\\w .-]'
+
+// ============================================================================
 // Types
 // ============================================================================
 
@@ -77,8 +85,7 @@ export function parseMentions(
 
   // Match skill mentions: [skill:slug] or [skill:workspaceId:slug]
   // The pattern captures the last component (slug) after any number of colons
-  // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
-  const skillPattern = /\[skill:(?:[\w\s.-]+:)?([\w-]+)\]/g
+  const skillPattern = new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?([\\w-]+)\\]`, 'g')
   while ((match = skillPattern.exec(text)) !== null) {
     const slug = match[1]
     if (availableSkillSlugs.includes(slug) && !result.skills.includes(slug)) {
@@ -139,8 +146,7 @@ export function findMentionMatches(
 
   // Match skill mentions: [skill:slug] or [skill:workspaceId:slug]
   // The pattern captures the full match and extracts the slug (last component)
-  // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
-  const skillPattern = /(\[skill:(?:[\w\s.-]+:)?([\w-]+)\])/g
+  const skillPattern = new RegExp(`(\\[skill:(?:${WS_ID_CHARS}+:)?([\\w-]+)\\])`, 'g')
   while ((match = skillPattern.exec(text)) !== null) {
     const slug = match[2]
     if (availableSkillSlugs.includes(slug)) {
@@ -203,8 +209,7 @@ export function removeMention(text: string, type: MentionItemType, id: string): 
     case 'skill':
     default:
       // Match both [skill:slug] and [skill:workspaceId:slug]
-      // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
-      pattern = new RegExp(`\\[skill:(?:[\\w\\s.-]+:)?${escapeRegExp(id)}\\]`, 'g')
+      pattern = new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?${escapeRegExp(id)}\\]`, 'g')
       break
   }
 
@@ -225,8 +230,7 @@ export function stripAllMentions(text: string): string {
     // Remove [source:slug]
     .replace(/\[source:[\w-]+\]/g, '')
     // Remove [skill:slug] or [skill:workspaceId:slug]
-    // Workspace ID can contain: word chars (\w), spaces (\s), hyphens (-), and dots (.)
-    .replace(/\[skill:(?:[\w\s.-]+:)?[\w-]+\]/g, '')
+    .replace(new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?[\\w-]+\\]`, 'g'), '')
     // Remove [file:path]
     .replace(/\[file:[^\]]+\]/g, '')
     // Remove [folder:path]

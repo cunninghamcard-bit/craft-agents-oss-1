@@ -106,10 +106,17 @@ const MAX_IMAGE_DIMENSION = 8000; // 8000x8000 max pixels
 const OPTIMAL_IMAGE_EDGE = 1568; // Recommended max edge for quality/cost balance (~1.15MP)
 
 /**
+ * Typed error codes for image validation failures
+ */
+export type ImageValidationError = 'dimension_exceeded' | 'size_exceeded';
+
+/**
  * Result of validating an image for Claude API compatibility
  */
 export interface ImageValidationResult {
   valid: boolean;
+  /** Typed error code for programmatic handling */
+  errorCode?: ImageValidationError;
   /** Hard error - image cannot be sent */
   error?: string;
   /** Error code for programmatic handling */
