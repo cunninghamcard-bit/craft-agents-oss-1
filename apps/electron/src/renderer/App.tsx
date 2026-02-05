@@ -385,7 +385,7 @@ export default function App() {
   }, [])
 
   // Session selection state
-  const [, setSession] = useSession()
+  const [sessionSelection, setSession] = useSession()
 
   // Notification system - shows native OS notifications and badge count
   const handleNavigateToSession = useCallback((sessionId: string) => {
@@ -448,7 +448,7 @@ export default function App() {
       setDefaultLlmConnectionSlug(billing.defaultConnectionSlug)
     })
     // Load backend capabilities (for capabilities-driven model/thinking selectors)
-    window.electronAPI.getBackendCapabilities().then((caps) => {
+    window.electronAPI.getBackendCapabilities(initialSessionId ?? undefined).then((caps) => {
       setCapabilities(caps)
     })
     // Load LLM connections with authentication status
@@ -481,6 +481,13 @@ export default function App() {
       refreshLlmConnections()
     }
   }, [windowWorkspaceId, refreshLlmConnections])
+
+  // Refresh capabilities when selected session changes (different backends have different capabilities)
+  useEffect(() => {
+    if (sessionSelection.selected) {
+      window.electronAPI.getBackendCapabilities(sessionSelection.selected).then(setCapabilities)
+    }
+  }, [sessionSelection.selected])
 
   // Listen for session events - uses centralized event processor for consistent state transitions
   //

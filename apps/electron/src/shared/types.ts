@@ -984,7 +984,7 @@ export interface ElectronAPI {
   chatGptLogout(): Promise<{ success: boolean }>
 
   // Backend capabilities (models, thinking levels) - returns null if backend not ready
-  getBackendCapabilities(): Promise<AgentCapabilities | null>
+  getBackendCapabilities(sessionId?: string): Promise<AgentCapabilities | null>
 
   // Settings - API Setup
   getApiSetup(): Promise<ApiSetupInfo>

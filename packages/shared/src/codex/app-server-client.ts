@@ -950,6 +950,11 @@ export class AppServerClient extends EventEmitter {
         this.emit('account/updated', params as { authMode: 'apikey' | 'chatgpt' | 'chatgptAuthTokens' | null });
         break;
 
+      // Token usage notifications
+      case 'thread/tokenUsage/updated':
+        this.emit('thread/tokenUsage/updated', params as ThreadTokenUsageUpdatedNotification);
+        break;
+
       default:
         // Emit as generic event for unknown notifications
         this.debug(`Unknown notification: ${method}`);

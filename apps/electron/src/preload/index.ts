@@ -179,7 +179,7 @@ const api: ElectronAPI = {
   chatGptLogout: () => ipcRenderer.invoke(IPC_CHANNELS.CHATGPT_LOGOUT),
 
   // Backend capabilities (models, thinking levels)
-  getBackendCapabilities: () => ipcRenderer.invoke(IPC_CHANNELS.GET_BACKEND_CAPABILITIES),
+  getBackendCapabilities: (sessionId?: string) => ipcRenderer.invoke(IPC_CHANNELS.GET_BACKEND_CAPABILITIES, sessionId),
 
   // Settings - API Setup
   getApiSetup: () => ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_API_SETUP),
