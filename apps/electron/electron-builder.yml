@@ -16,6 +16,9 @@ files:
   - "!dist/renderer/src/**"
   - "!**/*.map"
   - package.json
+  # Include bundled MCP servers (bridge + session) for Codex sessions
+  - resources/bridge-mcp-server/**/*
+  - resources/session-mcp-server/**/*
   # Bundled assets loaded at runtime via getBundledAssetsDir()
   - dist/assets/docs/**/*
   - dist/assets/tool-icons/**/*
