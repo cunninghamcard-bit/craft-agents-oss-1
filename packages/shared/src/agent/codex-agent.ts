@@ -17,6 +17,7 @@
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
+import type { AuthRequest } from '@craft-agent/session-tools-core';
 import { type PermissionMode, shouldAllowToolInMode } from './mode-manager.ts';
 import type { LoadedSource } from '../sources/types.ts';
 
@@ -206,6 +207,20 @@ export class CodexAgent extends BaseAgent {
    */
   onChatGptAuthRequired: ((reason: string) => void) | null = null;
 
+  /**
+   * Callback when a plan is submitted via SubmitPlan MCP tool.
+   * Called when the session-mcp-server sends plan_submitted callback.
+   * The UI should display the plan and pause execution.
+   */
+  onPlanSubmitted: ((planPath: string) => void) | null = null;
+
+  /**
+   * Callback when authentication is requested via session MCP tools.
+   * Called when OAuth or credential prompt tools trigger auth flow.
+   * The UI should show auth dialog and pause execution.
+   */
+  onAuthRequest: ((request: AuthRequest) => void) | null = null;
+
   constructor(config: BackendConfig) {
     // Get context window from model definitions for base class
     const modelDef = getModelById(config.model || DEFAULT_CODEX_MODEL);
@@ -358,6 +373,54 @@ export class CodexAgent extends BaseAgent {
     this.client.on('item/completed', async (notification) => {
       const events = this.adapter.adaptItemCompleted(notification);
       for (const event of events) {
+        // Check for session MCP tool completions that need callbacks
+        // Detect directly here since session-mcp-server's stderr isn't forwarded
+        if (event.type === 'tool_result' && !event.isError) {
+          const item = notification.item;
+          if (item?.type === 'mcpToolCall' && item.server === 'session') {
+            const args = (item.arguments ?? {}) as Record<string, unknown>;
+
+            // SubmitPlan - trigger plan view
+            if (item.tool === 'SubmitPlan' && args.planPath) {
+              this.debug(`SubmitPlan completed: ${args.planPath}`);
+              this.onPlanSubmitted?.(args.planPath as string);
+            }
+
+            // Auth tools - trigger auth request
+            const authToolTypes: Record<string, AuthRequest['type']> = {
+              'source_oauth_trigger': 'oauth',
+              'source_google_oauth_trigger': 'oauth-google',
+              'source_slack_oauth_trigger': 'oauth-slack',
+              'source_microsoft_oauth_trigger': 'oauth-microsoft',
+              'source_credential_prompt': 'credential',
+            };
+
+            const authType = authToolTypes[item.tool];
+            if (authType && args.sourceSlug && this.onAuthRequest) {
+              const sourceSlug = args.sourceSlug as string;
+              const source = this.sourceManager.getAllSources().find(s => s.config.slug === sourceSlug);
+              const sourceName = source?.config.name || sourceSlug;
+
+              const authRequest: AuthRequest = {
+                type: authType,
+                requestId: `${item.id}-auth`,
+                sessionId: this.config.session?.id || '',
+                sourceSlug,
+                sourceName,
+                ...(authType === 'credential' && {
+                  mode: (args.mode as string) || 'bearer',
+                  labels: args.labels as Record<string, string> | undefined,
+                  description: args.description as string | undefined,
+                  hint: args.hint as string | undefined,
+                }),
+              } as AuthRequest;
+
+              this.debug(`Auth tool completed: ${item.tool} for ${sourceSlug}`);
+              this.onAuthRequest(authRequest);
+            }
+          }
+        }
+
         // Check for inactive source tool errors and attempt auto-activation
         if (event.type === 'tool_result' && event.isError) {
           const inactiveSourceError = this.detectInactiveSourceToolError(event);
@@ -559,6 +622,7 @@ export class CodexAgent extends BaseAgent {
     this.client.on('sessionConfigured', (_notification) => {
       this.debug(`[codex] Session configured`);
     });
+
   }
 
   // ============================================================
@@ -697,8 +761,25 @@ export class CodexAgent extends BaseAgent {
       return;
     }
 
-    // In explore mode, auto-reject
+    // In explore mode, check if targeting plans folder (allow plans, reject others)
     if (permissionMode === 'safe') {
+      const sessionId = this.config.session?.id;
+      const plansFolderPath = sessionId
+        ? getSessionPlansPath(this.config.workspace.rootPath ?? this.workingDirectory, sessionId)
+        : undefined;
+
+      // Check if file change targets plans folder
+      if (plansFolderPath && displayPath) {
+        const normalizedPath = displayPath.replace(/\\/g, '/');
+        const normalizedPlansDir = plansFolderPath.replace(/\\/g, '/');
+
+        if (normalizedPath.startsWith(normalizedPlansDir)) {
+          this.debug('Allowing file change to plans folder (explore mode)');
+          this.client?.respondToFileChangeApproval(params.requestId, 'accept');
+          return;
+        }
+      }
+
       this.debug('Auto-rejecting file change (explore mode)');
       this.client?.respondToFileChangeApproval(params.requestId, 'decline');
       return;
@@ -1790,14 +1871,26 @@ export class CodexAgent extends BaseAgent {
     this.signalEventAvailable(true);
     this.debug(`Force aborting: ${reason}`);
 
-    // Clear pending permission/approval promises (they'll fail anyway on disconnect)
+    // Clear pending permission/approval promises
     for (const [, pending] of this.pendingPermissions) {
       pending.resolve({ allowed: false, acceptForSession: false });
     }
     this.pendingPermissions.clear();
     this.pendingApprovals.clear();
 
-    // Forcefully disconnect - don't wait for turnInterrupt response
+    // For PlanSubmitted and AuthRequest, just interrupt the turn - don't disconnect
+    // The user will respond (approve plan, complete auth) and we need to continue in the same session
+    if (reason === AbortReason.PlanSubmitted || reason === AbortReason.AuthRequest) {
+      if (this.client?.isConnected() && this.codexThreadId && this.currentTurnId) {
+        this.client.turnInterrupt({
+          threadId: this.codexThreadId,
+          turnId: this.currentTurnId,
+        }).catch((e) => this.debug(`Failed to interrupt turn: ${e}`));
+      }
+      return;
+    }
+
+    // For other reasons (context switch, shutdown, etc.), disconnect fully
     if (this.client) {
       this.client.disconnect().catch(() => {});
       this.client = null;

@@ -1031,16 +1031,23 @@ export function isReadOnlyBashCommand(command: string): boolean {
  * - sh/bash -c variants: `bash -c "echo x > /path/file"`
  */
 export function extractBashWriteTarget(command: string): string | null {
-  // Pattern: shell -c/-lc with inner redirect (Codex pattern)
+  // Pattern 1: Quoted path after redirect (handles Codex's escaped quotes)
+  // Matches: > "/path/to/file" or > \"/path/to/file\"
+  const quotedPathMatch = command.match(/>\s*\\?"([^"]+)"/);
+  if (quotedPathMatch?.[1] && quotedPathMatch[1] !== '/dev/null') {
+    return quotedPathMatch[1];
+  }
+
+  // Pattern 2: shell -c/-lc with inner redirect (Codex pattern, unquoted paths)
   // Match: /bin/zsh -lc "... > /path/to/file ..." or bash -c '... > /path ...'
   const shellExecMatch = command.match(
-    /(?:\/bin\/)?(?:zsh|bash|sh)\s+(?:-\w+\s+)*["'].*?>\s*([^\s'"]+)/
+    /(?:\/bin\/)?(?:zsh|bash|sh)\s+(?:-\w+\s+)*["'].*?>\s*([^\s'"\\]+)/
   );
   if (shellExecMatch?.[1] && shellExecMatch[1] !== '/dev/null') {
     return shellExecMatch[1];
   }
 
-  // Pattern: Direct redirect - extract path after > or >>
+  // Pattern 3: Direct redirect - extract path after > or >>
   const directRedirectMatch = command.match(/>{1,2}\s*([^\s;|&"'>]+)/);
   if (directRedirectMatch?.[1] && directRedirectMatch[1] !== '/dev/null') {
     return directRedirectMatch[1];

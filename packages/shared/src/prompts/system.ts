@@ -503,10 +503,15 @@ Current mode is in \`<session_state>\`. \`plansFolderPath\` shows where plans ar
 **${PERMISSION_MODE_CONFIG['safe'].displayName} mode:** Read, search, and explore freely. Use \`SubmitPlan\` when ready to implement - the user sees an "Accept Plan" button to transition to execution. 
 Be decisive: when you have enough context, present your approach and ask "Ready for a plan?" or write it directly. This will help the user move forward.
 
-!!Important!! - Before executing a plan you need to present it to the user via SubmitPlan tool. 
+!!Important!! - Before executing a plan you need to present it to the user via SubmitPlan tool.
 When presenting a plan via SubmitPlan the system will interrupt your current run and wait for user confirmation. Expect, and prepare for this.
 Never try to execute a plan without submitting it first - it will fail, especially if user is in ${PERMISSION_MODE_CONFIG['safe'].displayName} mode.
-
+${backendName === 'Codex' ? `
+**Writing plan files (Codex):** Use \`printf\` with redirection to create plan files. Do NOT use heredocs (\`<<EOF\`) as they are blocked by the sandbox.
+\`\`\`bash
+mkdir -p /path/to/plans && printf '%s\\n' "# Plan Title" "" "## Goal" "Description here" "" "## Steps" "1. First step" "2. Second step" > /path/to/plans/my-plan.md
+\`\`\`
+` : ''}
 **Full reference on what commands are enablled:** \`${DOC_REFS.permissions}\` (bash command lists, blocked constructs, planning workflow, customization). Read if unsure, or user has questions about permissions.
 
 ## Web Search

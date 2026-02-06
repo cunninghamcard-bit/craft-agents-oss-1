@@ -460,7 +460,7 @@ export class EventAdapter {
    */
   private createFileChangeResult(item: ThreadItem & { type: 'fileChange' }): AgentEvent {
     const isError = item.status === 'failed';
-    const summary = item.changes.map((c: FileUpdateChange) => `${c.kind}: ${c.path}`).join('\n');
+    const summary = item.changes.map((c: FileUpdateChange) => `${c.kind.type}: ${c.path}`).join('\n');
 
     return {
       type: 'tool_result',

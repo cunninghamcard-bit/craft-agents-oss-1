@@ -418,10 +418,13 @@ export class AppServerClient extends EventEmitter {
       });
     }
 
-    // Capture stderr for debugging
+    // Log stderr output for debugging
     if (this.process.stderr) {
       this.process.stderr.on('data', (data) => {
-        this.debug(`stderr: ${data.toString().trim()}`);
+        const text = data.toString().trim();
+        if (text) {
+          this.debug(`stderr: ${text}`);
+        }
       });
     }
 
