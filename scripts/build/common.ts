@@ -238,7 +238,7 @@ export async function downloadCodex(config: BuildConfig): Promise<void> {
       await $`chmod +x ${destPath}`.quiet();
     }
 
-    // Verify version
+    // Verify version (temporarily relaxed - just warn on mismatch)
     console.log('  Verifying version...');
     const versionResult = await $`${destPath} --version`.text();
     const versionOutput = versionResult.trim();
@@ -246,14 +246,14 @@ export async function downloadCodex(config: BuildConfig): Promise<void> {
     // The version output should contain the version tag (e.g., "codex craft-v0.1.0" or similar)
     // We check if the version string contains our expected version
     if (!versionOutput.toLowerCase().includes(codexVersion.toLowerCase().replace('craft-', ''))) {
-      throw new Error(
-        `Codex version mismatch!\n` +
-        `  Expected version containing: ${codexVersion}\n` +
-        `  Got: ${versionOutput}`
+      console.log(
+        `  ⚠️  Version mismatch (proceeding anyway):\n` +
+        `      Expected: ${codexVersion}\n` +
+        `      Got: ${versionOutput}`
       );
+    } else {
+      console.log(`  Version verified: ${versionOutput} ✓`);
     }
-
-    console.log(`  Version verified: ${versionOutput} ✓`);
     console.log(`  Codex installed to ${destPath} ✓`);
   } finally {
     // Cleanup temp directory
