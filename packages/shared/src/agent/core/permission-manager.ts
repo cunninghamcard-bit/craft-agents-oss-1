@@ -23,9 +23,12 @@ import {
   formatBashRejectionMessage,
   type ToolCheckResult,
 } from '../mode-manager.ts';
+import { createLogger } from '../../utils/debug.ts';
 import { permissionsConfigCache, type PermissionsContext } from '../permissions-config.ts';
 import type { PermissionMode } from '../mode-types.ts';
 import type { PermissionManagerConfig, ToolPermissionResult } from './types.ts';
+
+const log = createLogger('permissions');
 
 // Re-export types for convenience
 export type { ToolCheckResult, PermissionMode };
@@ -136,14 +139,34 @@ export class PermissionManager {
 
     if (result.allowed) {
       if ('requiresPermission' in result && result.requiresPermission) {
+        log.info('Tool requires permission', {
+          sessionId: this.config.sessionId,
+          mode,
+          toolName,
+          description: result.description,
+          toolInput,
+        });
         return {
           allowed: true,
           requiresPermission: true,
           description: result.description,
         };
       }
+      log.debug('Tool allowed', {
+        sessionId: this.config.sessionId,
+        mode,
+        toolName,
+      });
       return { allowed: true };
     }
+
+    log.warn('Tool blocked', {
+      sessionId: this.config.sessionId,
+      mode,
+      toolName,
+      reason: result.reason,
+      toolInput,
+    });
 
     return {
       allowed: false,

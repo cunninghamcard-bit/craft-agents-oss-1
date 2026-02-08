@@ -84,7 +84,9 @@ export class ConfigValidator {
    * @returns Config type or null if not a known config format
    */
   getConfigType(filePath: string): ConfigFileType {
-    const normalizedPath = filePath.replace(/\\/g, '/');
+    const normalizedPath = process.platform === 'win32'
+      ? filePath.replace(/\\/g, '/').toLowerCase()
+      : filePath.replace(/\\/g, '/');
 
     for (const { pattern, type } of CONFIG_FILE_PATTERNS) {
       if (pattern.test(normalizedPath)) {
@@ -102,7 +104,9 @@ export class ConfigValidator {
    * @returns true if this is a Craft Agent config
    */
   isCraftAgentConfig(filePath: string): boolean {
-    const normalizedPath = filePath.replace(/\\/g, '/');
+    const normalizedPath = process.platform === 'win32'
+      ? filePath.replace(/\\/g, '/').toLowerCase()
+      : filePath.replace(/\\/g, '/');
     return CRAFT_AGENT_CONFIG_PATTERNS.some((pattern) => pattern.test(normalizedPath));
   }
 

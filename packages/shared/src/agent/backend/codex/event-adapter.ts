@@ -9,6 +9,7 @@
  */
 
 import type { AgentEvent, AgentEventUsage } from '@craft-agent/core/types';
+import { createLogger } from '../../../utils/debug.ts';
 
 import { parseReadCommand, type ReadCommandInfo } from './read-patterns';
 
@@ -55,6 +56,7 @@ interface OutputDeltaNotification {
  * - turn/completed → complete with usage
  */
 export class EventAdapter {
+  private log = createLogger('codex-event');
   private turnIndex: number = 0;
   private itemIndex: number = 0;
 
@@ -75,6 +77,7 @@ export class EventAdapter {
    * Called from codex-agent when PreToolUse blocks a command.
    */
   setBlockReason(itemId: string, reason: string): void {
+    this.log.warn('Command block reason recorded', { itemId, reason });
     this.blockReasons.set(itemId, reason);
   }
 
@@ -89,6 +92,7 @@ export class EventAdapter {
     this.readCommands.clear();
     this.blockReasons.clear();
     this.currentTurnId = turnId || null;
+    this.log.debug('Turn started', { turnId: this.currentTurnId });
   }
 
   /**
@@ -474,6 +478,17 @@ export class EventAdapter {
     const blockReason = this.blockReasons.get(item.id);
     if (blockReason) {
       this.blockReasons.delete(item.id); // Clean up
+    }
+
+    if (isDeclined) {
+      this.log.warn('Command declined by permission policy', {
+        itemId: item.id,
+        command: item.command,
+        status: item.status,
+        exitCode: item.exitCode,
+        blockReason,
+        output: output ? '[output present]' : '',
+      });
     }
 
     // Determine appropriate result message
