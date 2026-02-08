@@ -12,11 +12,12 @@ import {
 import { findIconFile } from '../utils/icon.ts';
 import { initializeDocs } from '../docs/index.ts';
 import { expandPath, toPortablePath, getBundledAssetsDir } from '../utils/paths.ts';
+import { debug } from '../utils/debug.ts';
 import { CONFIG_DIR } from './paths.ts';
 import type { StoredAttachment, StoredMessage } from '@craft-agent/core/types';
 import type { Plan } from '../agent/plan-types.ts';
 import type { PermissionMode } from '../agent/mode-manager.ts';
-import { BUNDLED_CONFIG_DEFAULTS, type ConfigDefaults } from './config-defaults-schema.ts';
+import { type ConfigDefaults } from './config-defaults-schema.ts';
 import { isValidThemeFile } from './validators.ts';
 
 // Re-export CONFIG_DIR for convenience (centralized in paths.ts)
@@ -79,35 +80,57 @@ export interface StoredConfig {
 const CONFIG_FILE = join(CONFIG_DIR, 'config.json');
 const CONFIG_DEFAULTS_FILE = join(CONFIG_DIR, 'config-defaults.json');
 
+// Track if config-defaults have been synced this session (prevents re-sync on hot reload)
+let configDefaultsSynced = false;
+
 /**
- * Load config defaults from file, or use bundled defaults as fallback.
+ * Sync config-defaults.json from bundled assets.
+ * Always writes on launch to ensure defaults are up-to-date with the running version.
+ * Follows the same pattern as docs, themes, and other bundled assets.
+ *
+ * Source of truth: apps/electron/resources/config-defaults.json
  */
-export function loadConfigDefaults(): ConfigDefaults {
-  try {
-    if (existsSync(CONFIG_DEFAULTS_FILE)) {
-      const content = readFileSync(CONFIG_DEFAULTS_FILE, 'utf-8');
-      return JSON.parse(content) as ConfigDefaults;
-    }
-  } catch {
-    // Fall through to bundled defaults
+function syncConfigDefaults(): void {
+  if (configDefaultsSynced) return;
+  configDefaultsSynced = true;
+
+  // Get bundled config-defaults.json from resources folder
+  const bundledDir = getBundledAssetsDir('.');
+  if (!bundledDir) {
+    debug('[config] No bundled assets dir found - config-defaults will not be synced');
+    return;
   }
-  return BUNDLED_CONFIG_DEFAULTS;
+
+  const bundledFile = join(bundledDir, 'config-defaults.json');
+  if (!existsSync(bundledFile)) {
+    debug('[config] Bundled config-defaults.json not found at: ' + bundledFile);
+    return;
+  }
+
+  // Sync from bundled file (same pattern as docs)
+  const content = readFileSync(bundledFile, 'utf-8');
+  writeFileSync(CONFIG_DEFAULTS_FILE, content, 'utf-8');
+  debug('[config] Synced config-defaults.json from bundled assets');
 }
 
 /**
- * Ensure config-defaults.json exists.
- * Writes from the BUNDLED_CONFIG_DEFAULTS constant (single source of truth).
+ * Load config defaults from ~/.craft-agent/config-defaults.json
+ * This file is synced from bundled assets on every launch.
+ */
+export function loadConfigDefaults(): ConfigDefaults {
+  if (existsSync(CONFIG_DEFAULTS_FILE)) {
+    const content = readFileSync(CONFIG_DEFAULTS_FILE, 'utf-8');
+    return JSON.parse(content) as ConfigDefaults;
+  }
+  throw new Error('config-defaults.json not found at ' + CONFIG_DEFAULTS_FILE + '. Ensure ensureConfigDir() was called at startup.');
+}
+
+/**
+ * Ensure config-defaults.json exists and is up-to-date.
+ * Syncs from bundled assets on every launch (like docs, themes, permissions).
  */
 export function ensureConfigDefaults(): void {
-  if (existsSync(CONFIG_DEFAULTS_FILE)) {
-    return; // Already exists, don't overwrite
-  }
-
-  writeFileSync(
-    CONFIG_DEFAULTS_FILE,
-    JSON.stringify(BUNDLED_CONFIG_DEFAULTS, null, 2),
-    'utf-8'
-  );
+  syncConfigDefaults();
 }
 
 export function ensureConfigDir(): void {

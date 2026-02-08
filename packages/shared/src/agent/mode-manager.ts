@@ -1244,19 +1244,21 @@ export function looksLikePotentialWrite(command: string): boolean {
  * Detects common mistakes and provides actionable guidance.
  */
 export function getPathHint(targetPath: string, plansFolderPath: string): string | null {
-  const normalizedTarget = normalizeForComparison(targetPath);
-  const normalizedPlans = normalizeForComparison(plansFolderPath);
+  const normalizedTarget = targetPath.replace(/\\/g, '/').toLowerCase();
+  const normalizedPlans = plansFolderPath.replace(/\\/g, '/').toLowerCase();
 
   // Case: Writing to session folder but missing /plans/
   if (normalizedTarget.includes('/sessions/') && !normalizedTarget.includes('/plans/')) {
     return 'Hint: Write to the /plans/ subfolder, not the session folder directly.';
   }
 
-  // Case: Wrong session ID
+  // Case: Wrong session ID (use lowercase for comparison)
   const targetSessionMatch = normalizedTarget.match(/sessions\/([^/]+)/);
   const plansSessionMatch = normalizedPlans.match(/sessions\/([^/]+)/);
   if (targetSessionMatch && plansSessionMatch && targetSessionMatch[1] !== plansSessionMatch[1]) {
-    return `Hint: Wrong session ID. Current session is "${plansSessionMatch[1]}".`;
+    // Get the original casing from plansFolderPath for display
+    const originalSessionMatch = plansFolderPath.replace(/\\/g, '/').match(/sessions\/([^/]+)/);
+    return `Hint: Wrong session ID. Current session is "${originalSessionMatch?.[1] ?? plansSessionMatch[1]}".`;
   }
 
   // Case: Writing to workspace root instead of session
@@ -1420,9 +1422,10 @@ export function shouldAllowToolInMode(
       if (options?.plansFolderPath) {
         const targetPath = extractBashWriteTarget(command) ?? extractPowerShellWriteTarget(command);
         if (targetPath) {
-          const normalizedTarget = normalizeForComparison(targetPath);
-          const normalizedPlansDir = normalizeForComparison(options.plansFolderPath);
-          if (normalizedTarget.startsWith(normalizedPlansDir)) {
+          const normalizedTarget = targetPath.replace(/\\/g, '/');
+          const normalizedPlansDir = options.plansFolderPath.replace(/\\/g, '/');
+          // Use case-insensitive comparison for Windows path compatibility
+          if (normalizedTarget.toLowerCase().startsWith(normalizedPlansDir.toLowerCase())) {
             debug(`[Mode] Allowing write to plans folder: ${targetPath}`);
             return { allowed: true };
           }
@@ -1484,11 +1487,13 @@ export function shouldAllowToolInMode(
     if (filePath) {
       // Check plans folder exception
       if (options?.plansFolderPath) {
-        const normalizedPath = normalizeForComparison(filePath);
-        const normalizedPlansDir = normalizeForComparison(options.plansFolderPath);
+        const normalizedPath = filePath.replace(/\\/g, '/');
+        const normalizedPlansDir = options.plansFolderPath.replace(/\\/g, '/');
         debug(`[Mode] Checking plans folder exception: path="${normalizedPath}", plansDir="${normalizedPlansDir}"`);
 
-        if (normalizedPath.startsWith(normalizedPlansDir)) {
+        // Use case-insensitive comparison for Windows path compatibility
+        // (paths from Codex may have inconsistent casing)
+        if (normalizedPath.toLowerCase().startsWith(normalizedPlansDir.toLowerCase())) {
           debug(`[Mode] Allowing ${toolName} to plans folder`);
           return { allowed: true };
         }

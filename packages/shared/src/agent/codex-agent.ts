@@ -1865,20 +1865,14 @@ export class CodexAgent extends BaseAgent {
    * Get Codex approval policy from permission mode.
    * Valid values: "untrusted" | "on-failure" | "on-request" | "never"
    */
-  private getApprovalPolicy(mode: PermissionMode): AskForApproval {
-    switch (mode) {
-      case 'safe':
-        // Always require approval (untrusted)
-        return 'untrusted';
-      case 'ask':
-        // Ask on failure or request
-        return 'on-failure';
-      case 'allow-all':
-        // Never ask
-        return 'never';
-      default:
-        return 'on-failure';
-    }
+  private getApprovalPolicy(_mode: PermissionMode): AskForApproval {
+    // Use 'never' for all modes.
+    // Our PreToolUse hook handles ALL permission logic:
+    // - Explore: blocks everything except plans folder (via shouldAllowToolInMode)
+    // - Ask: prompts user for approval
+    // - Execute: auto-approves
+    // Codex's built-in approval would interfere with our logic.
+    return 'never';
   }
 
   /**
