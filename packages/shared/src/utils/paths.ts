@@ -127,6 +127,17 @@ export function normalizePath(path: string): string {
 }
 
 /**
+ * Normalize a path for cross-platform comparison.
+ * - Resolve to absolute
+ * - Convert backslashes to forward slashes
+ * - Lowercase on Windows
+ */
+export function normalizePathForComparison(path: string): string {
+  const normalized = normalizePath(resolve(path));
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/**
  * Check if a file path starts with a directory path (cross-platform).
  * Handles both Windows backslashes and Unix forward slashes.
  *
@@ -136,8 +147,8 @@ export function normalizePath(path: string): string {
  * pathStartsWith('/home/user2/file.txt', '/home/user')         // false
  */
 export function pathStartsWith(filePath: string, dirPath: string): boolean {
-  const normalizedFile = normalizePath(filePath);
-  const normalizedDir = normalizePath(dirPath);
+  const normalizedFile = normalizePathForComparison(filePath);
+  const normalizedDir = normalizePathForComparison(dirPath);
   return normalizedFile.startsWith(normalizedDir + '/') || normalizedFile === normalizedDir;
 }
 
@@ -150,8 +161,8 @@ export function pathStartsWith(filePath: string, dirPath: string): boolean {
  * stripPathPrefix('C:\\foo\\bar\\baz.txt', 'C:\\foo')       // 'bar/baz.txt'
  */
 export function stripPathPrefix(filePath: string, prefix: string): string {
-  const normalizedFile = normalizePath(filePath);
-  const normalizedPrefix = normalizePath(prefix);
+  const normalizedFile = normalizePathForComparison(filePath);
+  const normalizedPrefix = normalizePathForComparison(prefix);
   if (normalizedFile.startsWith(normalizedPrefix + '/')) {
     return normalizedFile.slice(normalizedPrefix.length + 1);
   }

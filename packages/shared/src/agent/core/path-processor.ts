@@ -16,6 +16,7 @@ import { resolve, isAbsolute, normalize as normalizePosix, basename, dirname } f
 import {
   expandPath,
   normalizePath,
+  normalizePathForComparison,
   pathStartsWith,
   toPortablePath,
 } from '../../utils/paths.ts';
@@ -114,6 +115,13 @@ export class PathProcessor {
   }
 
   /**
+   * Normalize a path for comparison.
+   * Resolves to absolute, normalizes separators, and lowercases on Windows.
+   */
+  normalizeForComparison(path: string): string {
+    return normalizePathForComparison(path);
+  }
+  /**
    * Convert an absolute path to portable form (~ prefix if in home).
    *
    * @param absolutePath - Absolute path to convert
@@ -146,7 +154,7 @@ export class PathProcessor {
    * @returns true if this is a config file
    */
   isConfigFile(filePath: string): boolean {
-    const normalized = this.normalize(this.expandPath(filePath));
+    const normalized = this.normalizeForComparison(this.expandPath(filePath));
     return CONFIG_FILE_PATTERNS.some((pattern) => pattern.test(normalized));
   }
 

@@ -14,6 +14,7 @@
 
 import { homedir } from 'os';
 import { debug } from '../utils/debug.ts';
+import { resolve } from 'path';
 import type { PermissionsContext, MergedPermissionsConfig } from './permissions-config.ts';
 import {
   validateBashCommand,
@@ -120,8 +121,8 @@ function globToRegex(pattern: string): RegExp {
  * Check if a path matches any of the allowed write path patterns
  */
 function matchesAllowedWritePath(filePath: string, allowedPaths: string[]): boolean {
-  // Normalize path (expand ~ and use forward slashes)
-  const normalizedPath = expandHome(filePath).replace(/\\/g, '/');
+  // Normalize path (expand ~, resolve, and use forward slashes)
+  const normalizedPath = normalizeForComparison(expandHome(filePath));
 
   for (const pattern of allowedPaths) {
     try {
@@ -135,6 +136,17 @@ function matchesAllowedWritePath(filePath: string, allowedPaths: string[]): bool
     }
   }
   return false;
+}
+
+/**
+ * Normalize a path for cross-platform comparison.
+ * - Resolve to absolute path
+ * - Convert backslashes to forward slashes
+ * - Lowercase on Windows for case-insensitive comparison
+ */
+function normalizeForComparison(path: string): string {
+  const normalized = resolve(path).replace(/\\/g, '/');
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
 }
 
 // ============================================================
@@ -1232,8 +1244,8 @@ export function looksLikePotentialWrite(command: string): boolean {
  * Detects common mistakes and provides actionable guidance.
  */
 export function getPathHint(targetPath: string, plansFolderPath: string): string | null {
-  const normalizedTarget = targetPath.replace(/\\/g, '/').toLowerCase();
-  const normalizedPlans = plansFolderPath.replace(/\\/g, '/').toLowerCase();
+  const normalizedTarget = normalizeForComparison(targetPath);
+  const normalizedPlans = normalizeForComparison(plansFolderPath);
 
   // Case: Writing to session folder but missing /plans/
   if (normalizedTarget.includes('/sessions/') && !normalizedTarget.includes('/plans/')) {
@@ -1408,10 +1420,9 @@ export function shouldAllowToolInMode(
       if (options?.plansFolderPath) {
         const targetPath = extractBashWriteTarget(command) ?? extractPowerShellWriteTarget(command);
         if (targetPath) {
-          const normalizedTarget = targetPath.replace(/\\/g, '/');
-          const normalizedPlansDir = options.plansFolderPath.replace(/\\/g, '/');
-          // Use case-insensitive comparison for Windows path compatibility
-          if (normalizedTarget.toLowerCase().startsWith(normalizedPlansDir.toLowerCase())) {
+          const normalizedTarget = normalizeForComparison(targetPath);
+          const normalizedPlansDir = normalizeForComparison(options.plansFolderPath);
+          if (normalizedTarget.startsWith(normalizedPlansDir)) {
             debug(`[Mode] Allowing write to plans folder: ${targetPath}`);
             return { allowed: true };
           }
@@ -1473,12 +1484,11 @@ export function shouldAllowToolInMode(
     if (filePath) {
       // Check plans folder exception
       if (options?.plansFolderPath) {
-        const normalizedPath = filePath.replace(/\\/g, '/');
-        const normalizedPlansDir = options.plansFolderPath.replace(/\\/g, '/');
+        const normalizedPath = normalizeForComparison(filePath);
+        const normalizedPlansDir = normalizeForComparison(options.plansFolderPath);
         debug(`[Mode] Checking plans folder exception: path="${normalizedPath}", plansDir="${normalizedPlansDir}"`);
 
-        // Use case-insensitive comparison for Windows path compatibility
-        if (normalizedPath.toLowerCase().startsWith(normalizedPlansDir.toLowerCase())) {
+        if (normalizedPath.startsWith(normalizedPlansDir)) {
           debug(`[Mode] Allowing ${toolName} to plans folder`);
           return { allowed: true };
         }
