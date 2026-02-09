@@ -836,9 +836,19 @@ export class SessionManager {
   private activeViewingSession: Map<string, string> = new Map()
   /** Resolved path to @github/copilot CLI entry point (for CopilotAgent) */
   copilotCliPath: string | undefined
+  /** Monotonic clock to ensure strictly increasing message timestamps */
+  private lastTimestamp = 0
 
   setWindowManager(wm: WindowManager): void {
     this.windowManager = wm
+  }
+
+  /** Returns a strictly increasing timestamp (ms). When Date.now() collides with
+   *  the previous value, increments by 1 to preserve event ordering. */
+  private monotonic(): number {
+    const now = Date.now()
+    this.lastTimestamp = now > this.lastTimestamp ? now : this.lastTimestamp + 1
+    return this.lastTimestamp
   }
 
   /**
@@ -2348,6 +2358,16 @@ export class SessionManager {
             this.persistSession(managed)
             sessionPersistenceQueue.flush(managed.id)
           },
+          getRecoveryMessages: () => {
+            const relevantMessages = managed.messages
+              .filter(m => m.role === 'user' || m.role === 'assistant')
+              .filter(m => !m.isIntermediate)
+              .slice(-6)
+            return relevantMessages.map(m => ({
+              type: m.role as 'user' | 'assistant',
+              content: m.content,
+            }))
+          },
         })
         sessionLog.info(`Created Copilot agent for session ${managed.id} (model: ${copilotModel})${managed.sdkSessionId ? ' (resuming)' : ''}`)
 
@@ -2500,7 +2520,7 @@ export class SessionManager {
             id: `plan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             role: 'plan' as const,
             content: planContent,
-            timestamp: Date.now(),
+            timestamp: this.monotonic(),
             planPath,
           }
 
@@ -2544,7 +2564,7 @@ export class SessionManager {
           id: generateMessageId(),
           role: 'auth-request',
           content: this.getAuthRequestDescription(request),
-          timestamp: Date.now(),
+          timestamp: this.monotonic(),
           authRequestId: request.requestId,
           authRequestType: request.type,
           authSourceSlug: request.sourceSlug,
@@ -3492,7 +3512,7 @@ export class SessionManager {
         id: generateMessageId(),
         role: 'user',
         content: message,
-        timestamp: Date.now(),
+        timestamp: this.monotonic(),
         attachments: storedAttachments,
         badges: options?.badges,
       }
@@ -3534,7 +3554,7 @@ export class SessionManager {
         id: generateMessageId(),
         role: 'user',
         content: message,
-        timestamp: Date.now(),
+        timestamp: this.monotonic(),
         attachments: storedAttachments, // Include for persistence (has thumbnailBase64)
         badges: options?.badges,  // Include content badges (sources, skills with embedded icons)
       }
@@ -3875,7 +3895,7 @@ export class SessionManager {
         id: generateMessageId(),
         role: 'info',
         content: 'Response interrupted',
-        timestamp: Date.now(),
+        timestamp: this.monotonic(),
       }
       managed.messages.push(interruptedMessage)
       this.sendEvent({ type: 'interrupted', sessionId, message: interruptedMessage }, managed.workspace.id)
@@ -4368,7 +4388,7 @@ To view this task's output:
           id: generateMessageId(),
           role: 'assistant',
           content: event.text,
-          timestamp: Date.now(),
+          timestamp: this.monotonic(),
           isIntermediate: event.isIntermediate,
           turnId: event.turnId,
           parentToolUseId: textParentToolUseId,
@@ -4450,7 +4470,7 @@ To view this task's output:
             id: generateMessageId(),
             role: 'tool',
             content: `Running ${event.toolName}...`,
-            timestamp: Date.now(),
+            timestamp: this.monotonic(),
             toolName: event.toolName,
             toolUseId: event.toolUseId,
             toolInput: formattedToolInput,
@@ -4466,7 +4486,7 @@ To view this task's output:
 
         // Send event to renderer on first occurrence OR when input data is updated
         if (shouldSendEvent) {
-          const timestamp = existingStartMsg?.timestamp ?? Date.now()
+          const timestamp = existingStartMsg?.timestamp ?? this.monotonic()
           this.sendEvent({
             type: 'tool_start',
             sessionId,
@@ -4524,7 +4544,7 @@ To view this task's output:
             id: generateMessageId(),
             role: 'tool',
             content: formattedResult,
-            timestamp: Date.now(),
+            timestamp: this.monotonic(),
             toolName: toolName,
             toolUseId: event.toolUseId,
             toolResult: formattedResult,
@@ -4602,7 +4622,7 @@ To view this task's output:
             id: generateMessageId(),
             role: 'info',
             content: event.message,
-            timestamp: Date.now(),
+            timestamp: this.monotonic(),
             statusType: 'compaction_complete',
           }
           managed.messages.push(compactionMessage)
@@ -4648,7 +4668,7 @@ To view this task's output:
           id: generateMessageId(),
           role: 'error',
           content: event.message,
-          timestamp: Date.now()
+          timestamp: this.monotonic()
         }
         managed.messages.push(errorMessage)
         this.sendEvent({ type: 'error', sessionId, error: event.message }, workspaceId)
@@ -4742,7 +4762,7 @@ To view this task's output:
                 id: generateMessageId(),
                 role: 'error',
                 content: 'Authentication failed. Please check your credentials.',
-                timestamp: Date.now(),
+                timestamp: this.monotonic(),
                 errorCode: event.error.code,
               }
               managed.messages.push(failedMessage)
@@ -4765,7 +4785,7 @@ To view this task's output:
           role: 'error',
           // Combine title and message for content display (handles undefined gracefully)
           content: [event.error.title, event.error.message].filter(Boolean).join(': ') || 'An error occurred',
-          timestamp: Date.now(),
+          timestamp: this.monotonic(),
           // Rich error fields for diagnostics and retry functionality
           errorCode: event.error.code,
           errorTitle: event.error.title,

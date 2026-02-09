@@ -63,6 +63,9 @@ export class CopilotEventAdapter {
   // Track whether we're currently in a reasoning block (for styling reasoning deltas differently)
   private inReasoning: boolean = false;
 
+  // Deduplication: track last emitted intermediate text to skip identical re-emissions
+  private lastIntermediateText: string | null = null;
+
   /**
    * Store the block reason for a tool call that will be declined.
    * Called from copilot-agent when PreToolUse hook blocks a tool.
@@ -85,6 +88,7 @@ export class CopilotEventAdapter {
     this.hasStreamedDeltas = false;
     this.hasEmittedFinalText = false;
     this.inReasoning = false;
+    this.lastIntermediateText = null;
     this.log.debug('Turn started', { turnIndex: this.turnIndex });
   }
 
@@ -190,6 +194,7 @@ export class CopilotEventAdapter {
         this.hasStreamedDeltas = false;
         this.hasEmittedFinalText = false;
         this.inReasoning = false;
+        this.lastIntermediateText = null;
         break;
 
       case 'assistant.message_delta':
@@ -211,47 +216,37 @@ export class CopilotEventAdapter {
         // The session handler uses text_complete to create the canonical persisted message.
         // Guard: only emit once per turn to prevent duplicate messages.
         if (event.data.content && !this.hasEmittedFinalText) {
+          // Mark as intermediate when inside a subagent OR when tool calls follow
+          const isIntermediate = !!(event.data.parentToolCallId || event.data.toolRequests?.length);
+
+          // Skip duplicate intermediate text (same reasoning re-emitted across tool retries)
+          if (isIntermediate && event.data.content === this.lastIntermediateText) {
+            break;
+          }
+
           this.hasEmittedFinalText = true;
+          if (isIntermediate) {
+            this.lastIntermediateText = event.data.content;
+          } else {
+            this.lastIntermediateText = null; // Final response clears the slate
+          }
+
           yield {
             type: 'text_complete',
             text: event.data.content,
+            isIntermediate,
             turnId: this.currentTurnId || undefined,
             parentToolUseId: event.data.parentToolCallId || undefined,
           };
           this.hasStreamedDeltas = false;
         }
 
-        // Extract toolRequests for early tool_start events.
-        // The SDK may emit tool requests before tool.execution_start, giving earlier UI feedback.
-        if (event.data.toolRequests) {
-          for (const req of event.data.toolRequests) {
-            // Only emit if we haven't seen this tool call yet via tool.execution_start
-            if (!this.toolNames.has(req.toolCallId)) {
-              // Skip early emission for MCP tools (not in COPILOT_TOOL_NAME_MAP).
-              // toolRequests lack mcpServerName/mcpToolName metadata, so MCP tool names
-              // resolve incorrectly (e.g. "api-bridge-api_gmail" instead of "mcp__api-bridge__api_gmail").
-              // Let tool.execution_start handle them with proper MCP metadata.
-              if (!COPILOT_TOOL_NAME_MAP[req.name]) {
-                continue;
-              }
-              const toolName = this.resolveToolName({ toolName: req.name });
-              this.toolNames.set(req.toolCallId, toolName);
-              const args = this.normalizeToolArgs(
-                toolName,
-                (req.arguments ?? {}) as Record<string, unknown>
-              );
-              yield {
-                type: 'tool_start',
-                toolName,
-                toolUseId: req.toolCallId,
-                input: args,
-                displayName: this.getToolDisplayName(toolName),
-                turnId: this.currentTurnId || undefined,
-                parentToolUseId: event.data.parentToolCallId || undefined,
-              };
-            }
-          }
-        }
+        // NOTE: toolRequests are intentionally NOT extracted here.
+        // assistant.message contains ALL upcoming tool calls in toolRequests[],
+        // but yielding them here would batch all tool_start events at once.
+        // Instead, we let individual tool.execution_start events drive tool_start
+        // emissions — they arrive one-at-a-time from the SDK as each tool begins
+        // executing, giving proper streaming UX (tools appear progressively).
         break;
       }
 
@@ -271,7 +266,8 @@ export class CopilotEventAdapter {
 
       case 'assistant.reasoning':
         this.inReasoning = false; // Reasoning block complete
-        if (event.data.content) {
+        if (event.data.content && event.data.content !== this.lastIntermediateText) {
+          this.lastIntermediateText = event.data.content;
           yield {
             type: 'text_complete',
             text: event.data.content,
@@ -282,7 +278,8 @@ export class CopilotEventAdapter {
         break;
 
       case 'assistant.intent':
-        if (event.data.intent) {
+        if (event.data.intent && event.data.intent !== this.lastIntermediateText) {
+          this.lastIntermediateText = event.data.intent;
           yield {
             type: 'text_complete',
             text: event.data.intent,

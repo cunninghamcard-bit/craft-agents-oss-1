@@ -55,7 +55,7 @@ import { cn } from '@/lib/utils'
 import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
-import { ANTHROPIC_MODELS, getModelShortName, getModelContextWindow, isCodexModel } from '@config/models'
+import { ANTHROPIC_MODELS, getModelShortName, getModelContextWindow, isCodexModel, isCopilotModel } from '@config/models'
 import { resolveEffectiveConnectionSlug, isCompatProvider } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
@@ -1833,7 +1833,8 @@ export function FreeFormInput({
               ? Math.min(99, Math.round((contextStatus.inputTokens / compactionThreshold) * 100))
               : null
             // Show badge when >= 80% of compaction threshold AND not currently compacting
-            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting && !isCodexModel(currentModel)
+            // Hide for Codex and Copilot models which don't support context compaction
+            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting && !isCodexModel(currentModel) && !isCopilotModel(currentModel)
 
             if (!showWarning) return null
 

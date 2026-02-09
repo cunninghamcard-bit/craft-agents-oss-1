@@ -34,6 +34,7 @@ export function resolveCopilotModelId(modelId: string): string {
 
 // BaseAgent provides common functionality
 import { BaseAgent } from './base-agent.ts';
+import type { Workspace } from '../config/storage.ts';
 
 // Copilot SDK
 import { CopilotClient, CopilotSession } from '@github/copilot-sdk';
@@ -107,6 +108,9 @@ import {
 // Path utilities
 import { join } from 'path';
 import { homedir } from 'os';
+
+// Session storage (plans folder path)
+import { getSessionPlansPath } from '../sessions/storage.ts';
 
 // Error typing
 import { parseError, type AgentError } from './errors.ts';
@@ -207,6 +211,21 @@ export class CopilotAgent extends BaseAgent {
 
   // Session event unsubscribe function
   private unsubscribeEvents: (() => void) | null = null;
+
+  // Map toolCallId → { mcpToolName, arguments } for pending session MCP tool calls.
+  //
+  // WHY: Copilot SDK splits tool lifecycle across two events:
+  //   tool.execution_start (has tool name + args)
+  //   tool.execution_complete (has success/failure)
+  //
+  // We capture the tool details on start and fire the callback on completion.
+  // This enables the centralized BaseAgent.handleSessionMcpToolCompletion()
+  // to trigger onPlanSubmitted/onAuthRequest — which the external MCP server
+  // subprocess cannot do cross-process.
+  private pendingSessionToolCalls = new Map<string, {
+    mcpToolName: string;
+    arguments: Record<string, unknown>;
+  }>();
 
   // Generation counter to invalidate stale event handlers.
   // The Copilot SDK's session.on() unsubscribe doesn't reliably remove listeners,
@@ -354,6 +373,7 @@ export class CopilotAgent extends BaseAgent {
             onPermissionRequest: (request, invocation) => this.handlePermissionRequest(request, invocation.sessionId),
             hooks: this.buildHooks(),
             workingDirectory: this.resolvedCwd(),
+            configDir: this.config.copilotConfigDir,
             streaming: true,
           };
           this.session = await client.resumeSession(this.copilotSessionId, resumeConfig);
@@ -420,9 +440,17 @@ export class CopilotAgent extends BaseAgent {
         }
       }
 
-      // Build full message with source context and attachments
+      // Build context parts using centralized PromptBuilder
+      // This includes: date/time, session state (with plansFolderPath),
+      // workspace capabilities, and working directory context
+      const contextParts = this.promptBuilder.buildContextParts(
+        { plansFolderPath: getSessionPlansPath(this.config.workspace.rootPath, this._sessionId) },
+        sourceContext
+      );
+
+      // Combine: context + attachments + user message
       const messageParts = [
-        sourceContext,
+        ...contextParts,
         ...attachmentParts,
         message,
       ].filter(Boolean);
@@ -554,6 +582,44 @@ export class CopilotAgent extends BaseAgent {
       }
     }
 
+    // ============================================================
+    // Detect session MCP tool completions (SubmitPlan, auth tools)
+    // ============================================================
+    // WHY: Session-scoped tools run in an external MCP server subprocess
+    // (packages/session-mcp-server) which can't trigger callbacks cross-process.
+    // We detect their completion from Copilot SDK session events and call the
+    // centralized BaseAgent.handleSessionMcpToolCompletion() to fire callbacks.
+    // Same pattern as CodexAgent (codex-agent.ts ~line 425).
+
+    // Step 1: Capture session MCP tool starts (stores tool name + args by toolCallId)
+    if (event.type === 'tool.execution_start') {
+      const data = event.data as {
+        toolCallId: string;
+        mcpServerName?: string;
+        mcpToolName?: string;
+        arguments?: Record<string, unknown>;
+      };
+      if (data.mcpServerName === 'session' && data.mcpToolName) {
+        this.pendingSessionToolCalls.set(data.toolCallId, {
+          mcpToolName: data.mcpToolName,
+          arguments: (data.arguments ?? {}) as Record<string, unknown>,
+        });
+      }
+    }
+
+    // Step 2: On successful completion, fire the appropriate callback
+    // (e.g., onPlanSubmitted for SubmitPlan, onAuthRequest for auth tools)
+    if (event.type === 'tool.execution_complete') {
+      const data = event.data as { toolCallId: string; success: boolean };
+      const pending = this.pendingSessionToolCalls.get(data.toolCallId);
+      if (pending) {
+        this.pendingSessionToolCalls.delete(data.toolCallId);
+        if (data.success) {
+          this.handleSessionMcpToolCompletion(pending.mcpToolName, pending.arguments);
+        }
+      }
+    }
+
     // Adapt event to AgentEvents
     for (const agentEvent of this.adapter.adaptEvent(event)) {
       this.enqueueEvent(agentEvent);
@@ -623,15 +689,39 @@ export class CopilotAgent extends BaseAgent {
    */
   private async onPreToolUse(input: PreToolUseHookInput): Promise<PreToolUseHookOutput | void> {
     const { toolName, toolArgs } = input;
-    const inputObj = (toolArgs as Record<string, unknown>) || {};
+
+    // Parse toolArgs defensively — may arrive as JSON string or parsed object.
+    // See parseCopilotToolArgs() for full explanation of why this is needed.
+    let inputObj = this.parseCopilotToolArgs(toolArgs);
     const permissionMode = this.getPermissionMode();
 
-    // Map Copilot tool names to SDK tool names for permission checking
+    // Log the raw type for debugging — helps diagnose future format issues
+    // without needing to add temporary logging each time.
+    this.debug(`PreToolUse: ${toolName}, toolArgs type: ${typeof toolArgs}, keys: [${Object.keys(inputObj).join(', ')}]`);
+
+    // Map Copilot tool names to SDK tool names for permission checking.
+    // Copilot CLI uses lowercase (e.g., "bash") but our permission system
+    // expects PascalCase (e.g., "Bash"). See COPILOT_TOOL_NAME_MAP.
     const sdkToolName = this.mapCopilotToolName(toolName, inputObj);
+
+    // Normalize Copilot-native arg names before permission check.
+    //
+    // WHY: Copilot CLI's native tools (str_replace_editor subcommands like
+    // "view", "create") use `path` as the file path parameter name.
+    // Our permission system (shouldAllowToolInMode in mode-manager.ts) expects
+    // `file_path` — it checks `input.file_path` to evaluate the plans folder
+    // exception and allowedWritePaths rules. Without this remapping, `file_path`
+    // is undefined and the permission check falls through to a generic block.
+    //
+    // MATCHES: event-adapter.ts normalizeToolArgs() does the same for display events.
+    if ((sdkToolName === 'Write' || sdkToolName === 'Edit' || sdkToolName === 'Read')
+        && inputObj.path && !inputObj.file_path) {
+      inputObj = { ...inputObj, file_path: inputObj.path };
+    }
 
     // Check permission mode
     const check = shouldAllowToolInMode(sdkToolName, inputObj, permissionMode, {
-      plansFolderPath: this.config.session?.workingDirectory,
+      plansFolderPath: getSessionPlansPath(this.config.workspace.rootPath, this._sessionId),
       permissionsContext: {
         workspaceRootPath: this.workingDirectory,
         activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
@@ -780,7 +870,10 @@ export class CopilotAgent extends BaseAgent {
     if (tokenCount <= TOKEN_LIMIT) return;
 
     try {
-      const inputObj = (toolArgs as Record<string, unknown>) || {};
+      // Parse toolArgs defensively — same as onPreToolUse.
+      // Needed here for summarizeLargeResult() which reads tool-specific
+      // fields (e.g., description/intent) from the args.
+      const inputObj = this.parseCopilotToolArgs(toolArgs);
       const summarized = await summarizeLargeResult(resultText, {
         toolName,
         input: inputObj,
@@ -1032,6 +1125,37 @@ export class CopilotAgent extends BaseAgent {
     }
   }
 
+  // ============================================================
+  // Session ID overrides (match CodexAgent pattern)
+  // ============================================================
+
+  override getSessionId(): string | null {
+    return this.copilotSessionId;
+  }
+
+  override setSessionId(sessionId: string | null): void {
+    this.copilotSessionId = sessionId;
+  }
+
+  override setWorkspace(workspace: Workspace): void {
+    super.setWorkspace(workspace);
+    this.copilotSessionId = null;
+    if (this.session) {
+      this.session.destroy().catch(() => {});
+      this.session = null;
+    }
+  }
+
+  override clearHistory(): void {
+    this.copilotSessionId = null;
+    if (this.session) {
+      this.session.destroy().catch(() => {});
+      this.session = null;
+    }
+    super.clearHistory();
+    this.debug('History cleared - next chat will start new session');
+  }
+
   destroy(): void {
     this.stopConfigWatcher();
 
@@ -1123,6 +1247,63 @@ export class CopilotAgent extends BaseAgent {
       return null;
     }
     return mcpServer;
+  }
+
+  /**
+   * Parse Copilot SDK tool arguments into a usable object.
+   *
+   * WHY THIS EXISTS:
+   * ----------------
+   * The Copilot SDK types `toolArgs` as `unknown` (see PreToolUseHookInput in
+   * @github/copilot-sdk/dist/types.d.ts). In practice, the Copilot CLI may
+   * send tool arguments in one of two formats:
+   *
+   *   1. PARSED OBJECT — e.g. { command: "ls -la ..." }
+   *      This happens when the JSON-RPC layer has already deserialized the args.
+   *
+   *   2. JSON STRING — e.g. '{"command":"ls -la ..."}'
+   *      This follows the OpenAI function calling convention where the model's
+   *      tool call arguments are transmitted as a serialized JSON string.
+   *      When this happens, a naive type cast like `(toolArgs as Record<string, unknown>)`
+   *      gives you a string object — accessing `.command` or `.path` on it
+   *      returns `undefined`, causing permission checks to fail with misleading
+   *      errors like "Bash command is missing or invalid".
+   *
+   * WHAT THIS DOES:
+   * ---------------
+   * - If toolArgs is a string → JSON.parse it into an object
+   * - If toolArgs is already an object → use it directly
+   * - If toolArgs is undefined/null/unparseable → fall back to {}
+   *
+   * DOWNSTREAM EFFECTS:
+   * -------------------
+   * The returned object flows into:
+   * - shouldAllowToolInMode() which reads `.command` for Bash, `.file_path` for Write/Edit/Read
+   * - path→file_path normalization (Copilot uses `path`, our permission system expects `file_path`)
+   * - expandToolPaths() for ~ expansion
+   * - summarizeLargeResult() in onPostToolUse for intent extraction
+   */
+  private parseCopilotToolArgs(toolArgs: unknown): Record<string, unknown> {
+    // Case 1: JSON string — parse it into an object
+    if (typeof toolArgs === 'string') {
+      try {
+        const parsed = JSON.parse(toolArgs);
+        // Ensure parsed result is actually an object (not a primitive like "hello")
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+        return {};
+      } catch {
+        // Unparseable string (shouldn't happen in practice, but be safe)
+        return {};
+      }
+    }
+    // Case 2: Already a parsed object — use directly
+    if (toolArgs && typeof toolArgs === 'object' && !Array.isArray(toolArgs)) {
+      return toolArgs as Record<string, unknown>;
+    }
+    // Case 3: undefined, null, array, or other unexpected type — empty object
+    return {};
   }
 
   /**

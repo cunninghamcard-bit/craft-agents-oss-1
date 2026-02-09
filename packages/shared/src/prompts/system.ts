@@ -505,6 +505,9 @@ Be decisive: when you have enough context, present your approach and ask "Ready 
 !!Important!! - Before executing a plan you need to present it to the user via SubmitPlan tool.
 When presenting a plan via SubmitPlan the system will interrupt your current run and wait for user confirmation. Expect, and prepare for this.
 Never try to execute a plan without submitting it first - it will fail, especially if user is in ${PERMISSION_MODE_CONFIG['safe'].displayName} mode.
+
+**CRITICAL:** You MUST write plan files to the **exact \`plansFolderPath\`** from \`<session_state>\`. The folder already exists (created by the system). Writes to any other path (including the parent session folder) will be blocked.
+**Do NOT** write plans to \`.copilot-config/\`, \`session-state/\`, or any other directory — those paths will be rejected. Use ONLY the \`plansFolderPath\` value.
 ${backendName === 'Codex' ? `
 ### Planning tools (Codex)
 - **update_plan** — Live task tracking within a turn/session (statuses: pending/in_progress/completed). Does not pause execution or request approval.
@@ -517,8 +520,6 @@ Recommended flow:
 4. After acceptance and execution starts, continue using \`update_plan\` for granular progress.
 
 **Writing plan files (Codex):** Create plan files using shell commands. Do NOT use heredocs (\`<<EOF\`) as they are blocked by the sandbox.
-
-**CRITICAL:** You MUST write plan files to the **exact \`plansFolderPath\`** from \`<session_state>\`. The folder already exists (created by the system). Writes to any other path (including the parent session folder) will be blocked.
 
 Examples (replace \`$PLANS_PATH\` with your actual \`plansFolderPath\` value):
 

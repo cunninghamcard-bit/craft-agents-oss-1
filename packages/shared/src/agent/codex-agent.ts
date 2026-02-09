@@ -423,51 +423,15 @@ export class CodexAgent extends BaseAgent {
     this.client.on('item/completed', async (notification) => {
       const events = this.adapter.adaptItemCompleted(notification);
       for (const event of events) {
-        // Check for session MCP tool completions that need callbacks
-        // Detect directly here since session-mcp-server's stderr isn't forwarded
+        // Check for session MCP tool completions that need callbacks.
+        // Session MCP tools run in an external subprocess that can't trigger
+        // callbacks cross-process. Detect from events and use the centralized
+        // BaseAgent.handleSessionMcpToolCompletion() to fire them.
         if (event.type === 'tool_result' && !event.isError) {
           const item = notification.item;
           if (item?.type === 'mcpToolCall' && item.server === 'session') {
             const args = (item.arguments ?? {}) as Record<string, unknown>;
-
-            // SubmitPlan - trigger plan view
-            if (item.tool === 'SubmitPlan' && args.planPath) {
-              this.debug(`SubmitPlan completed: ${args.planPath}`);
-              this.onPlanSubmitted?.(args.planPath as string);
-            }
-
-            // Auth tools - trigger auth request
-            const authToolTypes: Record<string, AuthRequest['type']> = {
-              'source_oauth_trigger': 'oauth',
-              'source_google_oauth_trigger': 'oauth-google',
-              'source_slack_oauth_trigger': 'oauth-slack',
-              'source_microsoft_oauth_trigger': 'oauth-microsoft',
-              'source_credential_prompt': 'credential',
-            };
-
-            const authType = authToolTypes[item.tool];
-            if (authType && args.sourceSlug && this.onAuthRequest) {
-              const sourceSlug = args.sourceSlug as string;
-              const source = this.sourceManager.getAllSources().find(s => s.config.slug === sourceSlug);
-              const sourceName = source?.config.name || sourceSlug;
-
-              const authRequest: AuthRequest = {
-                type: authType,
-                requestId: `${item.id}-auth`,
-                sessionId: this.config.session?.id || '',
-                sourceSlug,
-                sourceName,
-                ...(authType === 'credential' && {
-                  mode: (args.mode as string) || 'bearer',
-                  labels: args.labels as Record<string, string> | undefined,
-                  description: args.description as string | undefined,
-                  hint: args.hint as string | undefined,
-                }),
-              } as AuthRequest;
-
-              this.debug(`Auth tool completed: ${item.tool} for ${sourceSlug}`);
-              this.onAuthRequest(authRequest);
-            }
+            this.handleSessionMcpToolCompletion(item.tool, args);
           }
         }
 

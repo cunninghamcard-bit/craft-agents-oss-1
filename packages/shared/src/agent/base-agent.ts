@@ -32,6 +32,7 @@ import type {
   BackendConfig,
 } from './backend/types.ts';
 import { AbortReason } from './backend/types.ts';
+import type { AuthRequest } from './session-scoped-tools.ts';
 import type { Workspace } from '../config/storage.ts';
 
 // Core modules
@@ -243,6 +244,81 @@ export abstract class BaseAgent implements AgentBackend {
    */
   protected debug(message: string): void {
     this.onDebug?.(message);
+  }
+
+  // ============================================================
+  // Session MCP Tool Completion Handling
+  // ============================================================
+
+  /**
+   * Handle successful completion of a session MCP tool (SubmitPlan, auth tools).
+   *
+   * WHY THIS IS ON BaseAgent:
+   * -------------------------
+   * Session-scoped tools (SubmitPlan, source_oauth_trigger, etc.) run in an
+   * EXTERNAL MCP server subprocess (packages/session-mcp-server). That subprocess
+   * has its own process memory, so when it calls getSessionScopedToolCallbacks(),
+   * the callback registry is empty — it was populated in THIS process, not the subprocess.
+   *
+   * Instead, each backend (CodexAgent, CopilotAgent) detects session MCP tool
+   * completions from its own event stream (different formats per SDK) and calls
+   * THIS shared method to fire the appropriate callback.
+   *
+   * ClaudeAgent doesn't need this — its session-scoped tools run in-process
+   * via Claude Agent SDK, so the callback registry works directly.
+   *
+   * CALLBACKS FIRED:
+   * - SubmitPlan → this.onPlanSubmitted(planPath)
+   *   → Electron reads plan file, shows plan card, calls forceAbort(PlanSubmitted)
+   * - Auth tools → this.onAuthRequest(authRequest)
+   *   → Electron shows auth dialog, calls forceAbort(AuthRequest)
+   */
+  protected handleSessionMcpToolCompletion(
+    toolName: string,
+    args: Record<string, unknown>
+  ): void {
+    // SubmitPlan — trigger plan view in the UI.
+    // The Electron SessionManager's onPlanSubmitted callback will:
+    //   1. Read the plan file content
+    //   2. Create a plan message (role: 'plan')
+    //   3. Send plan_submitted event to renderer
+    //   4. Call forceAbort(AbortReason.PlanSubmitted) → turn terminates
+    if (toolName === 'SubmitPlan' && args.planPath) {
+      this.debug(`SubmitPlan completed: ${args.planPath}`);
+      this.onPlanSubmitted?.(args.planPath as string);
+      return;
+    }
+
+    // Auth tools — trigger auth request in the UI.
+    // Maps MCP tool names to auth request types.
+    const authToolTypes: Record<string, string> = {
+      'source_oauth_trigger': 'oauth',
+      'source_google_oauth_trigger': 'oauth-google',
+      'source_slack_oauth_trigger': 'oauth-slack',
+      'source_microsoft_oauth_trigger': 'oauth-microsoft',
+      'source_credential_prompt': 'credential',
+    };
+
+    const authType = authToolTypes[toolName];
+    if (authType && args.sourceSlug && this.onAuthRequest) {
+      const sourceSlug = args.sourceSlug as string;
+      const source = this.sourceManager.getAllSources().find(s => s.config.slug === sourceSlug);
+      const sourceName = source?.config.name || sourceSlug;
+      this.debug(`Auth tool completed: ${toolName} for ${sourceSlug}`);
+      this.onAuthRequest({
+        type: authType,
+        requestId: `${Date.now()}-auth`,
+        sessionId: this.config.session?.id || '',
+        sourceSlug,
+        sourceName,
+        ...(authType === 'credential' && {
+          mode: (args.mode as string) || 'bearer',
+          labels: args.labels as Record<string, string> | undefined,
+          description: args.description as string | undefined,
+          hint: args.hint as string | undefined,
+        }),
+      } as AuthRequest);
+    }
   }
 
   // ============================================================
