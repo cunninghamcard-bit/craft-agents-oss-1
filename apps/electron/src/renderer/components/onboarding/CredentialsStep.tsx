@@ -44,6 +44,7 @@ export function CredentialsStep({
 }: CredentialsStepProps) {
   const isClaudeOAuth = apiSetupMethod === 'claude_oauth'
   const isChatGptOAuth = apiSetupMethod === 'chatgpt_oauth'
+  const isCopilotOAuth = apiSetupMethod === 'copilot_oauth'
   const isAnthropicApiKey = apiSetupMethod === 'anthropic_api_key'
   const isOpenAiApiKey = apiSetupMethod === 'openai_api_key'
   const isApiKey = isAnthropicApiKey || isOpenAiApiKey
@@ -81,6 +82,46 @@ export function CredentialsStep({
           {status === 'success' && (
             <div className="rounded-lg bg-success/10 text-success text-sm p-3">
               Connected! Your ChatGPT subscription is ready.
+            </div>
+          )}
+        </div>
+      </StepFormLayout>
+    )
+  }
+
+  // --- Copilot OAuth flow (native browser OAuth) ---
+  if (isCopilotOAuth) {
+    return (
+      <StepFormLayout
+        title="Connect GitHub Copilot"
+        description="Use your GitHub Copilot subscription to power AI agents."
+        actions={
+          <>
+            <BackButton onClick={onBack} disabled={status === 'validating'} />
+            <ContinueButton
+              onClick={() => onStartOAuth?.()}
+              className="gap-2"
+              loading={status === 'validating'}
+              loadingText="Connecting..."
+            >
+              <ExternalLink className="size-4" />
+              Sign in with GitHub
+            </ContinueButton>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="rounded-xl bg-foreground-2 p-4 text-sm text-muted-foreground">
+            <p>Click the button above to sign in with your GitHub account. A browser window will open for authentication.</p>
+          </div>
+          {status === 'error' && errorMessage && (
+            <div className="rounded-lg bg-destructive/10 text-destructive text-sm p-3">
+              {errorMessage}
+            </div>
+          )}
+          {status === 'success' && (
+            <div className="rounded-lg bg-success/10 text-success text-sm p-3">
+              Connected! Your GitHub Copilot subscription is ready.
             </div>
           )}
         </div>

@@ -170,6 +170,7 @@ function ConnectionRow({ connection, isLastConnection, onEdit, onDelete, onSetDe
       case 'anthropic': parts.push('Anthropic API'); break
       case 'anthropic_compat': parts.push('Anthropic Compatible'); break
       case 'openai': parts.push('OpenAI API'); break
+      case 'copilot': parts.push('GitHub Copilot'); break
       case 'openai_compat': parts.push('OpenAI Compatible'); break
       case 'bedrock': parts.push('AWS Bedrock'); break
       case 'vertex': parts.push('Google Vertex'); break
@@ -400,6 +401,7 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
                     label: conn.name,
                     description: conn.providerType === 'anthropic' ? 'Anthropic' :
                                  conn.providerType === 'openai' ? 'OpenAI' :
+                                 conn.providerType === 'copilot' ? 'GitHub Copilot' :
                                  conn.providerType || 'Unknown',
                   })),
                 ]}
@@ -546,7 +548,9 @@ export default function AiSettingsPage() {
     apiSetupOnboarding.reset()
 
     if (connection.authType === 'oauth') {
-      const method = connection.providerType === 'openai' ? 'chatgpt_oauth' : 'claude_oauth'
+      const method = connection.providerType === 'openai' ? 'chatgpt_oauth'
+                   : connection.providerType === 'copilot' ? 'copilot_oauth'
+                   : 'claude_oauth'
       apiSetupOnboarding.handleStartOAuth(method)
     }
   }, [apiSetupOnboarding, openApiSetup])
@@ -671,6 +675,7 @@ export default function AiSettingsPage() {
                       label: conn.name,
                       description: conn.providerType === 'anthropic' ? 'Anthropic API' :
                                    conn.providerType === 'openai' ? 'OpenAI API' :
+                                   conn.providerType === 'copilot' ? 'GitHub Copilot' :
                                    conn.providerType === 'openai_compat' ? 'OpenAI Compatible' :
                                    conn.providerType === 'bedrock' ? 'AWS Bedrock' :
                                    conn.providerType === 'vertex' ? 'Google Vertex' :

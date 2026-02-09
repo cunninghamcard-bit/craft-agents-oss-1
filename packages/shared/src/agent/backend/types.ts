@@ -290,6 +290,7 @@ export interface BackendConfig {
    * Determines which agent class is instantiated:
    * - 'anthropic' → ClaudeAgent (Anthropic SDK)
    * - 'openai' → CodexAgent (OpenAI via app-server)
+   * - 'copilot' → CopilotAgent (GitHub Copilot via @github/copilot-sdk)
    */
   provider: AgentProvider;
 
@@ -346,6 +347,12 @@ export interface BackendConfig {
    * Typically set to: `{sessionPath}/.codex-home`
    */
   codexHome?: string;
+
+  /**
+   * Per-session config directory for Copilot SDK (CopilotAgent only).
+   * When set, the Copilot CLI will use this directory for storing config and state.
+   */
+  copilotConfigDir?: string;
 
   /** Callback when SDK session ID is captured/updated */
   onSdkSessionIdUpdate?: (sdkSessionId: string) => void;

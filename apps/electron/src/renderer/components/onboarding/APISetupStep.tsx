@@ -12,7 +12,7 @@ import type { LlmAuthType, LlmProviderType } from "@craft-agent/shared/config/ll
  * - 'chatgpt_oauth' → openai + oauth
  * - 'openai_api_key' → openai + api_key
  */
-export type ApiSetupMethod = 'anthropic_api_key' | 'claude_oauth' | 'chatgpt_oauth' | 'openai_api_key'
+export type ApiSetupMethod = 'anthropic_api_key' | 'claude_oauth' | 'chatgpt_oauth' | 'openai_api_key' | 'copilot_oauth'
 
 /**
  * Map ApiSetupMethod to the underlying LLM connection types.
@@ -30,6 +30,8 @@ export function apiSetupMethodToConnectionTypes(method: ApiSetupMethod): {
       return { providerType: 'openai', authType: 'oauth' };
     case 'openai_api_key':
       return { providerType: 'openai', authType: 'api_key' };
+    case 'copilot_oauth':
+      return { providerType: 'copilot', authType: 'oauth' };
   }
 }
 
@@ -69,6 +71,13 @@ const API_SETUP_OPTIONS: ApiSetupOption[] = [
     description: 'Pay-as-you-go via OpenAI Platform, OpenRouter, or Vercel AI Gateway.',
     icon: <Key className="size-4" />,
     providerType: 'openai',
+  },
+  {
+    id: 'copilot_oauth',
+    name: 'Copilot · GitHub',
+    description: 'Use your GitHub Copilot subscription.',
+    icon: <Cpu className="size-4" />,
+    providerType: 'copilot',
   },
 ]
 
@@ -184,6 +193,21 @@ export function APISetupStep({
           <div className="text-xs font-medium text-muted-foreground mb-2 py-2.5 text-center">OpenAI</div>
           <div className="space-y-3">
             {API_SETUP_OPTIONS.filter(o => o.providerType === 'openai').map((option) => (
+              <OptionButton
+                key={option.id}
+                option={option}
+                isSelected={option.id === selectedMethod}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* GitHub Copilot section */}
+        <div>
+          <div className="text-xs font-medium text-muted-foreground mb-2 py-2.5 text-center">GitHub Copilot</div>
+          <div className="space-y-3">
+            {API_SETUP_OPTIONS.filter(o => o.providerType === 'copilot').map((option) => (
               <OptionButton
                 key={option.id}
                 option={option}

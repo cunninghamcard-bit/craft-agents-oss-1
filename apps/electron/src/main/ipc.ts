@@ -82,6 +82,11 @@ const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
     providerType: 'openai_compat', // Always use compat for API key (5.3 is OAuth-only)
     authType: (h) => h ? 'api_key_with_endpoint' : 'api_key',
   },
+  'copilot': {
+    name: 'GitHub Copilot',
+    providerType: 'copilot',
+    authType: 'oauth',
+  },
 }
 
 /**
@@ -1967,6 +1972,43 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       }
 
       // ========================================
+      // GitHub Copilot OAuth validation
+      // ========================================
+      if (connection.providerType === 'copilot' && connection.authType === 'oauth') {
+        const oauth = await credentialManager.getLlmOAuth(slug)
+        if (!oauth?.accessToken) {
+          return { success: false, error: 'Not authenticated. Please sign in with GitHub.' }
+        }
+
+        // If we have a refresh token and token is expired, try to refresh
+        const isExpired = oauth.expiresAt ? Date.now() > oauth.expiresAt - 5 * 60 * 1000 : false
+        if (isExpired && oauth.refreshToken) {
+          try {
+            const { refreshGithubTokens } = await import('@craft-agent/shared/auth/github-oauth')
+            const refreshed = await refreshGithubTokens(oauth.refreshToken)
+
+            await credentialManager.setLlmOAuth(slug, {
+              accessToken: refreshed.accessToken,
+              refreshToken: refreshed.refreshToken,
+              expiresAt: refreshed.expiresAt,
+            })
+
+            ipcLog.info(`LLM connection validated (GitHub OAuth refreshed): ${slug}`)
+            touchLlmConnection(slug)
+            return { success: true }
+          } catch (refreshError) {
+            const msg = refreshError instanceof Error ? refreshError.message : String(refreshError)
+            ipcLog.info(`[LLM_CONNECTION_TEST] GitHub OAuth refresh failed for ${slug}: ${msg}`)
+            return { success: false, error: 'GitHub authentication expired. Please re-authenticate.' }
+          }
+        }
+
+        ipcLog.info(`LLM connection validated (GitHub OAuth): ${slug}`)
+        touchLlmConnection(slug)
+        return { success: true }
+      }
+
+      // ========================================
       // Claude Max OAuth validation (token refresh only)
       // ========================================
       // NOTE: The standard Anthropic API doesn't support OAuth - only the Claude Code SDK
@@ -2299,6 +2341,103 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       return { success: true }
     } catch (error) {
       ipcLog.error('Failed to clear ChatGPT credentials:', error)
+      return { success: false }
+    }
+  })
+
+  // ============================================================
+  // GitHub Copilot OAuth
+  // ============================================================
+
+  // Start GitHub Copilot OAuth flow
+  ipcMain.handle(IPC_CHANNELS.COPILOT_START_OAUTH, async (_event, connectionSlug: string): Promise<{
+    success: boolean
+    error?: string
+  }> => {
+    try {
+      const { startGithubOAuth, exchangeGithubCode } = await import('@craft-agent/shared/auth')
+      const credentialManager = getCredentialManager()
+
+      ipcLog.info(`Starting GitHub OAuth flow for connection: ${connectionSlug}`)
+
+      // Start OAuth and wait for authorization code
+      const code = await startGithubOAuth((status) => {
+        ipcLog.info(`[GitHub OAuth] ${status}`)
+      })
+
+      // Exchange code for tokens
+      const tokens = await exchangeGithubCode(code, (status) => {
+        ipcLog.info(`[GitHub OAuth] ${status}`)
+      })
+
+      // Store tokens in credential manager
+      await credentialManager.setLlmOAuth(connectionSlug, {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresAt: tokens.expiresAt,
+      })
+
+      ipcLog.info('GitHub OAuth completed successfully')
+      return { success: true }
+    } catch (error) {
+      ipcLog.error('GitHub OAuth failed:', error)
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'OAuth authentication failed',
+      }
+    }
+  })
+
+  // Cancel ongoing GitHub OAuth flow
+  ipcMain.handle(IPC_CHANNELS.COPILOT_CANCEL_OAUTH, async (): Promise<{ success: boolean }> => {
+    try {
+      const { cancelGithubOAuth } = await import('@craft-agent/shared/auth')
+      cancelGithubOAuth()
+      ipcLog.info('GitHub OAuth cancelled')
+      return { success: true }
+    } catch (error) {
+      ipcLog.error('Failed to cancel GitHub OAuth:', error)
+      return { success: false }
+    }
+  })
+
+  // Get GitHub Copilot authentication status
+  ipcMain.handle(IPC_CHANNELS.COPILOT_GET_AUTH_STATUS, async (_event, connectionSlug: string): Promise<{
+    authenticated: boolean
+    expiresAt?: number
+    hasRefreshToken?: boolean
+  }> => {
+    try {
+      const credentialManager = getCredentialManager()
+      const creds = await credentialManager.getLlmOAuth(connectionSlug)
+
+      if (!creds) {
+        return { authenticated: false }
+      }
+
+      // Check if expired (with 5-minute buffer)
+      const isExpired = creds.expiresAt && Date.now() > creds.expiresAt - 5 * 60 * 1000
+
+      return {
+        authenticated: !isExpired || !!creds.refreshToken,
+        expiresAt: creds.expiresAt,
+        hasRefreshToken: !!creds.refreshToken,
+      }
+    } catch (error) {
+      ipcLog.error('Failed to get GitHub auth status:', error)
+      return { authenticated: false }
+    }
+  })
+
+  // Logout from Copilot (clear stored tokens)
+  ipcMain.handle(IPC_CHANNELS.COPILOT_LOGOUT, async (_event, connectionSlug: string): Promise<{ success: boolean }> => {
+    try {
+      const credentialManager = getCredentialManager()
+      await credentialManager.deleteLlmCredentials(connectionSlug)
+      ipcLog.info('Copilot credentials cleared')
+      return { success: true }
+    } catch (error) {
+      ipcLog.error('Failed to clear Copilot credentials:', error)
       return { success: false }
     }
   })

@@ -7,6 +7,7 @@ import { CraftAgent, type AgentEvent, setPermissionMode, type PermissionMode, un
 import {
   CodexBackend,
   CodexAgent,
+  CopilotAgent,
   detectProvider,
   resolveSessionConnection,
   providerTypeToAgentProvider,
@@ -525,8 +526,8 @@ function resolveToolDisplayMeta(
   return undefined
 }
 
-/** Agent type - CraftAgent for Claude, CodexBackend for Codex */
-type AgentInstance = CraftAgent | CodexBackend
+/** Agent type - CraftAgent for Claude, CodexBackend for Codex, CopilotAgent for Copilot */
+type AgentInstance = CraftAgent | CodexBackend | CopilotAgent
 
 interface ManagedSession {
   id: string
@@ -2065,7 +2066,7 @@ export class SessionManager {
       }
 
       // Determine provider from connection or fall back to legacy authType
-      let provider: 'anthropic' | 'openai'
+      let provider: 'anthropic' | 'openai' | 'copilot'
       let authType: LlmAuthType | undefined
 
       if (connection) {
@@ -2201,6 +2202,78 @@ export class SessionManager {
           } else {
             sessionLog.warn(`No ChatGPT tokens available for Codex session ${managed.id} - user may need to authenticate`)
           }
+        }
+      } else if (provider === 'copilot') {
+        // Copilot backend - uses @github/copilot-sdk
+
+        const rawCopilotModel = managed.model || connection?.defaultModel!
+        const copilotModel = rawCopilotModel || 'gpt-5'
+
+        // Load sources for MCP config
+        const sessionPath = getSessionStoragePath(managed.workspace.rootPath, managed.id)
+        const enabledSlugs = managed.enabledSourceSlugs || []
+        const allSources = loadAllSources(managed.workspace.rootPath)
+        const enabledSources = allSources.filter(s =>
+          enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
+        )
+        const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
+
+        managed.agent = new CopilotAgent({
+          provider: 'copilot',
+          authType: authType || 'oauth',
+          workspace: managed.workspace,
+          model: copilotModel,
+          miniModel: connection ? getMiniModel(connection) : undefined,
+          thinkingLevel: managed.thinkingLevel,
+          connectionSlug: connection?.slug,
+          session: {
+            id: managed.id,
+            workspaceRootPath: managed.workspace.rootPath,
+            sdkSessionId: managed.sdkSessionId,
+            createdAt: managed.lastMessageAt,
+            lastUsedAt: managed.lastMessageAt,
+            workingDirectory: managed.workingDirectory,
+            sdkCwd: managed.sdkCwd,
+            model: managed.model,
+            llmConnection: managed.llmConnection,
+          },
+          onSdkSessionIdUpdate: (sdkSessionId: string) => {
+            managed.sdkSessionId = sdkSessionId
+            sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
+            this.persistSession(managed)
+            sessionPersistenceQueue.flush(managed.id)
+          },
+          onSdkSessionIdCleared: () => {
+            managed.sdkSessionId = undefined
+            sessionLog.info(`SDK session ID cleared for ${managed.id} (resume recovery)`)
+            this.persistSession(managed)
+            sessionPersistenceQueue.flush(managed.id)
+          },
+        })
+        sessionLog.info(`Created Copilot agent for session ${managed.id} (model: ${copilotModel})${managed.sdkSessionId ? ' (resuming)' : ''}`)
+
+        // Wire up auth callback and inject stored tokens
+        const copilotAgent = managed.agent as CopilotAgent
+        copilotAgent.onGithubAuthRequired = (reason: string) => {
+          sessionLog.warn(`GitHub auth required for session ${managed.id}: ${reason}`)
+          this.sendEvent({
+            type: 'info',
+            sessionId: managed.id,
+            message: `GitHub authentication required: ${reason}. Please check your Copilot login.`,
+            level: 'error',
+          })
+        }
+
+        const tokensInjected = await copilotAgent.tryInjectStoredGithubToken()
+        if (tokensInjected) {
+          sessionLog.info(`GitHub token injected for Copilot session ${managed.id}`)
+        } else {
+          sessionLog.warn(`No GitHub token available for Copilot session ${managed.id} - user may need to authenticate`)
+        }
+
+        // Set source servers
+        if (Object.keys(mcpServers).length > 0) {
+          copilotAgent.setSourceServers(mcpServers, apiServers, enabledSlugs)
         }
       } else {
         // Claude backend - uses Anthropic SDK
@@ -4102,6 +4175,13 @@ To view this task's output:
         }
       }
       sessionLog.info(`[buildTitleOptions] No credentials found for OpenAI connection '${llmConnection}'`)
+      return undefined
+    }
+
+    // Copilot connections: title generation not directly supported via Copilot SDK
+    // Fall through to Anthropic default (if available) for title generation
+    if (connection.providerType === 'copilot') {
+      sessionLog.info(`[buildTitleOptions] Copilot connection - title generation not supported, skipping`)
       return undefined
     }
 

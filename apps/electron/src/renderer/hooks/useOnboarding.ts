@@ -100,6 +100,11 @@ function apiSetupMethodToConnectionSetup(
         defaultModel: options.connectionDefaultModel,
         models: options.models,
       }
+    case 'copilot_oauth':
+      return {
+        slug: 'copilot',
+        credential: options.credential,
+      }
   }
 }
 
@@ -364,6 +369,29 @@ export function useOnboarding({
             ...s,
             credentialStatus: 'error',
             errorMessage: result.error || 'ChatGPT authentication failed',
+          }))
+        }
+        return
+      }
+
+      // Copilot OAuth (single-step flow — opens browser, captures tokens automatically)
+      if (effectiveMethod === 'copilot_oauth') {
+        const connectionSlug = apiSetupMethodToConnectionSetup(effectiveMethod, {}).slug
+        const result = await window.electronAPI.startCopilotOAuth(connectionSlug)
+
+        if (result.success) {
+          // Tokens captured automatically, save config and complete
+          await handleSaveConfig(undefined)
+          setState(s => ({
+            ...s,
+            credentialStatus: 'success',
+            step: 'complete',
+          }))
+        } else {
+          setState(s => ({
+            ...s,
+            credentialStatus: 'error',
+            errorMessage: result.error || 'GitHub authentication failed',
           }))
         }
         return
