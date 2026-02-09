@@ -39,6 +39,7 @@
     "./icons": "./src/icons/index.ts",
     "./colors": "./src/colors/index.ts",
     "./utils/icon-constants": "./src/utils/icon-constants.ts",
+    "./utils/workspace": "./src/utils/workspace.ts",
     "./labels": "./src/labels/index.ts",
     "./labels/auto": "./src/labels/auto/index.ts",
     "./labels/storage": "./src/labels/storage.ts",

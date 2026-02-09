@@ -24,7 +24,7 @@ import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
 import { stripMarkdown } from './utils/text'
-import { extractWorkspaceSlug } from '@craft-agent/shared/utils'
+import { extractWorkspaceSlug } from '@craft-agent/shared/utils/workspace'
 import { initRendererPerf } from './lib/perf'
 import {
   initializeSessionsAtom,

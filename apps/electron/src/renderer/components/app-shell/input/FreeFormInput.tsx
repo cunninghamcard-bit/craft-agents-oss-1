@@ -16,7 +16,7 @@ import {
 import { Icon_Home, Icon_Folder } from '@craft-agent/ui'
 
 import * as storage from '@/lib/local-storage'
-import { extractWorkspaceSlug } from '@craft-agent/shared/utils'
+import { extractWorkspaceSlug } from '@craft-agent/shared/utils/workspace'
 
 import { Button } from '@/components/ui/button'
 import {
