@@ -9,6 +9,7 @@ import { DEFAULT_MODEL, DEFAULT_CODEX_MODEL, isCodexModel } from '@craft-agent/s
 
 // ============================================================================
 // createdAt preservation during persistence
+// Mirrors: sessions.ts persistSession() — the StoredSession builder
 // ============================================================================
 
 describe('createdAt preservation', () => {
@@ -40,13 +41,14 @@ describe('createdAt preservation', () => {
 
 // ============================================================================
 // Safe model resolution when connection is null
+// Mirrors: sessions.ts sendMessage() model resolution (~line 3345)
 // ============================================================================
 
 describe('model resolution with null connection', () => {
   describe('Claude backend', () => {
     it('falls back to DEFAULT_MODEL when connection is null and session has no model', () => {
-      const managed = { model: undefined }
-      const connection = null
+      const managed = { model: undefined as string | undefined }
+      const connection = null as { defaultModel: string } | null
 
       const resolvedModel = managed.model || connection?.defaultModel || DEFAULT_MODEL
 
@@ -56,7 +58,7 @@ describe('model resolution with null connection', () => {
 
     it('uses session model when available regardless of connection', () => {
       const managed = { model: 'claude-sonnet-4-20250514' }
-      const connection = null
+      const connection = null as { defaultModel: string } | null
 
       const resolvedModel = managed.model || connection?.defaultModel || DEFAULT_MODEL
 
@@ -75,8 +77,8 @@ describe('model resolution with null connection', () => {
 
   describe('Codex backend', () => {
     it('falls back to DEFAULT_CODEX_MODEL when connection is null and session has no model', () => {
-      const managed = { model: undefined }
-      const connection = null
+      const managed = { model: undefined as string | undefined }
+      const connection = null as { defaultModel: string } | null
 
       const rawCodexModel = managed.model || connection?.defaultModel
       const codexModel = (rawCodexModel && isCodexModel(rawCodexModel))
@@ -90,7 +92,7 @@ describe('model resolution with null connection', () => {
     it('rejects non-codex model and falls back to DEFAULT_CODEX_MODEL', () => {
       // Session has a Claude model (stale data from switching providers)
       const managed = { model: 'claude-sonnet-4-20250514' }
-      const connection = null
+      const connection = null as { defaultModel: string } | null
 
       const rawCodexModel = managed.model || connection?.defaultModel
       const codexModel = (rawCodexModel && isCodexModel(rawCodexModel))
@@ -104,7 +106,7 @@ describe('model resolution with null connection', () => {
     it('uses valid codex model from session', () => {
       // isCodexModel checks if model name contains "codex"
       const managed = { model: DEFAULT_CODEX_MODEL }
-      const connection = null
+      const connection = null as { defaultModel: string } | null
 
       const rawCodexModel = managed.model || connection?.defaultModel
       const codexModel = (rawCodexModel && isCodexModel(rawCodexModel))
@@ -118,12 +120,13 @@ describe('model resolution with null connection', () => {
 
 // ============================================================================
 // Orphaned llmConnection detection
+// Mirrors: sessions.ts restoreSession() orphaned connection cleanup
 // ============================================================================
 
 describe('orphaned llmConnection detection', () => {
   it('should clear llmConnection and connectionLocked when connection is orphaned', () => {
     // Simulate a managed session with an orphaned connection
-    const managed = {
+    const managed: { id: string; llmConnection: string | undefined; connectionLocked: boolean } = {
       id: 'test-session',
       llmConnection: 'deleted-connection-slug',
       connectionLocked: true,
@@ -142,7 +145,7 @@ describe('orphaned llmConnection detection', () => {
   })
 
   it('should preserve valid llmConnection', () => {
-    const managed = {
+    const managed: { id: string; llmConnection: string | undefined; connectionLocked: boolean } = {
       id: 'test-session',
       llmConnection: 'valid-connection',
       connectionLocked: true,

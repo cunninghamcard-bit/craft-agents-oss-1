@@ -16,6 +16,7 @@
 
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
+import { extractWorkspaceSlug } from '../utils/workspace.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 import type { AuthRequest } from '@craft-agent/session-tools-core';
 import { type PermissionMode, shouldAllowToolInMode } from './mode-manager.ts';
@@ -30,7 +31,7 @@ import { AbortReason } from './backend/types.ts';
 import type { Workspace } from '../config/storage.ts';
 
 // Import models from centralized registry
-import { DEFAULT_CODEX_MODEL, getModelById, getModelIdByShortName } from '../config/models.ts';
+import { DEFAULT_CODEX_MODEL, getModelById, getModelIdByShortName, isCodexModel } from '../config/models.ts';
 
 // BaseAgent provides common functionality
 import { BaseAgent } from './base-agent.ts';
@@ -50,11 +51,12 @@ import {
 // Codex binary resolver
 import { resolveCodexBinary } from '../codex/binary-resolver.ts';
 
-// ChatGPT OAuth for token refresh
+// ChatGPT OAuth for token refresh and API key exchange
 import { refreshChatGptTokens, type ChatGptTokens } from '../auth/chatgpt-oauth.ts';
 
 // Credential manager for stored tokens
 import { getCredentialManager } from '../credentials/index.ts';
+
 
 // Event adapter
 import { EventAdapter } from './backend/codex/event-adapter.ts';
@@ -62,14 +64,11 @@ import { EventAdapter } from './backend/codex/event-adapter.ts';
 // Error parsing for typed errors
 import { parseError, type AgentError } from './errors.ts';
 
+// Debug logging
+import { debug } from '../utils/debug.ts';
+
 // Session storage for plans folder path
 import { getSessionPlansPath } from '../sessions/storage.ts';
-
-// Mention parsing for skill extraction
-import { parseMentions, stripAllMentions } from '../mentions/index.ts';
-
-// Skills loader for resolving skill paths
-import { loadWorkspaceSkills } from '../skills/storage.ts';
 
 // Path utilities for cross-platform normalization
 import { join, resolve } from 'node:path';
@@ -444,51 +443,15 @@ export class CodexAgent extends BaseAgent {
     this.client.on('item/completed', async (notification) => {
       const events = this.adapter.adaptItemCompleted(notification);
       for (const event of events) {
-        // Check for session MCP tool completions that need callbacks
-        // Detect directly here since session-mcp-server's stderr isn't forwarded
+        // Check for session MCP tool completions that need callbacks.
+        // Session MCP tools run in an external subprocess that can't trigger
+        // callbacks cross-process. Detect from events and use the centralized
+        // BaseAgent.handleSessionMcpToolCompletion() to fire them.
         if (event.type === 'tool_result' && !event.isError) {
           const item = notification.item;
           if (item?.type === 'mcpToolCall' && item.server === 'session') {
             const args = (item.arguments ?? {}) as Record<string, unknown>;
-
-            // SubmitPlan - trigger plan view
-            if (item.tool === 'SubmitPlan' && args.planPath) {
-              this.debug(`SubmitPlan completed: ${args.planPath}`);
-              this.onPlanSubmitted?.(args.planPath as string);
-            }
-
-            // Auth tools - trigger auth request
-            const authToolTypes: Record<string, AuthRequest['type']> = {
-              'source_oauth_trigger': 'oauth',
-              'source_google_oauth_trigger': 'oauth-google',
-              'source_slack_oauth_trigger': 'oauth-slack',
-              'source_microsoft_oauth_trigger': 'oauth-microsoft',
-              'source_credential_prompt': 'credential',
-            };
-
-            const authType = authToolTypes[item.tool];
-            if (authType && args.sourceSlug && this.onAuthRequest) {
-              const sourceSlug = args.sourceSlug as string;
-              const source = this.sourceManager.getAllSources().find(s => s.config.slug === sourceSlug);
-              const sourceName = source?.config.name || sourceSlug;
-
-              const authRequest: AuthRequest = {
-                type: authType,
-                requestId: `${item.id}-auth`,
-                sessionId: this.config.session?.id || '',
-                sourceSlug,
-                sourceName,
-                ...(authType === 'credential' && {
-                  mode: (args.mode as string) || 'bearer',
-                  labels: args.labels as Record<string, string> | undefined,
-                  description: args.description as string | undefined,
-                  hint: args.hint as string | undefined,
-                }),
-              } as AuthRequest;
-
-              this.debug(`Auth tool completed: ${item.tool} for ${sourceSlug}`);
-              this.onAuthRequest(authRequest);
-            }
+            this.handleSessionMcpToolCompletion(item.tool, args);
           }
         }
 
@@ -1111,8 +1074,7 @@ export class CodexAgent extends BaseAgent {
     // ============================================================
     if (sdkToolName === 'Skill') {
       const rootPath = this.config.workspace.rootPath ?? this.workingDirectory;
-      const pathParts = rootPath.split('/').filter(Boolean);
-      const workspaceSlug = pathParts[pathParts.length - 1] || this.config.workspace.id;
+      const workspaceSlug = extractWorkspaceSlug(rootPath, this.config.workspace.id);
       const skillResult = qualifySkillName(
         modifiedInput || inputObj,
         workspaceSlug,
@@ -1647,6 +1609,11 @@ export class CodexAgent extends BaseAgent {
         }
       };
       const onProcessError = (err: Error) => {
+        // If a main chat turn is active, this error likely belongs to it — not to title gen
+        if (this.currentTurnId) {
+          this.debug(`[generateTitle] Ignoring process error during active turn: ${err.message}`);
+          return;
+        }
         clearTimeout(timeout);
         cleanup();
         reject(err);
@@ -2010,44 +1977,9 @@ export class CodexAgent extends BaseAgent {
     const input: UserInput[] = [];
 
     // ============================================================
-    // SKILL MENTION EXTRACTION
+    // SKILL MENTION EXTRACTION (delegated to BaseAgent)
     // ============================================================
-
-    // Parse [skill:workspaceId:slug] mentions from the message.
-    // Load workspace skills to match against and resolve paths.
-    const workspaceRoot = this.config.workspace.rootPath ?? this.workingDirectory;
-    const skills = loadWorkspaceSkills(workspaceRoot);
-    const skillSlugs = skills.map(s => s.slug);
-    this.debug(`[buildUserInput] Available skills: ${skillSlugs.join(', ')}`);
-    const parsed = parseMentions(message, skillSlugs, []);
-    this.debug(`[buildUserInput] Parsed skills from message: ${JSON.stringify(parsed.skills)}, raw message: ${message.slice(0, 200)}`);
-
-    // Read matched SKILL.md files and inject their content directly into the
-    // user message. The Codex app-server only discovers skills from its own
-    // standard paths ({CODEX_HOME}/skills/, .agents/skills/), so we read and
-    // inject workspace skill content ourselves to guarantee the model sees it.
-    const skillContents: string[] = [];
-    for (const slug of parsed.skills) {
-      const skill = skills.find(s => s.slug === slug);
-      if (skill) {
-        const skillPath = join(skill.path, 'SKILL.md');
-        if (existsSync(skillPath)) {
-          const content = readFileSync(skillPath, 'utf-8');
-          this.debug(`[buildUserInput] Loaded skill ${skill.slug} (${content.length} chars) from ${skillPath}`);
-          skillContents.push(`<skill name="${skill.slug}">\n${content}\n</skill>`);
-        } else {
-          this.debug(`[buildUserInput] SKILL.md not found: ${skillPath}`);
-        }
-      }
-    }
-
-    // Strip all bracket mentions from the message text.
-    const cleanMessage = stripAllMentions(message).trim();
-    // If the user sent only skill mentions with no other text, add a directive.
-    const effectiveMessage = (!cleanMessage && skillContents.length > 0)
-      ? 'Follow the skill instructions above.'
-      : cleanMessage;
-    this.debug(`[buildUserInput] Clean message: "${effectiveMessage.slice(0, 200)}", skills injected: ${skillContents.length}`);
+    const { skillContents, cleanMessage: effectiveMessage } = this.extractSkillContent(message);
 
     // ============================================================
     // CONTEXT INJECTION (matching ClaudeAgent)
@@ -2056,6 +1988,7 @@ export class CodexAgent extends BaseAgent {
     // Build context parts using centralized PromptBuilder
     // This includes: date/time, session state (with plansFolderPath),
     // workspace capabilities, and working directory context
+    const workspaceRoot = this.config.workspace.rootPath ?? this.workingDirectory;
     const contextParts = this.promptBuilder.buildContextParts(
       {
         plansFolderPath: getSessionPlansPath(
@@ -2482,6 +2415,114 @@ export class CodexAgent extends BaseAgent {
         `API servers (${apiServerCount}) are not supported in Codex backend. ` +
         `Servers: ${Object.keys(apiServers).join(', ')}`
       );
+    }
+  }
+
+  // ============================================================
+  // Mini Completion (for title generation and other quick tasks)
+  // ============================================================
+
+  /**
+   * Run a simple text completion using the Codex app-server.
+   * No tools, empty system prompt - just text in → text out.
+   * Uses the same auth infrastructure as the main agent.
+   *
+   * Creates an ephemeral thread for the completion so it doesn't
+   * interfere with the main conversation thread.
+   */
+  async runMiniCompletion(prompt: string): Promise<string | null> {
+    // Use direct debug() for logging since temporary agents don't have onDebug set
+    debug(`[CodexAgent.runMiniCompletion] Starting`);
+
+    try {
+      // Ensure client is connected (includes auth injection)
+      const client = await this.ensureClient();
+      debug(`[CodexAgent.runMiniCompletion] Client connected`);
+
+      // Use a smaller model for quick completions
+      let model = this.config.miniModel ?? 'gpt-5-mini';
+      if (isCodexModel(model)) {
+        model = 'gpt-5-mini';
+      }
+      debug(`[CodexAgent.runMiniCompletion] Using model: ${model}`);
+
+      // Start an ephemeral thread with no system prompt
+      debug(`[CodexAgent.runMiniCompletion] Starting ephemeral thread...`);
+      const threadResponse = await client.threadStart({
+        model,
+        cwd: this.workingDirectory,
+        baseInstructions: '', // Empty - no system prompt
+        ephemeral: true, // Don't persist this thread
+      });
+      const threadId = threadResponse.thread.id;
+      debug(`[CodexAgent.runMiniCompletion] Started ephemeral thread: ${threadId}`);
+
+      // Set up Promise-based completion tracking
+      let result = '';
+      let completionResolve: () => void;
+      const completionPromise = new Promise<void>((resolve) => {
+        completionResolve = resolve;
+      });
+
+      // Collect response text from deltas
+      const textHandler = (notification: { threadId: string; delta?: string }) => {
+        if (notification.threadId === threadId && notification.delta) {
+          result += notification.delta;
+          debug(`[CodexAgent.runMiniCompletion] Delta: ${notification.delta}`);
+        }
+      };
+
+      // Resolve when turn completes
+      const completionHandler = (notification: { threadId: string }) => {
+        if (notification.threadId === threadId) {
+          debug(`[CodexAgent.runMiniCompletion] Turn completed`);
+          completionResolve();
+        }
+      };
+
+      // Set up listeners
+      client.on('item/agentMessage/delta', textHandler);
+      client.on('turn/completed', completionHandler);
+
+      try {
+        // Start the turn with our prompt
+        debug(`[CodexAgent.runMiniCompletion] Starting turn...`);
+        await client.turnStart({
+          threadId,
+          input: [{ type: 'text', text: prompt, text_elements: [] }],
+          cwd: null,
+          approvalPolicy: null,
+          sandboxPolicy: null,
+          model: null,
+          effort: null,
+          summary: null,
+          personality: null,
+          outputSchema: null,
+          collaborationMode: null,
+        });
+        debug(`[CodexAgent.runMiniCompletion] Turn started`);
+
+        // Wait for turn completion with timeout
+        const timeoutPromise = new Promise<void>((_, reject) =>
+          setTimeout(() => reject(new Error('Timeout')), 30000)
+        );
+
+        try {
+          await Promise.race([completionPromise, timeoutPromise]);
+        } catch (e) {
+          debug(`[CodexAgent.runMiniCompletion] Timeout waiting for completion`);
+        }
+
+        debug(`[CodexAgent.runMiniCompletion] Result: "${result.trim()}"`);
+        return result.trim() || null;
+      } finally {
+        // Clean up listeners
+        client.off('item/agentMessage/delta', textHandler);
+        client.off('turn/completed', completionHandler);
+      }
+    } catch (error) {
+      debug(`[CodexAgent.runMiniCompletion] Failed: ${error}`);
+      return null;
     }
   }
 }

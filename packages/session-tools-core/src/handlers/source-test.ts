@@ -440,7 +440,6 @@ async function testApiConnectionWithAuth(
   const workspaceId = basename(ctx.workspacePath) || '';
   const loadedSource = {
     config: source,
-    guide: null,
     folderPath: getSourcePath(ctx.workspacePath, sourceSlug),
     workspaceRootPath: ctx.workspacePath,
     workspaceId,
@@ -485,11 +484,15 @@ async function testApiConnectionWithAuth(
             }
           }
         } catch {
-          // If parsing fails, use token as-is for first header
-          const firstHeader = headerNames[0];
-          if (firstHeader) {
-            headers[firstHeader] = token;
-          }
+          // Token is not valid JSON - this is a configuration error for multi-header auth
+          const firstHeader = headerNames[0] || 'Header';
+          return {
+            lines: [`✗ Multi-header auth requires JSON token with header values`],
+            success: false,
+            hasError: true,
+            error: `Expected JSON token like {"${firstHeader}": "value"} but got non-JSON string`,
+            attempted: true,
+          };
         }
       } else {
         // Fallback to X-API-Key if no header name specified
@@ -778,7 +781,6 @@ async function checkAuthStatus(
       const workspaceId = basename(ctx.workspacePath) || '';
       const loadedSource = {
         config: source,
-        guide: null,
         folderPath: getSourcePath(ctx.workspacePath, sourceSlug),
         workspaceRootPath: ctx.workspacePath,
         workspaceId,

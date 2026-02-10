@@ -52,7 +52,7 @@ import {
   saveSourceConfig as saveSourceConfigImpl,
   getSourcePath,
 } from '../sources/storage.ts';
-import type { FolderSourceConfig, LoadedSource as SharedLoadedSource, SourceGuide } from '../sources/types.ts';
+import type { FolderSourceConfig, LoadedSource as SharedLoadedSource } from '../sources/types.ts';
 import { getSourceCredentialManager } from '../sources/index.ts';
 import {
   inferGoogleServiceFromUrl,
@@ -139,10 +139,10 @@ export function createClaudeContext(options: ClaudeContextOptions): SessionToolC
   const credentialManager: CredentialManagerInterface = {
     hasValidCredentials: async (source: LoadedSource): Promise<boolean> => {
       const mgr = getSourceCredentialManager();
-      // Convert to shared type (guide: string → SourceGuide)
+      // Convert to shared type (guide not needed for credential operations)
       const sharedSource: SharedLoadedSource = {
         config: source.config as unknown as FolderSourceConfig,
-        guide: source.guide ? { raw: source.guide } as SourceGuide : null,
+        guide: null,
         folderPath: source.folderPath,
         workspaceRootPath: source.workspaceRootPath,
         workspaceId: source.workspaceId,
@@ -154,7 +154,7 @@ export function createClaudeContext(options: ClaudeContextOptions): SessionToolC
       const mgr = getSourceCredentialManager();
       const sharedSource: SharedLoadedSource = {
         config: source.config as unknown as FolderSourceConfig,
-        guide: source.guide ? { raw: source.guide } as SourceGuide : null,
+        guide: null,
         folderPath: source.folderPath,
         workspaceRootPath: source.workspaceRootPath,
         workspaceId: source.workspaceId,
@@ -165,7 +165,7 @@ export function createClaudeContext(options: ClaudeContextOptions): SessionToolC
       const mgr = getSourceCredentialManager();
       const sharedSource: SharedLoadedSource = {
         config: source.config as unknown as FolderSourceConfig,
-        guide: source.guide ? { raw: source.guide } as SourceGuide : null,
+        guide: null,
         folderPath: source.folderPath,
         workspaceRootPath: source.workspaceRootPath,
         workspaceId: source.workspaceId,

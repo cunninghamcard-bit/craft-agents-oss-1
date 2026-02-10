@@ -11,7 +11,7 @@ import { runErrorDiagnostics } from './diagnostics.ts';
 import { loadStoredConfig, loadConfigDefaults, type Workspace, type AuthType, getDefaultLlmConnection, getLlmConnection } from '../config/storage.ts';
 import { isLocalMcpEnabled } from '../workspaces/storage.ts';
 import { loadPlanFromPath, type SessionConfig as Session } from '../sessions/storage.ts';
-import { DEFAULT_MODEL, isClaudeModel } from '../config/models.ts';
+import { DEFAULT_MODEL, isClaudeModel, getDefaultSummarizationModel } from '../config/models.ts';
 import { getCredentialManager } from '../credentials/index.ts';
 import { updatePreferences, loadPreferences, formatPreferencesForPrompt, type UserPreferences } from '../config/preferences.ts';
 import type { FileAttachment } from '../utils/files.ts';
@@ -44,6 +44,7 @@ import { type PermissionsContext, permissionsConfigCache } from './permissions-c
 import { getSessionPlansPath, getSessionPath } from '../sessions/storage.ts';
 import { readFileSync } from 'fs';
 import { expandPath } from '../utils/paths.ts';
+import { extractWorkspaceSlug } from '../utils/workspace.ts';
 import {
   ConfigWatcher,
   createConfigWatcher,
@@ -545,7 +546,6 @@ export class ClaudeAgent extends BaseAgent {
   }
 
   // isInSafeMode() is now inherited from BaseAgent
-  // shouldSuggestPlanning() and analyzePlanningNeed() are now inherited from BaseAgent
 
   /**
    * Check if a tool requires permission and handle it
@@ -988,8 +988,7 @@ export class ClaudeAgent extends BaseAgent {
               // SKILL QUALIFICATION: Ensure skill names are fully-qualified
               // SDK expects "workspaceSlug:skillSlug" format, NOT UUID
               if (input.tool_name === 'Skill') {
-                const pathParts = this.workspaceRootPath.split('/').filter(Boolean);
-                const workspaceSlug = pathParts[pathParts.length - 1] || this.config.workspace.id;
+                const workspaceSlug = extractWorkspaceSlug(this.workspaceRootPath, this.config.workspace.id);
                 const skillResult = qualifySkillName(
                   modifiedInput || toolInput,
                   workspaceSlug,
@@ -1373,6 +1372,9 @@ export class ClaudeAgent extends BaseAgent {
       const toolIndex = new ToolIndex();
       const emittedToolStarts = new Set<string>();
       const activeParentTools = new Set<string>();
+      // Session directory for reading tool metadata — prevents race condition when
+      // concurrent sessions clobber the singleton _sessionDir in toolMetadataStore.
+      const metadataSessionDir = getSessionPath(this.workspaceRootPath, sessionId);
 
       // Process SDK messages and convert to AgentEvents
       let receivedComplete = false;
@@ -1415,7 +1417,8 @@ export class ClaudeAgent extends BaseAgent {
             pendingTextForStopReason,
             (text) => { pendingTextForStopReason = text; },
             currentTurnId,
-            (id) => { currentTurnId = id; }
+            (id) => { currentTurnId = id; },
+            metadataSessionDir,
           );
           for (const event of events) {
             // Check for tool-not-found errors on inactive sources and attempt auto-activation
@@ -2129,7 +2132,8 @@ export class ClaudeAgent extends BaseAgent {
     pendingText: string | null,
     setPendingText: (text: string | null) => void,
     turnId: string | null,
-    setTurnId: (id: string | null) => void
+    setTurnId: (id: string | null) => void,
+    sessionDir?: string,
   ): Promise<AgentEvent[]> {
     const events: AgentEvent[] = [];
 
@@ -2207,6 +2211,7 @@ export class ClaudeAgent extends BaseAgent {
           emittedToolStarts,
           turnId || undefined,
           activeParentTools,
+          sessionDir,
         );
 
         // Track active Task tools for fallback parent assignment.
@@ -2279,6 +2284,7 @@ export class ClaudeAgent extends BaseAgent {
             emittedToolStarts,
             turnId || undefined,
             activeParentTools,
+            sessionDir,
           );
 
           // Track active Task tools for fallback parent assignment
@@ -2377,6 +2383,7 @@ export class ClaudeAgent extends BaseAgent {
             emittedToolStarts,
             turnId || undefined,
             activeParentTools,
+            sessionDir,
           );
 
           // Track active Task tools discovered via progress events
@@ -2802,6 +2809,44 @@ export class ClaudeAgent extends BaseAgent {
   }
 
   // getActiveSourceSlugs() is now inherited from BaseAgent
+
+  // ============================================================
+  // Mini Completion (for title generation and other quick tasks)
+  // ============================================================
+
+  /**
+   * Run a simple text completion using Claude SDK.
+   * No tools, empty system prompt - just text in → text out.
+   * Uses the same auth infrastructure as the main agent.
+   */
+  async runMiniCompletion(prompt: string): Promise<string | null> {
+    try {
+      const model = this.config.miniModel ?? getDefaultSummarizationModel();
+
+      const options = {
+        ...getDefaultOptions(),
+        model,
+        maxTurns: 1,
+        systemPrompt: 'Reply with ONLY the requested text. No explanation.', // Minimal - no Claude Code preset
+      };
+
+      let result = '';
+      for await (const msg of query({ prompt, options })) {
+        if (msg.type === 'assistant') {
+          for (const block of msg.message.content) {
+            if (block.type === 'text') {
+              result += block.text;
+            }
+          }
+        }
+      }
+
+      return result.trim() || null;
+    } catch (error) {
+      this.debug(`[runMiniCompletion] Failed: ${error}`);
+      return null;
+    }
+  }
 
   // ============================================================
 }

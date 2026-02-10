@@ -10,12 +10,12 @@ import {
   DatabaseZap,
   ChevronDown,
   Loader2,
-  Lock,
   AlertCircle,
 } from 'lucide-react'
 import { Icon_Home, Icon_Folder } from '@craft-agent/ui'
 
 import * as storage from '@/lib/local-storage'
+import { extractWorkspaceSlug } from '@craft-agent/shared/utils/workspace'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -55,11 +55,12 @@ import { cn } from '@/lib/utils'
 import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
-import { ANTHROPIC_MODELS, getModelShortName, getModelContextWindow, isCodexModel } from '@config/models'
-import { resolveEffectiveConnectionSlug, isCompatProvider, isAnthropicProvider } from '@config/llm-connections'
+import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, isCodexModel, isCopilotModel } from '@config/models'
+import { resolveEffectiveConnectionSlug, isCompatProvider } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
 import { SourceAvatar } from '@/components/ui/source-avatar'
+import { ConnectionIcon } from '@/components/icons/ConnectionIcon'
 import { FreeFormInputContextBadge } from './FreeFormInputContextBadge'
 import type { FileAttachment, LoadedSource, LoadedSkill } from '../../../../shared/types'
 import type { PermissionMode } from '@craft-agent/shared/agent/modes'
@@ -289,12 +290,32 @@ export function FreeFormInput({
 
   const availableThinkingLevels = THINKING_LEVELS
 
+  // Disable thinking selector when the current model explicitly doesn't support it
+  const thinkingDisabled = React.useMemo(() => {
+    const model = availableModels.find(m => typeof m !== 'string' && m.id === currentModel)
+    return typeof model !== 'string' && model?.supportsThinking === false
+  }, [availableModels, currentModel])
+
+  // Get display name for current model (full name, not short name)
+  const currentModelDisplayName = React.useMemo(() => {
+    const modelToDisplay = connectionDefaultModel ?? currentModel
+    const model = availableModels.find(m =>
+      typeof m === 'string' ? m === modelToDisplay : m.id === modelToDisplay
+    )
+    if (!model) {
+      // Fallback: use helper function to format unknown model IDs nicely
+      return getModelDisplayName(modelToDisplay)
+    }
+    return typeof model === 'string' ? model : model.name
+  }, [availableModels, currentModel, connectionDefaultModel])
+
   // Group connections by provider type for hierarchical dropdown
   // Each provider (Anthropic, OpenAI) can have multiple connections (API Key, Claude Max, etc.)
   const connectionsByProvider = React.useMemo(() => {
     const groups: Record<string, typeof llmConnections> = {
       'Anthropic': [],
       'OpenAI': [],
+      'GitHub Copilot': [],
     }
     for (const conn of llmConnections) {
       const provider = conn.providerType || 'anthropic'
@@ -303,6 +324,8 @@ export function FreeFormInput({
         groups['Anthropic'].push(conn)
       } else if (provider === 'openai' || provider === 'openai_compat') {
         groups['OpenAI'].push(conn)
+      } else if (provider === 'copilot') {
+        groups['GitHub Copilot'].push(conn)
       }
     }
     // Return only non-empty groups
@@ -326,23 +349,6 @@ export function FreeFormInput({
     return llmConnections.find(c => c.slug === effectiveConnection) ?? null
   }, [llmConnections, effectiveConnection])
 
-  // Detect provider mismatch: session is locked to one provider (e.g. Anthropic)
-  // but the current default connection is a different provider (e.g. OpenAI).
-  // This warns the user that switching the default doesn't affect this session.
-  const providerMismatch = React.useMemo(() => {
-    if (!currentConnection || isEmptySession || !currentConnectionDetails) return false
-    // Find what the default connection would be (ignoring session lock)
-    const defaultSlug = workspaceDefaultConnection
-      ?? llmConnections.find(c => c.isDefault)?.slug
-      ?? llmConnections[0]?.slug
-    if (!defaultSlug || defaultSlug === currentConnection) return false
-    const defaultConn = llmConnections.find(c => c.slug === defaultSlug)
-    if (!defaultConn) return false
-    // Compare provider families (anthropic/bedrock/vertex vs openai)
-    const lockedIsAnthropic = isAnthropicProvider(currentConnectionDetails.providerType)
-    const defaultIsAnthropic = isAnthropicProvider(defaultConn.providerType)
-    return lockedIsAnthropic !== defaultIsAnthropic
-  }, [currentConnection, isEmptySession, currentConnectionDetails, workspaceDefaultConnection, llmConnections])
 
   // Access todoStates and onTodoStateChange from context for the # menu state picker
   const todoStates = appShellCtx?.todoStates ?? []
@@ -357,8 +363,7 @@ export function FreeFormInput({
   // SDK expects "workspaceSlug:skillSlug" format, NOT UUID
   const workspaceSlug = React.useMemo(() => {
     if (!workspaceRootPath) return workspaceId // Fallback to ID if no path
-    const pathParts = workspaceRootPath.split('/').filter(Boolean)
-    return pathParts[pathParts.length - 1] || workspaceId
+    return extractWorkspaceSlug(workspaceRootPath, workspaceId ?? '')
   }, [workspaceRootPath, workspaceId])
 
   // Shuffle placeholder order once per mount so each session feels fresh
@@ -1633,7 +1638,6 @@ export function FreeFormInput({
                       "inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors select-none",
                       modelDropdownOpen && "bg-foreground/5",
                       connectionUnavailable && "text-destructive",
-                      providerMismatch && "text-amber-500"
                     )}
                   >
                     {connectionUnavailable ? (
@@ -1643,8 +1647,8 @@ export function FreeFormInput({
                       </>
                     ) : (
                       <>
-                        {providerMismatch && <Lock className="h-3 w-3 shrink-0" />}
-                        {getModelShortName(connectionDefaultModel ?? currentModel)}
+                        {effectiveConnectionDetails && llmConnections.length > 1 && storage.get(storage.KEYS.showConnectionIcons, true) && <ConnectionIcon connection={effectiveConnectionDetails} size={14} showTooltip />}
+                        {currentModelDisplayName}
                         {!connectionDefaultModel && <ChevronDown className="h-3 w-3 opacity-50 shrink-0" />}
                       </>
                     )}
@@ -1652,9 +1656,7 @@ export function FreeFormInput({
                 </DropdownMenuTrigger>
               </TooltipTrigger>
               <TooltipContent side="top">
-                {providerMismatch
-                  ? `Locked to ${currentConnectionDetails?.name ?? 'this connection'} — changing the default provider won't affect this session`
-                  : 'Model'}
+Model
               </TooltipContent>
             </Tooltip>
             <StyledDropdownMenuContent side="top" align="end" sideOffset={8} className="min-w-[260px]">
@@ -1699,7 +1701,8 @@ export function FreeFormInput({
                             )}
                           >
                             <div className="text-left flex-1">
-                              <div className="font-medium text-sm flex items-center gap-2">
+                              <div className="font-medium text-sm flex items-center gap-1.5">
+                                <ConnectionIcon connection={conn} size={14} />
                                 {conn.name}
                                 {isCurrentConnection && <Check className="h-3 w-3 text-foreground" />}
                               </div>
@@ -1748,19 +1751,11 @@ export function FreeFormInput({
               ) : (
                 /* Flat model list (single connection or session started) */
                 <>
-                  {/* Lock indicator showing which connection is being used */}
+                  {/* Indicator showing which connection is being used */}
                   {!isEmptySession && currentConnectionDetails && llmConnections.length > 1 && (
                     <>
-                      <div className={cn(
-                        "flex items-center gap-2 px-2 py-1.5 text-xs select-none",
-                        providerMismatch ? "text-amber-500" : "text-muted-foreground"
-                      )}>
-                        <Lock className="h-3 w-3" />
-                        <span>
-                          {providerMismatch
-                            ? `Locked to ${currentConnectionDetails.name} — default provider changed`
-                            : `Using ${currentConnectionDetails.name}`}
-                        </span>
+                      <div className="flex items-center gap-2 px-2 py-1.5 text-xs select-none text-muted-foreground">
+                        <span>Using {currentConnectionDetails.name}</span>
                       </div>
                       <StyledDropdownMenuSeparator className="my-1" />
                     </>
@@ -1799,10 +1794,10 @@ export function FreeFormInput({
                   <StyledDropdownMenuSeparator className="my-1" />
 
                   <DropdownMenuSub>
-                    <StyledDropdownMenuSubTrigger className="flex items-center justify-between px-2 py-2 rounded-lg">
+                    <StyledDropdownMenuSubTrigger disabled={thinkingDisabled} className={cn("flex items-center justify-between px-2 py-2 rounded-lg", thinkingDisabled && "opacity-50 cursor-not-allowed")}>
                       <div className="text-left flex-1">
                         <div className="font-medium text-sm">{getThinkingLevelName(thinkingLevel)}</div>
-                        <div className="text-xs text-muted-foreground">Extended reasoning depth</div>
+                        <div className="text-xs text-muted-foreground">{thinkingDisabled ? 'Not supported by this model' : 'Extended reasoning depth'}</div>
                       </div>
                     </StyledDropdownMenuSubTrigger>
                     <StyledDropdownMenuSubContent className="min-w-[220px]">
@@ -1864,7 +1859,8 @@ export function FreeFormInput({
               ? Math.min(99, Math.round((contextStatus.inputTokens / compactionThreshold) * 100))
               : null
             // Show badge when >= 80% of compaction threshold AND not currently compacting
-            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting && !isCodexModel(currentModel)
+            // Hide for Codex and Copilot models which don't support context compaction
+            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting && !isCodexModel(currentModel) && !isCopilotModel(currentModel)
 
             if (!showWarning) return null
 

@@ -24,6 +24,7 @@ import { useUpdateChecker } from '@/hooks/useUpdateChecker'
 import { NavigationProvider } from '@/contexts/NavigationContext'
 import { navigate, routes } from './lib/navigate'
 import { stripMarkdown } from './utils/text'
+import { extractWorkspaceSlug } from '@craft-agent/shared/utils/workspace'
 import { initRendererPerf } from './lib/perf'
 import {
   initializeSessionsAtom,
@@ -185,8 +186,7 @@ export default function App() {
     if (!windowWorkspaceId) return null
     const workspace = workspaces.find(w => w.id === windowWorkspaceId)
     if (!workspace?.rootPath) return windowWorkspaceId // Fallback to ID
-    const pathParts = workspace.rootPath.split('/').filter(Boolean)
-    return pathParts[pathParts.length - 1] || windowWorkspaceId
+    return extractWorkspaceSlug(workspace.rootPath, windowWorkspaceId)
   }, [windowWorkspaceId, workspaces])
 
   // LLM connections with authentication status (for provider selection)
@@ -1159,34 +1159,34 @@ export default function App() {
       // This prevents showing stale session data from the wrong workspace.
       setSession({ selected: null })
 
-      // 4. Navigate to allSessions view without a specific session selected
-      // This ensures the UI is in a clean state for the new workspace
-      navigate(routes.view.allSessions())
-
-      // 5. Clear pending permissions/credentials (not relevant to new workspace)
+      // 4. Clear pending permissions/credentials (not relevant to new workspace)
       setPendingPermissions(new Map())
       setPendingCredentials(new Map())
 
-      // 6. Clear session options from previous workspace
+      // 5. Clear session options from previous workspace
       // (session IDs are unique UUIDs, but clearing prevents unbounded memory growth
       // and ensures no stale state from old workspace persists)
       setSessionOptions(new Map())
 
-      // 7. Clear message drafts from previous workspace
+      // 6. Clear message drafts from previous workspace
       // (prevents memory growth on repeated workspace switches)
       sessionDraftsRef.current.clear()
 
-      // 8. Reset sources and skills atoms to empty
+      // 7. Reset sources and skills atoms to empty
       // (prevents stale data flash during workspace switch - AppShell will reload)
       store.set(sourcesAtom, [])
       store.set(skillsAtom, [])
 
-      // 9. Clear session atoms BEFORE navigating
+      // 8. Clear session atoms BEFORE navigating
       // This prevents applyNavigationState from auto-selecting a session from the old workspace.
       // Without this, getFirstSessionId() would return a session ID from the previous workspace,
       // causing the detail panel to show a stale chat until sessions reload.
       store.set(sessionMetaMapAtom, new Map())
       store.set(sessionIdsAtom, [])
+
+      // 9. Navigate to allSessions view without a specific session selected
+      // This ensures the UI is in a clean state for the new workspace
+      navigate(routes.view.allSessions())
 
       // Note: Sessions and theme will reload automatically due to windowWorkspaceId dependency
       // in useEffect hooks
@@ -1299,6 +1299,8 @@ export default function App() {
     // Bypass link interceptor — opens file directly in system editor.
     // Used by overlay header badges (when already viewing a file, "Open" should launch editor).
     onOpenFileExternal: linkInterceptor.openFileExternal,
+    // Read file contents as UTF-8 string (used by datatable/spreadsheet src field)
+    onReadFile: (path: string) => window.electronAPI.readFile(path),
     // Reveal a file in the system file manager (Finder on macOS, Explorer on Windows)
     onRevealInFinder: (path: string) => {
       window.electronAPI.showInFolder(path).catch(() => {})
@@ -1351,6 +1353,7 @@ export default function App() {
           isWaitingForCode={onboarding.isWaitingForCode}
           onSubmitAuthCode={onboarding.handleSubmitAuthCode}
           onCancelOAuth={onboarding.handleCancelOAuth}
+          copilotDeviceCode={onboarding.copilotDeviceCode}
           onBrowseGitBash={onboarding.handleBrowseGitBash}
           onUseGitBashPath={onboarding.handleUseGitBashPath}
           onRecheckGitBash={onboarding.handleRecheckGitBash}
