@@ -241,14 +241,9 @@ function handleUpdatePreferences(input: Record<string, unknown>): string {
     }
   }
 
-  // Handle notes (append to existing)
+  // Handle notes (replace)
   if (input.notes && typeof input.notes === 'string') {
-    const current = loadPreferences();
-    const existingNotes = current.notes || '';
-    const newNote = input.notes;
-    updates.notes = existingNotes
-      ? `${existingNotes}\n- ${newNote}`
-      : `- ${newNote}`;
+    updates.notes = input.notes;
   }
 
   // Check if anything was actually updated
@@ -277,7 +272,7 @@ const updateUserPreferencesTool = tool(
     region: z.string().optional().describe("The user's state/region/province"),
     country: z.string().optional().describe("The user's country"),
     language: z.string().optional().describe("The user's preferred language for responses"),
-    notes: z.string().optional().describe('Additional notes about the user that would be helpful to remember (preferences, context, etc.). This appends to existing notes.'),
+    notes: z.string().optional().describe('Additional notes about the user that would be helpful to remember (preferences, context, etc.). Replaces any existing notes.'),
   },
   async (args) => {
     try {
