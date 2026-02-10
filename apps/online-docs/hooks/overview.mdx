@@ -260,6 +260,20 @@ Each matcher entry supports these optional fields:
 | `enabled` | boolean | `true` | Set to `false` to disable without deleting |
 | `hooks` | array | Required | Array of command/prompt hooks |
 
+<Tip>
+**Disabling a hook:** Set `"enabled": false` on any matcher to temporarily disable it without removing the configuration. This is useful for debugging or pausing automations.
+
+```json
+{
+  "matcher": "^urgent$",
+  "enabled": false,
+  "hooks": [
+    { "type": "command", "command": "notify-send 'Urgent!'" }
+  ]
+}
+```
+</Tip>
+
 ## Environment Variables
 
 ### Common Variables
