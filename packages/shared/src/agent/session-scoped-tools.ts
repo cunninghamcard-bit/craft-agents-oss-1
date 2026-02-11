@@ -460,32 +460,46 @@ async function handleTransformData(
       delete env[key];
     }
 
-    // Spawn subprocess
+    // Spawn subprocess with manual timeout that escalates to SIGKILL.
+    // We can't rely on spawn()'s built-in `timeout` option because it only sends
+    // SIGTERM, which can be caught/ignored — leaving the promise hanging forever.
     const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolvePromise, reject) => {
       const child = spawn(cmd, spawnArgs, {
         cwd: dataDir,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: TRANSFORM_DATA_TIMEOUT_MS,
       });
 
       let stdout = '';
       let stderr = '';
+      let timedOut = false;
+
+      const killTimer = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, TRANSFORM_DATA_TIMEOUT_MS);
 
       child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
       child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
 
       child.on('close', (code) => {
-        resolvePromise({ stdout, stderr, code });
+        clearTimeout(killTimer);
+        if (timedOut) {
+          resolvePromise({ stdout, stderr: `Script timed out after ${TRANSFORM_DATA_TIMEOUT_MS / 1000}s and was killed`, code });
+        } else {
+          resolvePromise({ stdout, stderr, code });
+        }
       });
 
       child.on('error', (err) => {
+        clearTimeout(killTimer);
         reject(err);
       });
     });
 
     if (result.code !== 0) {
       const errorOutput = result.stderr || result.stdout || 'Script exited with non-zero code';
+      debug('session-scoped-tools', `transform_data failed (exit code ${result.code}): ${errorOutput.slice(0, 200)}`);
       return {
         content: [{ type: 'text', text: `Script failed (exit code ${result.code}):\n${errorOutput.slice(0, 2000)}` }],
         isError: true,
