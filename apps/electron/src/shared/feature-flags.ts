@@ -3,4 +3,5 @@
  * Set to `true` to enable, `false` to disable.
  */
 export const FEATURE_FLAGS = {
+  fastMode: false,
 } as const

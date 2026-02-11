@@ -324,6 +324,7 @@ const buildWindowsSkillsDirError = buildWindowsSkillsDirErrorFn;
 
 export class ClaudeAgent extends BaseAgent {
   // Note: ClaudeAgentConfig is compatible with BackendConfig, so we use the inherited this.config
+  private hookSystem?: HookSystem;
   private currentQuery: Query | null = null;
   private currentQueryAbortController: AbortController | null = null;
   private lastAbortReason: AbortReason | null = null;
@@ -421,6 +422,7 @@ export class ClaudeAgent extends BaseAgent {
     super(backendConfig, DEFAULT_MODEL, CLAUDE_CONTEXT_WINDOW);
 
     this.isHeadless = config.isHeadless ?? false;
+    this.hookSystem = config.hookSystem;
 
     // Initialize event adapter for SDK message → AgentEvent conversion
     this.eventAdapter = new ClaudeEventAdapter({
@@ -746,7 +748,7 @@ export class ClaudeAgent extends BaseAgent {
         // User hooks from hooks.json are merged with internal hooks
         hooks: (() => {
           // Build user-defined hooks from hooks.json using the workspace-level HookSystem
-          const userHooks = this.config.hookSystem?.buildSdkHooks() ?? {};
+          const userHooks: Partial<Record<string, SdkHookCallbackMatcher[]>> = this.hookSystem?.buildSdkHooks() ?? {};
           if (Object.keys(userHooks).length > 0) {
             debug('[CraftAgent] User SDK hooks loaded:', Object.keys(userHooks).join(', '));
           }
@@ -754,11 +756,13 @@ export class ClaudeAgent extends BaseAgent {
           // Internal hooks for permission handling and logging
           const internalHooks: Record<string, SdkHookCallbackMatcher[]> = {
           PreToolUse: [{
-            hooks: [async (input) => {
+            hooks: [async (rawInput) => {
               // Only handle PreToolUse events
-              if (input.hook_event_name !== 'PreToolUse') {
+              if (rawInput.hook_event_name !== 'PreToolUse') {
                 return { continue: true };
               }
+              // PreToolUse events always have tool_name, tool_input, and tool_use_id
+              const input = rawInput as typeof rawInput & { tool_name: string; tool_use_id: string };
 
               // Get current permission mode (single source of truth)
               const permissionMode = getPermissionMode(sessionId);
@@ -1237,6 +1241,7 @@ export class ClaudeAgent extends BaseAgent {
           // Internal hooks run first (permissions), then user hooks
           const mergedHooks: Record<string, SdkHookCallbackMatcher[]> = { ...internalHooks };
           for (const [event, matchers] of Object.entries(userHooks)) {
+            if (!matchers) continue;
             if (mergedHooks[event]) {
               // Append user hooks after internal hooks
               mergedHooks[event] = [...mergedHooks[event], ...matchers];

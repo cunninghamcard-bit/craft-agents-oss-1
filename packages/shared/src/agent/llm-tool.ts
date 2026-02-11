@@ -24,7 +24,8 @@ type ToolResult = {
 };
 import { readFile } from 'fs/promises';
 import { existsSync, statSync } from 'fs';
-import { getAnthropicApiKey, getAnthropicBaseUrl, getClaudeOAuthToken } from '../config/storage.ts';
+import { getDefaultLlmConnection, getLlmConnection } from '../config/storage.ts';
+import { getCredentialManager } from '../credentials/index.ts';
 
 // ============================================================================
 // CONSTANTS
@@ -495,8 +496,11 @@ For large files (>2000 lines), use {path, startLine, endLine} to select a portio
       // AUTHENTICATION
       // ========================================
 
-      const apiKey = await getAnthropicApiKey();
-      const oauthToken = await getClaudeOAuthToken();
+      const credManager = getCredentialManager();
+      const connectionSlug = getDefaultLlmConnection() ?? 'anthropic-api';
+      const apiKey = await credManager.getLlmApiKey(connectionSlug);
+      const oauthCreds = await credManager.getLlmOAuth(connectionSlug);
+      const oauthToken = oauthCreds?.accessToken ?? null;
 
       if (!apiKey && !oauthToken) {
         return errorResponse(
@@ -578,7 +582,7 @@ For large files (>2000 lines), use {path, startLine, endLine} to select a portio
       // BUILD CLIENT
       // ========================================
 
-      const baseUrl = getAnthropicBaseUrl();
+      const baseUrl = getLlmConnection(connectionSlug)?.baseUrl;
 
       // Build client with API key (OAuth-only case already handled above with clear error)
       const client = new Anthropic({

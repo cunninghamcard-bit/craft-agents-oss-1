@@ -1678,7 +1678,7 @@ Model
                     <div className="font-medium text-sm">{connectionDefaultModel}</div>
                     <div className="text-xs text-muted-foreground">Connection default</div>
                   </div>
-                  <Check className="h-4 w-4 text-foreground shrink-0 ml-3" />
+                  <Check className="h-3 w-3 text-foreground shrink-0 ml-3" />
                 </StyledDropdownMenuItem>
               ) : isEmptySession && llmConnections.length > 1 ? (
                 /* Hierarchical view: Provider → Connection → Models (for new sessions with multiple connections) */
@@ -1733,7 +1733,7 @@ Model
                                   >
                                     <div className="font-medium text-sm">{modelName}</div>
                                     {isSelectedModel && (
-                                      <Check className="h-4 w-4 text-foreground shrink-0 ml-3" />
+                                      <Check className="h-3 w-3 text-foreground shrink-0 ml-3" />
                                     )}
                                   </StyledDropdownMenuItem>
                                 )
@@ -1779,7 +1779,7 @@ Model
                           )}
                         </div>
                         {isSelected && (
-                          <Check className="h-4 w-4 text-foreground shrink-0 ml-3" />
+                          <Check className="h-3 w-3 text-foreground shrink-0 ml-3" />
                         )}
                       </StyledDropdownMenuItem>
                     )
@@ -1814,7 +1814,7 @@ Model
                               <div className="text-xs text-muted-foreground">{description}</div>
                             </div>
                             {isSelected && (
-                              <Check className="h-4 w-4 text-foreground shrink-0 ml-3" />
+                              <Check className="h-3 w-3 text-foreground shrink-0 ml-3" />
                             )}
                           </StyledDropdownMenuItem>
                         )

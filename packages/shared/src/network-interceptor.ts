@@ -15,6 +15,7 @@
 import {
   DEBUG,
   debugLog,
+  isFastModeEnabled,
   isRichToolDescriptionsEnabled,
   setStoredError,
   toolMetadataStore,
@@ -590,6 +591,40 @@ async function logResponse(response: Response, url: string, startTime: number): 
   return response;
 }
 
+/**
+ * Check if fast mode should be enabled for this request.
+ * Only activates for Opus models on Anthropic's API when the feature flag is on.
+ */
+function shouldEnableFastMode(_model: unknown): boolean {
+  return false;
+}
+
+const FAST_MODE_BETA = 'fast-mode-2026-02-01';
+
+/**
+ * Append a beta value to the anthropic-beta header, preserving existing values.
+ * Returns a new headers Record with the beta header added/appended.
+ */
+function appendBetaHeader(headers: HeadersInitType | undefined, beta: string): Record<string, string> {
+  // Normalize to plain object
+  let headerObj: Record<string, string> = {};
+  if (headers instanceof Headers) {
+    headers.forEach((value, key) => { headerObj[key] = value; });
+  } else if (Array.isArray(headers)) {
+    for (const [key, value] of headers) {
+      headerObj[key as string] = value as string;
+    }
+  } else if (headers) {
+    headerObj = { ...headers };
+  }
+
+  // Append or set anthropic-beta (comma-separated per spec)
+  const existing = headerObj['anthropic-beta'];
+  headerObj['anthropic-beta'] = existing ? `${existing},${beta}` : beta;
+
+  return headerObj;
+}
+
 async function interceptedFetch(
   input: string | URL | Request,
   init?: RequestInit
@@ -626,8 +661,16 @@ async function interceptedFetch(
         // Re-inject stored metadata into tool_use history so Claude keeps including fields
         parsed = injectMetadataIntoHistory(parsed);
 
+        // Fast mode: add speed:"fast" + beta header for Opus on Anthropic API
+        const fastMode = shouldEnableFastMode(parsed.model);
+        if (fastMode) {
+          parsed.speed = 'fast';
+          debugLog(`[Fast Mode] Enabled for model=${parsed.model}`);
+        }
+
         const modifiedInit = {
           ...init,
+          ...(fastMode ? { headers: appendBetaHeader(init?.headers as HeadersInitType | undefined, FAST_MODE_BETA) } : {}),
           body: JSON.stringify(parsed),
         };
 

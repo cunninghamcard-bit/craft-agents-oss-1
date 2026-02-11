@@ -25,8 +25,9 @@ import { toolMetadataStore } from '../../../interceptor-common.ts';
  * - session.usage_info → (internal, usage tracking)
  * - assistant.message_delta → text_delta
  * - assistant.message → text_complete
- * - assistant.reasoning_delta → text_delta (intermediate)
- * - assistant.reasoning → text_complete (intermediate)
+ * - assistant.reasoning_delta → (suppressed)
+ * - assistant.reasoning → (suppressed)
+ * - assistant.intent → (suppressed)
  * - assistant.turn_start → (internal, turn tracking)
  * - assistant.turn_end → complete
  * - assistant.usage → (usage tracking)
@@ -45,27 +46,17 @@ export class CopilotEventAdapter extends BaseEventAdapter {
   // Guards against duplicate assistant.message events from the SDK
   private hasEmittedFinalText: boolean = false;
 
-  // Track whether we're currently in a reasoning block (for styling reasoning deltas differently)
-  private inReasoning: boolean = false;
-
   // Deduplication: track last emitted intermediate text to skip identical re-emissions
   private lastIntermediateText: string | null = null;
 
   // ── Sub-turnId isolation ──────────────────────────────────────────
   // The renderer matches text_delta → text_complete by turnId, and uses
   // findAssistantMessage(turnId) to locate a message to update. Copilot
-  // reasoning, intent, and message events all share the same SDK turnId
-  // within a turn. Without sub-turnIds the renderer overwrites the
-  // reasoning message with the final response (findAssistantMessage
-  // returns the FIRST match), placing the final text at the wrong array
-  // position and causing ordering bugs / final message not displaying.
-  //
-  // Fix: each text block (reasoning block, message block, intent block)
-  // gets its own sub-turnId via `nextSubTurnId()`. The renderer always
-  // creates a new message per block. Turn grouping is unaffected because
-  // turn-utils.ts explicitly ignores turnId for grouping (line 363).
+  // message events share the same SDK turnId within a turn. Without
+  // sub-turnIds the renderer can overwrite messages. Each text block gets
+  // its own sub-turnId via `nextSubTurnId()`. Turn grouping is unaffected
+  // because turn-utils.ts explicitly ignores turnId for grouping.
   private subTurnCounter: number = 0;
-  private reasoningSubTurnId: string | null = null;
   private messageSubTurnId: string | null = null;
 
   constructor() {
@@ -76,7 +67,7 @@ export class CopilotEventAdapter extends BaseEventAdapter {
    * Generate a unique sub-turnId for a text block within the current turn.
    * Each call increments the counter, guaranteeing no two blocks share a turnId.
    *
-   * @param prefix - block type identifier: 'r' (reasoning), 'm' (message), 'i' (intent)
+   * @param prefix - block type identifier: 'm' (message)
    */
   private nextSubTurnId(prefix: string): string {
     const base = this.currentTurnId || 'unknown';
@@ -87,10 +78,8 @@ export class CopilotEventAdapter extends BaseEventAdapter {
     this.toolNames.clear();
     this.hasStreamedDeltas = false;
     this.hasEmittedFinalText = false;
-    this.inReasoning = false;
     this.lastIntermediateText = null;
     this.subTurnCounter = 0;
-    this.reasoningSubTurnId = null;
     this.messageSubTurnId = null;
     this.log.debug('Turn started', { turnIndex: this.turnIndex });
   }
@@ -196,19 +185,15 @@ export class CopilotEventAdapter extends BaseEventAdapter {
         this.currentTurnId = null;
         this.hasStreamedDeltas = false;
         this.hasEmittedFinalText = false;
-        this.inReasoning = false;
         this.lastIntermediateText = null;
         this.subTurnCounter = 0;
-        this.reasoningSubTurnId = null;
         this.messageSubTurnId = null;
         break;
 
       case 'assistant.message_delta':
         if (event.data.deltaContent) {
           this.hasStreamedDeltas = true;
-          this.inReasoning = false; // Exited reasoning block
           // Allocate sub-turnId on first delta of this message block.
-          // Keeps message streaming separate from any preceding reasoning block.
           if (!this.messageSubTurnId) {
             this.messageSubTurnId = this.nextSubTurnId('m');
           }
@@ -267,56 +252,12 @@ export class CopilotEventAdapter extends BaseEventAdapter {
         break;
       }
 
+      // Reasoning and intent events are suppressed — they create intermediate
+      // messages that aren't persisted to disk, causing ordering issues on reload.
+      // The turn phase system already shows "Thinking..." without them.
       case 'assistant.reasoning_delta':
-        if (event.data.deltaContent) {
-          this.inReasoning = true;
-          // Allocate sub-turnId on first delta of this reasoning block.
-          // All deltas within the same block share this ID so the renderer
-          // accumulates them into one streaming message. The subsequent
-          // assistant.reasoning complete event uses the same ID to finalize it.
-          if (!this.reasoningSubTurnId) {
-            this.reasoningSubTurnId = this.nextSubTurnId('r');
-          }
-          yield {
-            type: 'text_delta',
-            text: event.data.deltaContent,
-            turnId: this.reasoningSubTurnId,
-          };
-        }
-        break;
-
       case 'assistant.reasoning':
-        this.inReasoning = false; // Reasoning block complete
-        if (event.data.content && event.data.content !== this.lastIntermediateText) {
-          this.lastIntermediateText = event.data.content;
-          // Use the sub-turnId from deltas so the renderer finds the streaming
-          // message created by reasoning_delta. If no deltas preceded (SDK sent
-          // complete-only), allocate a fresh sub-turnId to avoid collisions.
-          const rTurnId = this.reasoningSubTurnId || this.nextSubTurnId('r');
-          this.reasoningSubTurnId = null; // Reset for next reasoning block
-          yield {
-            type: 'text_complete',
-            text: event.data.content,
-            isIntermediate: true,
-            turnId: rTurnId,
-          };
-        } else {
-          this.reasoningSubTurnId = null; // Reset even when deduped
-        }
-        break;
-
       case 'assistant.intent':
-        // Intent is a one-shot complete event (no preceding deltas), so always
-        // allocate a fresh sub-turnId to avoid colliding with reasoning/message.
-        if (event.data.intent && event.data.intent !== this.lastIntermediateText) {
-          this.lastIntermediateText = event.data.intent;
-          yield {
-            type: 'text_complete',
-            text: event.data.intent,
-            isIntermediate: true,
-            turnId: this.nextSubTurnId('i'),
-          };
-        }
         break;
 
       case 'assistant.usage': {
