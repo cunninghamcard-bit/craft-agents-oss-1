@@ -419,6 +419,12 @@ export function copyInterceptor(config: BuildConfig): void {
   if (existsSync(commonSource)) {
     copyFileSync(commonSource, join(destDir, 'interceptor-common.ts'));
   }
+
+  // Copy feature flags (imported by network-interceptor.ts for fast mode / source templates)
+  const featureFlagsSource = join(sourceDir, 'feature-flags.ts');
+  if (existsSync(featureFlagsSource)) {
+    copyFileSync(featureFlagsSource, join(destDir, 'feature-flags.ts'));
+  }
 }
 
 /**
