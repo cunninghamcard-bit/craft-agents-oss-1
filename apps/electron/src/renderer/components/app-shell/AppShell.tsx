@@ -824,6 +824,20 @@ function AppShellContent({
     })
   }, [hooks, activeWorkspaceId])
 
+  const handleDuplicateHook = React.useCallback((hookId: string) => {
+    const hook = hooks.find(h => h.id === hookId)
+    if (!hook || !activeWorkspaceId) return
+    window.electronAPI.duplicateHook(activeWorkspaceId, hook.event, hook.matcherIndex)
+      .catch((err: Error) => console.error('Failed to duplicate hook:', err))
+  }, [hooks, activeWorkspaceId])
+
+  const handleDeleteHook = React.useCallback((hookId: string) => {
+    const hook = hooks.find(h => h.id === hookId)
+    if (!hook || !activeWorkspaceId) return
+    window.electronAPI.deleteHook(activeWorkspaceId, hook.event, hook.matcherIndex)
+      .catch((err: Error) => console.error('Failed to delete hook:', err))
+  }, [hooks, activeWorkspaceId])
+
   // Whether local MCP servers are enabled (affects stdio source status)
   const [localMcpEnabled, setLocalMcpEnabled] = React.useState(true)
 
@@ -1594,8 +1608,10 @@ function AppShellContent({
     onChatMatchInfoChange: handleChatMatchInfoChange,
     onTestHook: handleTestHook,
     onToggleHook: handleToggleHook,
+    onDuplicateHook: handleDuplicateHook,
+    onDeleteHook: handleDeleteHook,
     hookTestResults,
-  }), [contextValue, handleDeleteSession, sources, skills, labelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, rightSidebarOpenButton, searchActive, searchQuery, handleChatMatchInfoChange, handleTestHook, handleToggleHook, hookTestResults])
+  }), [contextValue, handleDeleteSession, sources, skills, labelConfigs, handleSessionLabelsChange, enabledModes, effectiveSessionStatuses, handleSessionSourcesChange, rightSidebarOpenButton, searchActive, searchQuery, handleChatMatchInfoChange, handleTestHook, handleToggleHook, handleDuplicateHook, handleDeleteHook, hookTestResults])
 
   // Persist expanded folders to localStorage (workspace-scoped)
   React.useEffect(() => {
@@ -3230,6 +3246,8 @@ function AppShellContent({
                 onHookClick={handleTaskSelect}
                 onTestHook={handleTestHook}
                 onToggleHook={handleToggleHook}
+                onDuplicateHook={handleDuplicateHook}
+                onDeleteHook={handleDeleteHook}
                 selectedHookId={isTasksNavigation(navState) && navState.details ? navState.details.taskId : null}
               />
             )}

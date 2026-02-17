@@ -61,6 +61,8 @@ export function MainContentPanel({
     labels,
     onTestHook,
     onToggleHook,
+    onDuplicateHook,
+    onDeleteHook,
     hookTestResults,
   } = useAppShellContext()
 
@@ -206,6 +208,8 @@ export function MainContentPanel({
               testResult={hookTestResults?.[hook.id]}
               onTest={onTestHook ? () => onTestHook(hook.id) : undefined}
               onToggleEnabled={onToggleHook ? () => onToggleHook(hook.id) : undefined}
+              onDuplicate={onDuplicateHook ? () => onDuplicateHook(hook.id) : undefined}
+              onDelete={onDeleteHook ? () => onDeleteHook(hook.id) : undefined}
             />
           </Panel>
         )

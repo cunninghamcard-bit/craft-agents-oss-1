@@ -146,6 +146,10 @@ export interface AppShellContextType {
   onTestHook?: (hookId: string) => void
   /** Toggle a hook's enabled state by ID */
   onToggleHook?: (hookId: string) => void
+  /** Duplicate a hook by ID — clones config with " Copy" suffix */
+  onDuplicateHook?: (hookId: string) => void
+  /** Delete a hook by ID — removes from hooks.json */
+  onDeleteHook?: (hookId: string) => void
   /** Map of hookId → last test result */
   hookTestResults?: Record<string, import('../components/hooks/types').TestResult>
 }

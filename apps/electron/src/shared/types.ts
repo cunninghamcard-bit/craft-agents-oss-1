@@ -863,6 +863,8 @@ export const IPC_CHANNELS = {
   // Hooks (manual trigger + state management)
   TEST_HOOK: 'hooks:test',
   HOOKS_SET_ENABLED: 'hooks:setEnabled',
+  HOOKS_DUPLICATE: 'hooks:duplicate',
+  HOOKS_DELETE: 'hooks:delete',
   HOOKS_CHANGED: 'hooks:changed',  // Broadcast event
 } as const
 
@@ -1214,6 +1216,8 @@ export interface ElectronAPI {
 
   // Hook state management
   setHookEnabled(workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean): Promise<void>
+  duplicateHook(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
+  deleteHook(workspaceId: string, eventName: string, matcherIndex: number): Promise<void>
 
   // Hooks change listener (live updates when hooks.json changes on disk)
   onHooksChanged(callback: (workspaceId: string) => void): () => void

@@ -3491,8 +3491,9 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
     return { actions: results } satisfies import('../shared/types').TestHookResult
   })
 
-  // Hook enabled state management (toggle enabled/disabled in hooks.json)
-  ipcMain.handle(IPC_CHANNELS.HOOKS_SET_ENABLED, async (_event, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
+  // Shared helper: resolve workspace, read hooks.json, validate matcher, mutate, write back
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function withHookMatcher(workspaceId: string, eventName: string, matcherIndex: number, mutate: (matchers: any[], index: number, config: any) => void) {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
@@ -3507,14 +3508,38 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       throw new Error(`Invalid hook reference: ${eventName}[${matcherIndex}]`)
     }
 
-    if (enabled) {
-      // Remove the enabled field entirely (defaults to true) to keep JSON clean
-      delete matchers[matcherIndex].enabled
-    } else {
-      matchers[matcherIndex].enabled = false
-    }
+    mutate(matchers, matcherIndex, config)
 
     await writeFile(hooksPath, JSON.stringify(config, null, 2) + '\n', 'utf-8')
+  }
+
+  // Hook enabled state management (toggle enabled/disabled in hooks.json)
+  ipcMain.handle(IPC_CHANNELS.HOOKS_SET_ENABLED, async (_event, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
+    await withHookMatcher(workspaceId, eventName, matcherIndex, (matchers, idx) => {
+      if (enabled) {
+        // Remove the enabled field entirely (defaults to true) to keep JSON clean
+        delete matchers[idx].enabled
+      } else {
+        matchers[idx].enabled = false
+      }
+    })
+  })
+
+  // Duplicate a hook matcher (deep-clone, append " Copy" to name, insert after original)
+  ipcMain.handle(IPC_CHANNELS.HOOKS_DUPLICATE, async (_event, workspaceId: string, eventName: string, matcherIndex: number) => {
+    await withHookMatcher(workspaceId, eventName, matcherIndex, (matchers, idx) => {
+      const clone = JSON.parse(JSON.stringify(matchers[idx]))
+      clone.name = clone.name ? `${clone.name} Copy` : 'Untitled Copy'
+      matchers.splice(idx + 1, 0, clone)
+    })
+  })
+
+  // Delete a hook matcher (remove from array, clean up empty event key)
+  ipcMain.handle(IPC_CHANNELS.HOOKS_DELETE, async (_event, workspaceId: string, eventName: string, matcherIndex: number) => {
+    await withHookMatcher(workspaceId, eventName, matcherIndex, (matchers, idx, config) => {
+      matchers.splice(idx, 1)
+      if (matchers.length === 0) delete config.hooks[eventName]
+    })
   })
 
   // Generic workspace image loading (for source icons, status icons, etc.)
