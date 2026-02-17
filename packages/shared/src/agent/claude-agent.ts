@@ -15,6 +15,7 @@ import { DEFAULT_MODEL, isClaudeModel, getDefaultSummarizationModel } from '../c
 import { getCredentialManager } from '../credentials/index.ts';
 import { updatePreferences, loadPreferences, formatPreferencesForPrompt, type UserPreferences } from '../config/preferences.ts';
 import type { FileAttachment } from '../utils/files.ts';
+import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
 import { debug } from '../utils/debug.ts';
 import {
   getSessionPlansDir,
@@ -2448,7 +2449,7 @@ export class ClaudeAgent extends BaseAgent {
   // queryLlm — Agent-native LLM query for call_llm tool (OAuth path)
   // ============================================================
 
-  async queryLlm(request: import('./llm-tool.ts').LLMQueryRequest): Promise<import('./llm-tool.ts').LLMQueryResult> {
+  async queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     const model = request.model ?? this.config.miniModel ?? getDefaultSummarizationModel();
 
     const options = {
@@ -2457,6 +2458,7 @@ export class ClaudeAgent extends BaseAgent {
       maxTurns: 1,
       systemPrompt: request.systemPrompt ?? 'Reply with ONLY the requested text. No explanation.',
       ...(request.maxTokens ? { maxTokens: request.maxTokens } : {}),
+      ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
     };
 
     let result = '';

@@ -56,8 +56,22 @@ export interface LLMQueryRequest {
  */
 export interface LLMQueryResult {
   text: string;
+  model?: string;
   inputTokens?: number;
   outputTokens?: number;
+}
+
+// ============================================================================
+// UTILITY: TIMEOUT HELPER
+// Races a promise against a timeout, cleaning up the timer on completion
+// ============================================================================
+
+export function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer!));
 }
 
 // ============================================================================
@@ -133,6 +147,107 @@ export const OUTPUT_FORMATS = {
     required: ['valid', 'errors', 'warnings'],
   },
 };
+
+// ============================================================================
+// SHARED PRE-EXECUTION PIPELINE (used by Codex/Copilot PreToolUse intercepts)
+// Validates input, processes attachments, resolves schema, builds LLMQueryRequest
+// ============================================================================
+
+export interface BuildCallLlmOptions {
+  /** Backend name for error messages (e.g., "Codex", "Copilot") */
+  backendName: string;
+  /** Optional model validation hook — return undefined to reject (falls back to default), or corrected model ID */
+  validateModel?: (resolvedModelId: string) => string | undefined;
+}
+
+/**
+ * Shared pre-execution pipeline for call_llm PreToolUse intercepts.
+ * Validates input, processes attachments, resolves schema, and builds an LLMQueryRequest
+ * ready to be passed to the backend's queryLlm().
+ *
+ * Used by CodexAgent and CopilotAgent to avoid duplicating the same ~80 lines of logic.
+ */
+export async function buildCallLlmRequest(
+  input: Record<string, unknown>,
+  options: BuildCallLlmOptions
+): Promise<LLMQueryRequest> {
+  const prompt = input.prompt as string;
+  if (!prompt?.trim()) {
+    throw new Error('Prompt is required and cannot be empty.');
+  }
+
+  // Thinking not supported in non-API-key backends
+  if (input.thinking) {
+    throw new Error(
+      `Extended thinking is not supported in ${options.backendName} mode.\n\n` +
+      'Remove thinking=true to use basic mode.'
+    );
+  }
+
+  // Process attachments
+  const textParts: string[] = [];
+  const attachments = input.attachments as Array<string | { path: string; startLine?: number; endLine?: number }> | undefined;
+
+  if (attachments?.length) {
+    for (let i = 0; i < attachments.length; i++) {
+      const result = await processAttachment(attachments[i]!, i);
+      if (result.type === 'error') {
+        throw new Error(result.message);
+      }
+      if (result.type === 'image') {
+        throw new Error(
+          `Attachment ${i + 1}: Image attachments are not supported in ${options.backendName} mode. Use text files only.`
+        );
+      }
+      if (result.type === 'text') {
+        textParts.push(`<file path="${result.filename}">\n${result.content}\n</file>`);
+      }
+    }
+  }
+
+  textParts.push(prompt);
+
+  // Resolve model against registry, with optional backend-specific validation
+  let model = input.model as string | undefined;
+  if (model) {
+    const modelDef = getModelById(model)
+      || MODEL_REGISTRY.find(m => m.shortName.toLowerCase() === model!.toLowerCase())
+      || MODEL_REGISTRY.find(m => m.name.toLowerCase() === model!.toLowerCase());
+    if (modelDef) {
+      model = modelDef.id;
+    }
+
+    // Backend-specific model validation (e.g., Codex rejects non-OpenAI models)
+    if (options.validateModel) {
+      model = options.validateModel(model) ?? undefined;
+    }
+  }
+
+  // Build system prompt with structured output injection if needed
+  let systemPrompt = (input.systemPrompt as string) || '';
+  const outputFormat = input.outputFormat as string | undefined;
+  const outputSchema = input.outputSchema as Record<string, unknown> | undefined;
+
+  let schema: Record<string, unknown> | null = null;
+  if (outputSchema) {
+    schema = outputSchema;
+  } else if (outputFormat && OUTPUT_FORMATS[outputFormat as keyof typeof OUTPUT_FORMATS]) {
+    schema = OUTPUT_FORMATS[outputFormat as keyof typeof OUTPUT_FORMATS];
+  }
+
+  if (schema) {
+    const schemaJson = JSON.stringify(schema, null, 2);
+    systemPrompt += `${systemPrompt ? '\n\n' : ''}You MUST respond with valid JSON matching this schema:\n${schemaJson}\n\nRespond with ONLY the JSON object, no other text or markdown formatting.`;
+  }
+
+  return {
+    prompt: textParts.join('\n\n'),
+    systemPrompt: systemPrompt || undefined,
+    model,
+    maxTokens: input.maxTokens as number | undefined,
+    temperature: input.temperature as number | undefined,
+  };
+}
 
 // ============================================================================
 // HELPER: ERROR RESPONSE

@@ -8,6 +8,7 @@
  * Auth is GitHub OAuth. Tokens stored at `llm_oauth::copilot`.
  */
 
+import http from 'node:http';
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
@@ -117,7 +118,7 @@ import { getSessionPlansPath, getSessionPath } from '../sessions/storage.ts';
 import { parseError, type AgentError } from './errors.ts';
 
 // LLM tool types and helpers for call_llm PreToolUse intercept
-import { processAttachment, OUTPUT_FORMATS, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
+import { buildCallLlmRequest, withTimeout, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 
 // GitHub OAuth types
 import type { GithubTokens } from '../auth/github-oauth.ts';
@@ -235,6 +236,13 @@ export class CopilotAgent extends BaseAgent {
   // current value — stale handlers become no-ops.
   private handlerGeneration: number = 0;
 
+  // HTTP callback server for call_llm — the Copilot CLI doesn't fire
+  // onPreToolUse/onPostToolUse for MCP tools, so the session MCP server
+  // can't get _precomputedResult injected. Instead, it calls back to this
+  // localhost HTTP server to execute the LLM query with full Copilot auth.
+  private _callbackServer: http.Server | null = null;
+  private _callbackPort: number = 0;
+
   // ============================================================
   // Copilot-specific Callbacks
   // ============================================================
@@ -256,6 +264,62 @@ export class CopilotAgent extends BaseAgent {
 
     if (!config.isHeadless) {
       this.startConfigWatcher();
+    }
+  }
+
+  // ============================================================
+  // LLM Callback Server
+  // ============================================================
+
+  /**
+   * Start the localhost HTTP callback server for call_llm.
+   * The session MCP server POSTs to this when no _precomputedResult is available
+   * (i.e., when PreToolUse hooks didn't fire — which is always for MCP tools on Copilot).
+   */
+  private async startCallbackServer(): Promise<void> {
+    if (this._callbackServer) return;
+
+    const server = http.createServer(async (req, res) => {
+      if (req.method !== 'POST' || req.url !== '/call-llm') {
+        res.writeHead(404);
+        res.end();
+        return;
+      }
+      try {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const body = JSON.parse(Buffer.concat(chunks).toString()) as Record<string, unknown>;
+
+        this.debug(`[CallbackServer] Received call_llm request`);
+        const result = await this.preExecuteCallLlm(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        this.debug(`[CallbackServer] call_llm failed: ${msg}`);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: msg }));
+      }
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      server.listen(0, '127.0.0.1', () => {
+        const addr = server.address();
+        this._callbackPort = typeof addr === 'object' && addr ? addr.port : 0;
+        this.debug(`[CallbackServer] Listening on 127.0.0.1:${this._callbackPort}`);
+        resolve();
+      });
+      server.on('error', reject);
+    });
+
+    this._callbackServer = server;
+  }
+
+  private stopCallbackServer(): void {
+    if (this._callbackServer) {
+      this._callbackServer.close();
+      this._callbackServer = null;
+      this._callbackPort = 0;
     }
   }
 
@@ -355,6 +419,9 @@ export class CopilotAgent extends BaseAgent {
     }
 
     try {
+      // Start callback server for call_llm (Copilot CLI doesn't fire PreToolUse for MCP tools)
+      await this.startCallbackServer();
+
       // Ensure client is connected
       const client = await this.ensureClient();
 
@@ -691,7 +758,7 @@ export class CopilotAgent extends BaseAgent {
         const result = await this.preExecuteCallLlm(inputObj);
         return {
           permissionDecision: 'allow',
-          modifiedArgs: { ...inputObj, _precomputedResult: JSON.stringify(result) },
+          modifiedArgs: { ...inputObj, model: result.model ?? inputObj.model, _precomputedResult: JSON.stringify(result) },
         };
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -987,15 +1054,23 @@ export class CopilotAgent extends BaseAgent {
       if (sessionId && workspaceRootPath) {
         const nodePath = this.config.nodePath || 'bun';
         const plansFolderPath = join(workspaceRootPath, 'sessions', sessionId, 'plans');
+        const sessionArgs = [
+          this.config.sessionServerPath,
+          '--session-id', sessionId,
+          '--workspace-root', workspaceRootPath,
+          '--plans-folder', plansFolderPath,
+        ];
+        // Pass callback port as CLI arg (more reliable than env — the Copilot CLI
+        // spawns MCP servers and may not forward the env field to subprocesses).
+        if (this._callbackPort) {
+          sessionArgs.push('--callback-port', String(this._callbackPort));
+        }
         config['session'] = {
           type: 'local',
           command: nodePath,
-          args: [
-            this.config.sessionServerPath,
-            '--session-id', sessionId,
-            '--workspace-root', workspaceRootPath,
-            '--plans-folder', plansFolderPath,
-          ],
+          args: sessionArgs,
+          // Also pass via env as secondary path (in case CLI does forward it)
+          env: this._callbackPort ? { CRAFT_LLM_CALLBACK_PORT: String(this._callbackPort) } : undefined,
           tools: ['*'],
         };
       }
@@ -1183,6 +1258,7 @@ export class CopilotAgent extends BaseAgent {
       this.client = null;
     }
 
+    this.stopCallbackServer();
     this.debug('CopilotAgent destroyed');
   }
 
@@ -1431,70 +1507,10 @@ export class CopilotAgent extends BaseAgent {
   /**
    * Pre-execute a call_llm request: process attachments, resolve model,
    * build prompt with structured output injection, and run via ephemeral session.
-   *
-   * Same pattern as CodexAgent.preExecuteCallLlm (codex-agent.ts ~line 2472).
    */
   private async preExecuteCallLlm(input: Record<string, unknown>): Promise<LLMQueryResult> {
-    const prompt = input.prompt as string;
-    if (!prompt?.trim()) {
-      throw new Error('Prompt is required and cannot be empty.');
-    }
-
-    // Validate: thinking not supported in Copilot mode
-    if (input.thinking) {
-      throw new Error(
-        'Extended thinking is not supported in Copilot mode.\n\n' +
-        'Remove thinking=true to use basic mode.'
-      );
-    }
-
-    // Process attachments
-    const textParts: string[] = [];
-    const attachments = input.attachments as Array<string | { path: string; startLine?: number; endLine?: number }> | undefined;
-
-    if (attachments?.length) {
-      for (let i = 0; i < attachments.length; i++) {
-        const result = await processAttachment(attachments[i]!, i);
-        if (result.type === 'error') {
-          throw new Error(result.message);
-        }
-        if (result.type === 'image') {
-          throw new Error(
-            `Attachment ${i + 1}: Image attachments are not supported in Copilot mode. Use text files only.`
-          );
-        }
-        if (result.type === 'text') {
-          textParts.push(`<file path="${result.filename}">\n${result.content}\n</file>`);
-        }
-      }
-    }
-
-    textParts.push(prompt);
-
-    // Build system prompt with structured output injection if needed
-    let systemPrompt = (input.systemPrompt as string) || '';
-    const outputFormat = input.outputFormat as string | undefined;
-    const outputSchema = input.outputSchema as Record<string, unknown> | undefined;
-
-    let schema: Record<string, unknown> | null = null;
-    if (outputSchema) {
-      schema = outputSchema;
-    } else if (outputFormat && OUTPUT_FORMATS[outputFormat as keyof typeof OUTPUT_FORMATS]) {
-      schema = OUTPUT_FORMATS[outputFormat as keyof typeof OUTPUT_FORMATS];
-    }
-
-    if (schema) {
-      const schemaJson = JSON.stringify(schema, null, 2);
-      systemPrompt += `${systemPrompt ? '\n\n' : ''}You MUST respond with valid JSON matching this schema:\n${schemaJson}\n\nRespond with ONLY the JSON object, no other text or markdown formatting.`;
-    }
-
-    return this.queryLlm({
-      prompt: textParts.join('\n\n'),
-      systemPrompt: systemPrompt || undefined,
-      model: input.model as string | undefined,
-      maxTokens: input.maxTokens as number | undefined,
-      temperature: input.temperature as number | undefined,
-    });
+    const request = await buildCallLlmRequest(input, { backendName: 'Copilot' });
+    return this.queryLlm(request);
   }
 
   // ============================================================
@@ -1512,7 +1528,7 @@ export class CopilotAgent extends BaseAgent {
    * - call_llm tool (via queryFn callback in session-scoped-tools)
    * - runMiniCompletion (title generation, large response summarization)
    */
-  private async queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
+  async queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     this.debug('[CopilotAgent.queryLlm] Starting');
 
     const client = await this.ensureClient();
@@ -1557,14 +1573,10 @@ export class CopilotAgent extends BaseAgent {
       await ephemeralSession.send({ prompt: request.prompt });
 
       // 30s timeout
-      const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('queryLlm timed out after 30s')), 30000)
-      );
-
-      await Promise.race([completionPromise, timeoutPromise]);
+      await withTimeout(completionPromise, 30000, 'queryLlm timed out after 30s');
 
       this.debug(`[CopilotAgent.queryLlm] Result length: ${result.trim().length}`);
-      return { text: result.trim() };
+      return { text: result.trim(), model };
     } finally {
       unsubscribe();
       ephemeralSession.destroy().catch(() => {});

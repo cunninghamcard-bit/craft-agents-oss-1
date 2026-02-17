@@ -62,6 +62,7 @@ interface SessionConfig {
   sessionId: string;
   workspaceRootPath: string;
   plansFolderPath: string;
+  callbackPort?: string;
 }
 
 // ============================================================
@@ -498,10 +499,8 @@ For large files (>2000 lines), use {path, startLine, endLine} to select a portio
             type: 'object',
             description: 'Custom JSON Schema for structured output',
           },
-          _precomputedResult: {
-            type: 'string',
-            description: 'Internal: pre-computed result injected by PreToolUse intercept',
-          },
+          // _precomputedResult is injected at runtime by PreToolUse intercept
+          // and intentionally NOT in the schema (hidden from the AI)
         },
         required: ['prompt'],
       },
@@ -535,6 +534,7 @@ async function main() {
   let sessionId: string | undefined;
   let workspaceRootPath: string | undefined;
   let plansFolderPath: string | undefined;
+  let callbackPort: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--session-id' && args[i + 1]) {
@@ -545,6 +545,9 @@ async function main() {
       i++;
     } else if (args[i] === '--plans-folder' && args[i + 1]) {
       plansFolderPath = args[i + 1];
+      i++;
+    } else if (args[i] === '--callback-port' && args[i + 1]) {
+      callbackPort = args[i + 1];
       i++;
     }
   }
@@ -558,6 +561,8 @@ async function main() {
     sessionId,
     workspaceRootPath,
     plansFolderPath,
+    // CLI arg takes priority, env var as fallback (Copilot CLI may not forward env to subprocesses)
+    callbackPort: callbackPort || process.env.CRAFT_LLM_CALLBACK_PORT,
   };
 
   // Create the Codex context
@@ -625,29 +630,53 @@ async function main() {
           return await handleSourceTest(ctx, toolArgs as { sourceSlug: string });
 
         case 'call_llm': {
-          // Thin handler: the real work is done in the PreToolUse intercept
-          // which injects _precomputedResult into the input.
-          const precomputed = (toolArgs as Record<string, unknown>)?._precomputedResult as string | undefined;
-          if (!precomputed) {
-            return errorResponse(
-              'call_llm requires the agent backend to pre-compute the result via PreToolUse intercept. ' +
-              'No _precomputedResult found in input.'
-            );
-          }
-          try {
-            const parsed = JSON.parse(precomputed);
-            if (parsed.error) {
-              return errorResponse(`call_llm failed: ${parsed.error}`);
+          // Primary path: PreToolUse intercept injects _precomputedResult (works on Codex).
+          const args = toolArgs as Record<string, unknown>;
+          const precomputed = args?._precomputedResult as string | undefined;
+
+          if (precomputed) {
+            try {
+              const parsed = JSON.parse(precomputed);
+              if (parsed.error) {
+                return errorResponse(`call_llm failed: ${parsed.error}`);
+              }
+              if (parsed.text !== undefined) {
+                return {
+                  content: [{ type: 'text' as const, text: parsed.text || '(Model returned empty response)' }],
+                };
+              }
+              return errorResponse('call_llm: _precomputedResult has unexpected format (missing text field).');
+            } catch {
+              return errorResponse(`call_llm: Failed to parse _precomputedResult: ${precomputed.slice(0, 200)}`);
             }
-            if (parsed.text !== undefined) {
+          }
+
+          // Fallback path: HTTP callback to agent (for Copilot where PreToolUse doesn't fire for MCP tools).
+          // Uses callbackPort from CLI arg (--callback-port) or env var (CRAFT_LLM_CALLBACK_PORT).
+          if (config.callbackPort) {
+            try {
+              const resp = await fetch(`http://127.0.0.1:${config.callbackPort}/call-llm`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(args),
+                signal: AbortSignal.timeout(30000),
+              });
+              const result = await resp.json() as { text?: string; model?: string; error?: string };
+              if (result.error) {
+                return errorResponse(`call_llm failed: ${result.error}`);
+              }
               return {
-                content: [{ type: 'text' as const, text: parsed.text || '(Model returned empty response)' }],
+                content: [{ type: 'text' as const, text: result.text || '(Model returned empty response)' }],
               };
+            } catch (err) {
+              return errorResponse(`call_llm callback failed: ${err instanceof Error ? err.message : String(err)}`);
             }
-            return errorResponse('call_llm: _precomputedResult has unexpected format (missing text field).');
-          } catch {
-            return errorResponse(`call_llm: Failed to parse _precomputedResult: ${precomputed.slice(0, 200)}`);
           }
+
+          return errorResponse(
+            'call_llm requires either PreToolUse intercept (_precomputedResult) or ' +
+            'HTTP callback (CRAFT_LLM_CALLBACK_PORT). Neither is available.'
+          );
         }
 
         default:

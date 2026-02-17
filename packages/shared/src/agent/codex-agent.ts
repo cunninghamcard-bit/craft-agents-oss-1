@@ -34,7 +34,7 @@ import type { Workspace } from '../config/storage.ts';
 import { DEFAULT_CODEX_MODEL, getModelById, getModelIdByShortName, getModelProvider, MODEL_REGISTRY, getDefaultSummarizationModel } from '../config/models.ts';
 
 // LLM tool types and helpers for call_llm PreToolUse intercept
-import { processAttachment, OUTPUT_FORMATS, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
+import { buildCallLlmRequest, withTimeout, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 
 // BaseAgent provides common functionality
 import { BaseAgent } from './base-agent.ts';
@@ -1094,7 +1094,7 @@ export class CodexAgent extends BaseAgent {
         const result = await this.preExecuteCallLlm(inputObj);
         const decision: ToolCallPreExecuteDecision = {
           type: 'modify',
-          input: { ...inputObj, _precomputedResult: JSON.stringify(result) },
+          input: { ...inputObj, model: result.model ?? inputObj.model, _precomputedResult: JSON.stringify(result) },
         };
         await this.safeRespondToPreToolUse(requestId, decision);
       } catch (error) {
@@ -2526,92 +2526,25 @@ export class CodexAgent extends BaseAgent {
    * build prompt with structured output injection, and run via ephemeral thread.
    */
   private async preExecuteCallLlm(input: Record<string, unknown>): Promise<LLMQueryResult> {
-    const prompt = input.prompt as string;
-    if (!prompt?.trim()) {
-      throw new Error('Prompt is required and cannot be empty.');
-    }
-
-    // Validate: thinking not supported in Codex mode
-    if (input.thinking) {
-      throw new Error(
-        'Extended thinking is not supported in Codex mode.\n\n' +
-        'Remove thinking=true to use basic mode.'
-      );
-    }
-
-    // Process attachments
-    const textParts: string[] = [];
-    const attachments = input.attachments as Array<string | { path: string; startLine?: number; endLine?: number }> | undefined;
-
-    if (attachments?.length) {
-      for (let i = 0; i < attachments.length; i++) {
-        const result = await processAttachment(attachments[i]!, i);
-        if (result.type === 'error') {
-          throw new Error(result.message);
+    const request = await buildCallLlmRequest(input, {
+      backendName: 'Codex',
+      validateModel: (modelId) => {
+        const provider = getModelProvider(modelId);
+        if (provider && provider !== 'openai') {
+          this.debug(`preExecuteCallLlm: model "${modelId}" is ${provider}, falling back to miniModel`);
+          return undefined;
         }
-        if (result.type === 'image') {
-          throw new Error(
-            `Attachment ${i + 1}: Image attachments are not supported in Codex mode. Use text files only.`
-          );
-        }
-        if (result.type === 'text') {
-          textParts.push(`<file path="${result.filename}">\n${result.content}\n</file>`);
-        }
-      }
-    }
-
-    textParts.push(prompt);
-
-    // Resolve model against registry
-    let model = input.model as string | undefined;
-    if (model) {
-      const modelDef = getModelById(model)
-        || MODEL_REGISTRY.find(m => m.shortName.toLowerCase() === model!.toLowerCase())
-        || MODEL_REGISTRY.find(m => m.name.toLowerCase() === model!.toLowerCase());
-      if (modelDef) {
-        model = modelDef.id;
-      }
-
-      // Codex backend only supports OpenAI models — drop cross-provider resolutions
-      // (e.g. "haiku" → claude-haiku-4-5-20251001 is not usable via Codex)
-      const resolvedProvider = getModelProvider(model);
-      if (resolvedProvider && resolvedProvider !== 'openai') {
-        this.debug(`preExecuteCallLlm: resolved model "${model}" is ${resolvedProvider}, not compatible with Codex — falling back to miniModel`);
-        model = undefined;
-      }
-    }
-
-    // Build system prompt with structured output injection if needed
-    let systemPrompt = (input.systemPrompt as string) || '';
-    const outputFormat = input.outputFormat as string | undefined;
-    const outputSchema = input.outputSchema as Record<string, unknown> | undefined;
-
-    let schema: Record<string, unknown> | null = null;
-    if (outputSchema) {
-      schema = outputSchema;
-    } else if (outputFormat && OUTPUT_FORMATS[outputFormat as keyof typeof OUTPUT_FORMATS]) {
-      schema = OUTPUT_FORMATS[outputFormat as keyof typeof OUTPUT_FORMATS];
-    }
-
-    if (schema) {
-      const schemaJson = JSON.stringify(schema, null, 2);
-      systemPrompt += `${systemPrompt ? '\n\n' : ''}You MUST respond with valid JSON matching this schema:\n${schemaJson}\n\nRespond with ONLY the JSON object, no other text or markdown formatting.`;
-    }
-
-    return this.queryLlm({
-      prompt: textParts.join('\n\n'),
-      systemPrompt: systemPrompt || undefined,
-      model,
-      maxTokens: input.maxTokens as number | undefined,
-      temperature: input.temperature as number | undefined,
+        return modelId;
+      },
     });
+    return this.queryLlm(request);
   }
 
   /**
    * Execute an LLM query via ephemeral thread.
    * Same pattern as runMiniCompletion but with configurable system prompt and model.
    */
-  private async queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
+  async queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     this.debug('[CodexAgent.queryLlm] Starting');
 
     const client = await this.ensureClient();
@@ -2672,14 +2605,10 @@ export class CodexAgent extends BaseAgent {
       });
 
       // 30s timeout matching runMiniCompletion
-      const timeoutPromise = new Promise<void>((_, reject) =>
-        setTimeout(() => reject(new Error('call_llm timed out after 30s')), 30000)
-      );
-
-      await Promise.race([completionPromise, timeoutPromise]);
+      await withTimeout(completionPromise, 30000, 'call_llm timed out after 30s');
 
       this.debug(`[CodexAgent.queryLlm] Result length: ${result.trim().length}`);
-      return { text: result.trim() };
+      return { text: result.trim(), model };
     } finally {
       client.off('item/agentMessage/delta', textHandler);
       client.off('turn/completed', completionHandler);
@@ -2700,23 +2629,22 @@ export class CodexAgent extends BaseAgent {
    * interfere with the main conversation thread.
    */
   async runMiniCompletion(prompt: string): Promise<string | null> {
-    // Use direct debug() for logging since temporary agents don't have onDebug set
-    debug(`[CodexAgent.runMiniCompletion] Starting`);
+    this.debug(`[runMiniCompletion] Starting`);
 
     try {
       // Ensure client is connected (includes auth injection)
       const client = await this.ensureClient();
-      debug(`[CodexAgent.runMiniCompletion] Client connected`);
+      this.debug(`[runMiniCompletion] Client connected`);
 
       if (!this.config.miniModel) {
         throw new Error('CodexAgent.runMiniCompletion: config.miniModel is required');
       }
       const model = this.config.miniModel;
-      debug(`[CodexAgent.runMiniCompletion] Using model: ${model}`);
+      this.debug(`[runMiniCompletion] Using model: ${model}`);
 
       // Start an ephemeral thread with no system prompt.
       // Mark as ephemeral so main event handlers ignore its events.
-      debug(`[CodexAgent.runMiniCompletion] Starting ephemeral thread...`);
+      this.debug(`[runMiniCompletion] Starting ephemeral thread...`);
       this._startingEphemeralThread = true;
       const threadResponse = await client.threadStart({
         model,
@@ -2727,7 +2655,7 @@ export class CodexAgent extends BaseAgent {
       this._startingEphemeralThread = false;
       const threadId = threadResponse.thread.id;
       this._ephemeralThreadIds.add(threadId);
-      debug(`[CodexAgent.runMiniCompletion] Started ephemeral thread: ${threadId}`);
+      this.debug(`[runMiniCompletion] Started ephemeral thread: ${threadId}`);
 
       // Set up Promise-based completion tracking
       let result = '';
@@ -2740,14 +2668,14 @@ export class CodexAgent extends BaseAgent {
       const textHandler = (notification: { threadId: string; delta?: string }) => {
         if (notification.threadId === threadId && notification.delta) {
           result += notification.delta;
-          debug(`[CodexAgent.runMiniCompletion] Delta: ${notification.delta}`);
+          this.debug(`[runMiniCompletion] Delta: ${notification.delta}`);
         }
       };
 
       // Resolve when turn completes
       const completionHandler = (notification: { threadId: string }) => {
         if (notification.threadId === threadId) {
-          debug(`[CodexAgent.runMiniCompletion] Turn completed`);
+          this.debug(`[runMiniCompletion] Turn completed`);
           completionResolve();
         }
       };
@@ -2758,7 +2686,7 @@ export class CodexAgent extends BaseAgent {
 
       try {
         // Start the turn with our prompt
-        debug(`[CodexAgent.runMiniCompletion] Starting turn...`);
+        this.debug(`[runMiniCompletion] Starting turn...`);
         await client.turnStart({
           threadId,
           input: [{ type: 'text', text: prompt, text_elements: [] }],
@@ -2772,21 +2700,16 @@ export class CodexAgent extends BaseAgent {
           outputSchema: null,
           collaborationMode: null,
         });
-        debug(`[CodexAgent.runMiniCompletion] Turn started`);
+        this.debug(`[runMiniCompletion] Turn started`);
 
         // Wait for turn completion with timeout
-        const timeoutPromise = new Promise<void>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout')), 30000)
-        );
-
         try {
-          await Promise.race([completionPromise, timeoutPromise]);
+          await withTimeout(completionPromise, 30000, 'runMiniCompletion timed out after 30s');
         } catch (e) {
-          debug(`[CodexAgent.runMiniCompletion] Timeout waiting for completion`);
+          this.debug(`[runMiniCompletion] Timeout waiting for completion`);
         }
 
         const text = result.trim() || null;
-        debug(`[CodexAgent.runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
         this.debug(`[runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
         return text;
       } finally {
@@ -2796,7 +2719,7 @@ export class CodexAgent extends BaseAgent {
         this._ephemeralThreadIds.delete(threadId);
       }
     } catch (error) {
-      debug(`[CodexAgent.runMiniCompletion] Failed: ${error}`);
+      this.debug(`[runMiniCompletion] Failed: ${error}`);
       return null;
     }
   }
