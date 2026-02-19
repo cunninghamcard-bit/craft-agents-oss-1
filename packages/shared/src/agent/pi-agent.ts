@@ -144,9 +144,9 @@ export class PiAgent extends BaseAgent {
 
   // MCP clients for source tool execution (slug -> client)
   private mcpClients: Map<string, CraftMcpClient> = new Map();
-  // MCP tool name -> source slug mapping (e.g., "linear__get_viewer" -> "linear")
+  // MCP tool name -> source slug mapping (e.g., "linear_get_viewer" -> "linear")
   private mcpToolToSlug: Map<string, string> = new Map();
-  // MCP tool name -> original tool name (e.g., "linear__get_viewer" -> "get_viewer")
+  // MCP tool name -> original tool name (e.g., "linear_get_viewer" -> "get_viewer")
   private mcpToolToOriginal: Map<string, string> = new Map();
   // Cached MCP proxy tool defs (for re-registration when subprocess respawns)
   private mcpProxyDefs: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> = [];
@@ -1077,7 +1077,7 @@ export class PiAgent extends BaseAgent {
         this.debug(`Source ${slug}: ${tools.length} tools available`);
 
         for (const tool of tools) {
-          const proxyName = `${slug}__${tool.name}`;
+          const proxyName = `${slug}_${tool.name}`;
           this.mcpToolToSlug.set(proxyName, slug);
           this.mcpToolToOriginal.set(proxyName, tool.name);
 
