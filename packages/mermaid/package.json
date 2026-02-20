@@ -18,7 +18,8 @@
     "deploy": "bun run build && wrangler pages deploy dist --project-name craft-agents-mermaid"
   },
   "dependencies": {
-    "elkjs": "^0.11.0"
+    "elkjs": "^0.11.0",
+    "entities": "^7.0.1"
   },
   "devDependencies": {
     "shiki": "^3.19.0"

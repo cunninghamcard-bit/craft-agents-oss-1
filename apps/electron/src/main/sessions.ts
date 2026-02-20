@@ -74,9 +74,9 @@ import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable
 import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/config'
 import { getValidClaudeOAuthToken } from '@craft-agent/shared/auth'
 import { setPathToClaudeCodeExecutable, setInterceptorPath, setExecutable } from '@craft-agent/shared/agent'
-import { toolMetadataStore } from '@craft-agent/shared/network-interceptor'
+import { toolMetadataStore } from '@craft-agent/shared/interceptor'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
-import { CraftMcpClient } from '@craft-agent/shared/mcp'
+import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, IPC_CHANNELS, generateMessageId } from '../shared/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient, resolveToolIcon } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
@@ -102,7 +102,7 @@ export { sanitizeForTitle }
  * - Claude SDK subprocess execution (setExecutable)
  * - Codex session MCP server (nodePath in config.toml)
  */
-function getBundledBunPath(): string | undefined {
+export function getBundledBunPath(): string | undefined {
   if (!app.isPackaged) {
     return undefined // Use system bun in development
   }
@@ -225,7 +225,7 @@ async function refreshOAuthTokensIfNeeded(
   sources: LoadedSource[],
   sessionPath: string,
   tokenRefreshManager: TokenRefreshManager,
-  options?: { sessionId?: string; workspaceRootPath?: string }
+  options?: { sessionId?: string; workspaceRootPath?: string; poolServerUrl?: string }
 ): Promise<OAuthTokenRefreshResult> {
   sessionLog.debug('[OAuth] Checking if any OAuth tokens need refresh')
 
@@ -260,14 +260,9 @@ async function refreshOAuthTokensIfNeeded(
     const intendedSlugs = enabledSources.map(s => s.config.slug)
     agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
-    // For Codex backend: write fresh tokens to config.toml and reconnect.
-    // setSourceServers is a no-op for Codex — the app-server reads config.toml,
-    // so we must regenerate it and restart the app-server to pick up fresh tokens.
-    if (agent instanceof CodexBackend && options?.sessionId && options?.workspaceRootPath) {
-      await regenCodexConfigAndReconnect(
-        agent, sessionPath, enabledSources, mcpServers,
-        options.sessionId, options.workspaceRootPath, 'token refresh'
-      )
+    // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+    if (options?.sessionId && options?.workspaceRootPath) {
+      await applyBridgeUpdates(agent, sessionPath, enabledSources, mcpServers, options.sessionId, options.workspaceRootPath, 'token refresh', options.poolServerUrl)
     }
 
     return { tokensRefreshed: true, failedSources }
@@ -306,6 +301,43 @@ async function writeFileSecure(targetPath: string, content: string, mode: number
 }
 
 /**
+ * Write bridge-config.json and credential cache files for API sources.
+ * Shared by all backends that use bridge-mcp-server (Codex, Copilot).
+ *
+ * @param configDir - Directory to write bridge-config.json into
+ * @param sources - All enabled sources (API sources are filtered internally)
+ */
+async function writeBridgeSourceFiles(
+  configDir: string,
+  sources: LoadedSource[],
+): Promise<void> {
+  const apiSources = sources.filter(s => s.config.type === 'api' && s.config.enabled)
+  if (apiSources.length === 0) return
+
+  await mkdir(configDir, { recursive: true })
+
+  // Generate bridge config JSON (tells bridge which API sources to expose)
+  const bridgeConfig = generateBridgeConfig(sources)
+  await writeFile(join(configDir, 'bridge-config.json'), bridgeConfig, 'utf-8')
+
+  // Write credential cache files for the bridge server to read
+  const credManager = getSourceCredentialManager()
+  for (const source of apiSources) {
+    const cred = await credManager.load(source)
+    if (cred?.value) {
+      const cachePath = getCredentialCachePath(source.workspaceRootPath, source.config.slug)
+      const cacheEntry: CredentialCacheEntry = {
+        value: cred.value,
+        expiresAt: cred.expiresAt,
+      }
+      await mkdir(join(source.workspaceRootPath, 'sources', source.config.slug), { recursive: true })
+      // Use atomic write to avoid TOCTOU - file never exists with wrong permissions
+      await writeFileSecure(cachePath, JSON.stringify(cacheEntry), 0o600)
+    }
+  }
+}
+
+/**
  * Set up Codex session configuration.
  * Creates .codex-home directory with config.toml for per-session MCP server configuration.
  *
@@ -321,7 +353,8 @@ async function setupCodexSessionConfig(
   sources: LoadedSource[],
   mcpServerConfigs: Record<string, import('@craft-agent/shared/agent/backend').SdkMcpServerConfig>,
   sessionId?: string,
-  workspaceRootPath?: string
+  workspaceRootPath?: string,
+  poolServerUrl?: string
 ): Promise<string> {
   const codexHome = join(sessionPath, '.codex-home')
 
@@ -329,29 +362,14 @@ async function setupCodexSessionConfig(
   await mkdir(codexHome, { recursive: true })
 
   // Generate config.toml with enabled sources
-  // Bridge server path differs between packaged app and development:
-  // - Packaged: resources/bridge-mcp-server/index.js (copied during build)
-  // - Dev: packages/bridge-mcp-server/dist/index.js (built by electron:build:main)
-  const bridgeServerPath = app.isPackaged
-    ? join(app.getAppPath(), 'resources', 'bridge-mcp-server', 'index.js')
-    : join(process.cwd(), 'packages', 'bridge-mcp-server', 'dist', 'index.js')
+  const bridgeServer = resolveBridgeServerPath()
   const bridgeConfigPath = join(sessionPath, '.codex-home', 'bridge-config.json')
 
-  // Session MCP server path - provides session-scoped tools (SubmitPlan, config_validate, etc.)
-  // - Packaged: resources/session-mcp-server/index.js (copied during build)
-  // - Dev: packages/session-mcp-server/dist/index.js (built by electron:build:main)
-  const sessionServerPath = app.isPackaged
-    ? join(app.getAppPath(), 'resources', 'session-mcp-server', 'index.js')
-    : join(process.cwd(), 'packages', 'session-mcp-server', 'dist', 'index.js')
-
-  // Check if bridge server exists - if not, log warning and skip bridge config
-  // This enables graceful degradation when bridge isn't built (e.g., fresh clone)
-  const bridgeExists = existsSync(bridgeServerPath)
-  if (!bridgeExists) {
-    sessionLog.warn(`Bridge MCP server not found at ${bridgeServerPath}. API sources will not be available in Codex sessions. Run 'bun run electron:build' to build it.`)
+  if (!bridgeServer.exists) {
+    sessionLog.warn(`Bridge MCP server not found at ${bridgeServer.path}. API sources will not be available in Codex sessions. Run 'bun run electron:build' to build it.`)
   }
 
-  // Check if session server exists
+  const sessionServerPath = resolveSessionServerPath()
   const sessionServerExists = existsSync(sessionServerPath)
   if (!sessionServerExists) {
     sessionLog.warn(`Session MCP server not found at ${sessionServerPath}. Session-scoped tools (SubmitPlan, etc.) will not be available in Codex sessions. Run 'bun run electron:build' to build it.`)
@@ -369,18 +387,14 @@ async function setupCodexSessionConfig(
     sources,
     mcpServerConfigs,
     sessionPath,
-    // Bridge server enables API sources (Gmail, Slack, etc.) via stdio MCP
-    // Only include if the bridge server actually exists
-    bridgeServerPath: bridgeExists ? bridgeServerPath : undefined,
-    bridgeConfigPath: bridgeExists ? bridgeConfigPath : undefined,
-    // workspaceId is required for the bridge's --workspace flag (credential lookups)
+    bridgeServerPath: bridgeServer.exists ? bridgeServer.path : undefined,
+    bridgeConfigPath: bridgeServer.exists ? bridgeConfigPath : undefined,
     workspaceId,
-    // Session server provides session-scoped tools (SubmitPlan, config_validate, etc.)
-    // Only include if the session server exists and we have the required session info
     sessionServerPath: sessionServerExists && sessionId && workspaceRootPath ? sessionServerPath : undefined,
     sessionId,
     workspaceRootPath,
     plansFolderPath,
+    poolServerUrl,
     // Use bundled Bun in packaged app, system 'bun' in development
     // IMPORTANT: process.execPath returns the Electron binary in packaged apps, which cannot run JS files
     nodePath: getBundledBunPath() ?? 'bun',
@@ -395,27 +409,9 @@ async function setupCodexSessionConfig(
     sessionLog.warn(`Source config warning [${warning.sourceSlug}]: ${warning.message}`)
   }
 
-  // If we have API sources, generate bridge config and write credential cache files
+  // If we have API sources, write bridge config and credential cache files
   if (configResult.needsBridge) {
-    const bridgeConfig = generateBridgeConfig(sources)
-    await writeFile(join(codexHome, 'bridge-config.json'), bridgeConfig, 'utf-8')
-
-    // Write credential cache files for the bridge server to read
-    const credManager = getSourceCredentialManager()
-    for (const source of sources.filter(s => s.config.type === 'api' && s.config.enabled)) {
-      const cred = await credManager.load(source)
-      if (cred?.value) {
-        const cachePath = getCredentialCachePath(source.workspaceRootPath, source.config.slug)
-        const cacheEntry: CredentialCacheEntry = {
-          value: cred.value,
-          expiresAt: cred.expiresAt,
-        }
-        // Ensure source directory exists
-        await mkdir(join(source.workspaceRootPath, 'sources', source.config.slug), { recursive: true })
-        // Use atomic write to avoid TOCTOU - file never exists with wrong permissions
-        await writeFileSecure(cachePath, JSON.stringify(cacheEntry), 0o600)
-      }
-    }
+    await writeBridgeSourceFiles(codexHome, sources)
   }
 
   return codexHome
@@ -433,10 +429,11 @@ async function regenCodexConfigAndReconnect(
   mcpServers: Record<string, import('@craft-agent/shared/agent/backend').SdkMcpServerConfig>,
   sessionId: string,
   workspaceRootPath: string,
-  context: string
+  context: string,
+  poolServerUrl?: string
 ): Promise<void> {
   try {
-    await setupCodexSessionConfig(sessionPath, enabledSources, mcpServers, sessionId, workspaceRootPath)
+    await setupCodexSessionConfig(sessionPath, enabledSources, mcpServers, sessionId, workspaceRootPath, poolServerUrl)
     await agent.queueReconnect()
     sessionLog.info(`Codex config regenerated after ${context} for session ${sessionId}`)
   } catch (err) {
@@ -456,32 +453,51 @@ async function setupCopilotBridgeConfig(
   copilotConfigDir: string,
   sources: LoadedSource[],
 ): Promise<void> {
-  const apiSources = sources.filter(s => s.config.type === 'api' && s.config.enabled)
-  if (apiSources.length === 0) return
-
-  // Ensure config directory exists
-  await mkdir(copilotConfigDir, { recursive: true })
-
-  // Generate bridge config JSON (same format as Codex)
-  const bridgeConfig = generateBridgeConfig(sources)
-  await writeFile(join(copilotConfigDir, 'bridge-config.json'), bridgeConfig, 'utf-8')
-
-  // Write credential cache files for the bridge server to read
-  const credManager = getSourceCredentialManager()
-  for (const source of apiSources) {
-    const cred = await credManager.load(source)
-    if (cred?.value) {
-      const cachePath = getCredentialCachePath(source.workspaceRootPath, source.config.slug)
-      const cacheEntry: CredentialCacheEntry = {
-        value: cred.value,
-        expiresAt: cred.expiresAt,
-      }
-      await mkdir(join(source.workspaceRootPath, 'sources', source.config.slug), { recursive: true })
-      await writeFileSecure(cachePath, JSON.stringify(cacheEntry), 0o600)
-    }
+  await writeBridgeSourceFiles(copilotConfigDir, sources)
+  const apiCount = sources.filter(s => s.config.type === 'api' && s.config.enabled).length
+  if (apiCount > 0) {
+    sessionLog.info(`Copilot bridge config written: ${apiCount} API sources`)
   }
+}
 
-  sessionLog.info(`Copilot bridge config written: ${apiSources.length} API sources`)
+/**
+ * Apply bridge-mcp-server updates for backends that use it.
+ * Centralizes per-backend dispatch so new backends only need one update.
+ *
+ * - Codex: regenerates config.toml (includes bridge config + credential cache) and reconnects
+ * - Copilot: writes bridge-config.json + credential cache files
+ * - Claude/Pi: no-op (they don't use bridge-mcp-server for API sources)
+ */
+async function applyBridgeUpdates(
+  agent: AgentInstance,
+  sessionPath: string,
+  enabledSources: LoadedSource[],
+  mcpServers: Record<string, import('@craft-agent/shared/agent/backend').SdkMcpServerConfig>,
+  sessionId: string,
+  workspaceRootPath: string,
+  context: string,
+  poolServerUrl?: string
+): Promise<void> {
+  if (agent instanceof CodexBackend) {
+    await regenCodexConfigAndReconnect(
+      agent, sessionPath, enabledSources, mcpServers,
+      sessionId, workspaceRootPath, context, poolServerUrl
+    )
+  } else if (agent instanceof CopilotAgent) {
+    const copilotConfigDir = join(sessionPath, '.copilot-config')
+    await setupCopilotBridgeConfig(copilotConfigDir, enabledSources)
+  }
+}
+
+/**
+ * Resolve the path to the session MCP server executable.
+ * Shared by Codex, Copilot, and Pi backends for session-scoped tools
+ * (SubmitPlan, config_validate, source auth, etc.).
+ */
+function resolveSessionServerPath(): string {
+  return app.isPackaged
+    ? join(app.getAppPath(), 'resources', 'session-mcp-server', 'index.js')
+    : join(process.cwd(), 'packages', 'session-mcp-server', 'dist', 'index.js')
 }
 
 /**
@@ -499,7 +515,7 @@ function resolveBridgeServerPath(): { path: string; exists: boolean } {
  * Resolve the path to the Pi agent server executable.
  * Used by PiAgent to spawn the out-of-process subprocess.
  */
-function resolvePiServerPath(): { path: string; exists: boolean } {
+export function resolvePiServerPath(): { path: string; exists: boolean } {
   const piServerPath = app.isPackaged
     ? join(app.getAppPath(), 'resources', 'pi-agent-server', 'index.js')
     : join(process.cwd(), 'packages', 'pi-agent-server', 'dist', 'index.js')
@@ -528,7 +544,7 @@ function resolveToolDisplayMeta(
       const serverSlug = parts[1]
       const toolSlug = parts.slice(2).join('__')
 
-      // Internal MCP server tools (session, preferences, docs)
+      // Internal MCP server tools (session, docs)
       const internalMcpServers: Record<string, Record<string, string>> = {
         'session': {
           'SubmitPlan': 'Submit Plan',
@@ -544,8 +560,6 @@ function resolveToolDisplayMeta(
           'source_credential_prompt': 'Enter Credentials',
           'transform_data': 'Transform Data',
           'render_template': 'Render Template',
-        },
-        'preferences': {
           'update_user_preferences': 'Update Preferences',
         },
         'craft-agents-docs': {
@@ -700,6 +714,10 @@ interface ManagedSession {
   archivedAt?: number
   /** Permission mode for this session ('safe', 'ask', 'allow-all') */
   permissionMode?: PermissionMode
+  /** Centralized MCP client pool for this session's source connections */
+  mcpPool?: McpClientPool
+  /** HTTP MCP server exposing pool tools to external SDK subprocesses (Codex, Copilot) */
+  poolServer?: McpPoolServer
   // SDK session ID for conversation continuity
   sdkSessionId?: string
   // Token usage for display
@@ -961,8 +979,8 @@ export class SessionManager {
   private activeViewingSession: Map<string, string> = new Map()
   /** Resolved path to @github/copilot CLI entry point (for CopilotAgent) */
   copilotCliPath: string | undefined
-  /** Resolved path to Copilot network interceptor (for tool metadata capture) */
-  copilotInterceptorPath: string | undefined
+  /** Resolved path to unified network interceptor CJS bundle (for Copilot/Pi tool metadata capture) */
+  interceptorPath: string | undefined
   /** Coordinates startup initialization waiters from IPC handlers. */
   private initGate = new InitGate()
   /** Monotonic clock to ensure strictly increasing message timestamps */
@@ -1292,19 +1310,8 @@ export class SessionManager {
     const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager, managed.agent?.getSummarizeCallback())
     const intendedSlugs = enabledSources.map(s => s.config.slug)
 
-    // For Codex backend, regenerate config.toml and reconnect
-    if (managed.agent instanceof CodexBackend) {
-      await regenCodexConfigAndReconnect(
-        managed.agent, sessionPath, enabledSources, mcpServers,
-        managed.id, workspaceRootPath, 'source reload'
-      )
-    }
-
-    // For Copilot backend, write bridge config for API sources
-    if (managed.agent instanceof CopilotAgent) {
-      const copilotConfigDir = join(sessionPath, '.copilot-config')
-      await setupCopilotBridgeConfig(copilotConfigDir, enabledSources)
-    }
+    // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+    await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source reload', managed.poolServer?.url)
 
     managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
@@ -1448,36 +1455,36 @@ export class SessionManager {
       // Set path to fetch interceptor for SDK subprocess
       // This interceptor captures API errors and adds metadata to MCP tool schemas
       // In monorepos, packages may be at the root level, not inside apps/electron
-      const interceptorRelativePath = join('packages', 'shared', 'src', 'network-interceptor.ts')
-      let interceptorPath = join(basePath, interceptorRelativePath)
-      if (!existsSync(interceptorPath) && !app.isPackaged) {
+      const claudeInterceptorRelativePath = join('packages', 'shared', 'src', 'unified-network-interceptor.ts')
+      let claudeInterceptorPath = join(basePath, claudeInterceptorRelativePath)
+      if (!existsSync(claudeInterceptorPath) && !app.isPackaged) {
         // Try monorepo root (../../packages from apps/electron)
         const monorepoRoot = join(basePath, '..', '..')
-        interceptorPath = join(monorepoRoot, interceptorRelativePath)
+        claudeInterceptorPath = join(monorepoRoot, claudeInterceptorRelativePath)
       }
-      if (!existsSync(interceptorPath)) {
-        const error = `Network interceptor not found at ${interceptorPath}. The app package may be corrupted.`
+      if (!existsSync(claudeInterceptorPath)) {
+        const error = `Network interceptor not found at ${claudeInterceptorPath}. The app package may be corrupted.`
         sessionLog.error(error)
         throw new Error(error)
       }
       // Set interceptor path (used for --preload flag with bun)
-      sessionLog.info('Setting interceptorPath:', interceptorPath)
-      setInterceptorPath(interceptorPath)
+      sessionLog.info('Setting Claude interceptorPath:', claudeInterceptorPath)
+      setInterceptorPath(claudeInterceptorPath)
 
-      // Resolve Copilot network interceptor (loaded via NODE_OPTIONS="--require ..." into Copilot CLI subprocess)
+      // Resolve unified network interceptor bundle (loaded via --require into Node-based SDK subprocesses)
       // Must be bundled CJS since it runs under Electron's Node.js, not Bun
-      // Built by `bun run build:copilot-interceptor` → apps/electron/dist/copilot-interceptor.cjs
+      // Built by `bun run build:interceptor` → apps/electron/dist/interceptor.cjs
       // In dev: basePath is monorepo root, so add apps/electron/ prefix
       // In packaged: basePath is the app dir, dist/ is directly inside
-      let copilotInterceptorPath = join(basePath, 'dist', 'copilot-interceptor.cjs')
-      if (!existsSync(copilotInterceptorPath) && !app.isPackaged) {
-        copilotInterceptorPath = join(basePath, 'apps', 'electron', 'dist', 'copilot-interceptor.cjs')
+      let interceptorBundlePath = join(basePath, 'dist', 'interceptor.cjs')
+      if (!existsSync(interceptorBundlePath) && !app.isPackaged) {
+        interceptorBundlePath = join(basePath, 'apps', 'electron', 'dist', 'interceptor.cjs')
       }
-      if (existsSync(copilotInterceptorPath)) {
-        this.copilotInterceptorPath = copilotInterceptorPath
-        sessionLog.info('Resolved Copilot interceptor path:', copilotInterceptorPath)
+      if (existsSync(interceptorBundlePath)) {
+        this.interceptorPath = interceptorBundlePath
+        sessionLog.info('Resolved interceptor bundle path:', interceptorBundlePath)
       } else {
-        sessionLog.warn('Copilot network interceptor not found — run `bun run build:copilot-interceptor` in apps/electron/')
+        sessionLog.warn('Network interceptor bundle not found — run `bun run build:interceptor` in apps/electron/')
       }
 
       // In packaged app: use bundled Bun binary
@@ -1863,8 +1870,8 @@ export class SessionManager {
     // Persist session with updated auth message and enabled sources
     this.persistSession(managed)
 
-    // For Codex backend: regenerate config.toml with new credentials and reconnect
-    if (result.success && result.sourceSlug && managed.agent instanceof CodexBackend) {
+    // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+    if (result.success && result.sourceSlug && managed.agent) {
       const workspaceRootPath = managed.workspace.rootPath
       const sessionPath = getSessionStoragePath(workspaceRootPath, managed.id)
       const enabledSlugs = managed.enabledSourceSlugs || []
@@ -1875,10 +1882,7 @@ export class SessionManager {
       const { mcpServers } = await buildServersFromSources(
         enabledSources, sessionPath, managed.tokenRefreshManager
       )
-      await regenCodexConfigAndReconnect(
-        managed.agent, sessionPath, enabledSources, mcpServers,
-        managed.id, workspaceRootPath, 'source auth'
-      )
+      await applyBridgeUpdates(managed.agent, sessionPath, enabledSources, mcpServers, managed.id, workspaceRootPath, 'source auth', managed.poolServer?.url)
     }
 
     // Send the result as a new message to resume conversation
@@ -2192,9 +2196,10 @@ export class SessionManager {
 
     // Ensure model matches the connection's provider (e.g. don't send Claude model to Codex)
     // Fall back to connection's default model instead of hardcoded constants
-    if (resolvedModel && sessionProvider === 'openai' && !isCodexModel(resolvedModel)) {
+    const connectionModels = sessionConnection?.models as import('@craft-agent/shared/config').ModelDefinition[] | undefined
+    if (resolvedModel && sessionProvider === 'openai' && !isCodexModel(resolvedModel, connectionModels)) {
       resolvedModel = sessionConnection?.defaultModel ?? resolvedModel
-    } else if (resolvedModel && sessionProvider === 'anthropic' && isCodexModel(resolvedModel)) {
+    } else if (resolvedModel && sessionProvider === 'anthropic' && isCodexModel(resolvedModel, connectionModels)) {
       resolvedModel = sessionConnection?.defaultModel ?? resolvedModel
     }
 
@@ -2515,7 +2520,8 @@ export class SessionManager {
         // Model from session > connection default (connection always has defaultModel via backfill)
         // Safety: ensure the resolved model is actually a Codex model (not a Claude model from stale session data)
         const rawCodexModel = managed.model || connection?.defaultModel
-        const codexModel = (rawCodexModel && isCodexModel(rawCodexModel)) ? rawCodexModel : (connection?.defaultModel || DEFAULT_CODEX_MODEL)
+        const codexModels = connection?.models as import('@craft-agent/shared/config').ModelDefinition[] | undefined
+        const codexModel = (rawCodexModel && isCodexModel(rawCodexModel, codexModels)) ? rawCodexModel : (connection?.defaultModel || DEFAULT_CODEX_MODEL)
 
         // Set up per-session Codex configuration (MCP servers, etc.)
         // This creates .codex-home/config.toml in the session folder
@@ -2526,7 +2532,13 @@ export class SessionManager {
           enabledSlugs.includes(s.config.slug) && isSourceUsable(s)
         )
         const { mcpServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
-        const codexHome = await setupCodexSessionConfig(sessionPath, enabledSources, mcpServers, managed.id, managed.workspace.rootPath)
+
+        // Create centralized MCP client pool + HTTP server (Codex connects via URL instead of direct MCP)
+        managed.mcpPool = new McpClientPool({ debug: (msg) => sessionLog.debug(msg), workspaceRootPath: managed.workspace.rootPath })
+        managed.poolServer = new McpPoolServer(managed.mcpPool, { debug: (msg) => sessionLog.debug(msg) })
+        const poolServerUrl = await managed.poolServer.start()
+
+        const codexHome = await setupCodexSessionConfig(sessionPath, enabledSources, mcpServers, managed.id, managed.workspace.rootPath, poolServerUrl)
 
         managed.agent = new CodexBackend({
           provider: 'openai',
@@ -2536,6 +2548,8 @@ export class SessionManager {
           miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
           thinkingLevel: managed.thinkingLevel,
           codexHome, // Per-session config directory
+          mcpPool: managed.mcpPool,
+          poolServerUrl,
           session: {
             id: managed.id,
             workspaceRootPath: managed.workspace.rootPath,
@@ -2646,11 +2660,13 @@ export class SessionManager {
         )
         const { mcpServers, apiServers } = await buildServersFromSources(enabledSources, sessionPath, managed.tokenRefreshManager)
 
+        // Create centralized MCP client pool + HTTP server (Copilot connects via URL instead of direct MCP)
+        managed.mcpPool = new McpClientPool({ debug: (msg) => sessionLog.debug(msg), workspaceRootPath: managed.workspace.rootPath })
+        managed.poolServer = new McpPoolServer(managed.mcpPool, { debug: (msg) => sessionLog.debug(msg) })
+        const copilotPoolServerUrl = await managed.poolServer.start()
+
         // Session MCP server path - provides session-scoped tools (SubmitPlan, config_validate, etc.)
-        // Same resolution logic as Codex branch (line ~324)
-        const copilotSessionServerPath = app.isPackaged
-          ? join(app.getAppPath(), 'resources', 'session-mcp-server', 'index.js')
-          : join(process.cwd(), 'packages', 'session-mcp-server', 'dist', 'index.js')
+        const copilotSessionServerPath = resolveSessionServerPath()
         const copilotSessionServerExists = existsSync(copilotSessionServerPath)
         if (!copilotSessionServerExists) {
           sessionLog.warn(`Session MCP server not found at ${copilotSessionServerPath}. Session-scoped tools (SubmitPlan, etc.) will not be available in Copilot sessions. Run 'bun run electron:build' to build it.`)
@@ -2675,8 +2691,10 @@ export class SessionManager {
           thinkingLevel: managed.thinkingLevel,
           connectionSlug: connection?.slug,
           copilotCliPath: this.copilotCliPath,
-          copilotInterceptorPath: this.copilotInterceptorPath,
+          interceptorPath: this.interceptorPath,
           copilotConfigDir,
+          mcpPool: managed.mcpPool,
+          poolServerUrl: copilotPoolServerUrl,
           sessionServerPath: copilotSessionServerExists ? copilotSessionServerPath : undefined,
           bridgeServerPath: bridgeServer.exists ? bridgeServer.path : undefined,
           nodePath: getBundledBunPath() ?? 'bun',
@@ -2752,12 +2770,13 @@ export class SessionManager {
         }
 
         // Session MCP server and bridge server for source proxying
-        const piSessionServerPath = app.isPackaged
-          ? join(app.getAppPath(), 'resources', 'session-mcp-server', 'index.js')
-          : join(process.cwd(), 'packages', 'session-mcp-server', 'dist', 'index.js')
+        const piSessionServerPath = resolveSessionServerPath()
         const piSessionServerExists = existsSync(piSessionServerPath)
 
         const bridgeServer = resolveBridgeServerPath()
+
+        // Create centralized MCP client pool (Pi will use it instead of managing its own clients)
+        managed.mcpPool = new McpClientPool({ debug: (msg) => sessionLog.debug(msg), workspaceRootPath: managed.workspace.rootPath })
 
         managed.agent = new PiAgent({
           provider: 'pi',
@@ -2769,6 +2788,8 @@ export class SessionManager {
           connectionSlug: connection?.slug,
           piAuthProvider: connection?.piAuthProvider,
           piServerPath: piServer.exists ? piServer.path : undefined,
+          interceptorPath: this.interceptorPath,
+          mcpPool: managed.mcpPool,
           sessionServerPath: piSessionServerExists ? piSessionServerPath : undefined,
           bridgeServerPath: bridgeServer.exists ? bridgeServer.path : undefined,
           nodePath: getBundledBunPath() ?? 'bun',
@@ -2830,9 +2851,13 @@ export class SessionManager {
 
         // Model resolution: session > connection default (connection always has defaultModel via backfill)
         const resolvedModel = managed.model || connection?.defaultModel || DEFAULT_MODEL
+        // Create centralized MCP client pool (will be synced when sources are set)
+        managed.mcpPool = new McpClientPool({ debug: (msg) => sessionLog.debug(msg), workspaceRootPath: managed.workspace.rootPath })
+
         managed.agent = new CraftAgent({
           workspace: managed.workspace,
           model: resolvedModel,
+          mcpPool: managed.mcpPool,
           miniModel: connection ? (getMiniModel(connection) ?? connection.defaultModel) : undefined,
           // Initialize thinking level at construction to avoid race conditions
           thinkingLevel: managed.thinkingLevel,
@@ -3111,20 +3136,8 @@ export class SessionManager {
           .filter(isSourceUsable)
           .map(s => s.config.slug)
 
-        // For Codex backend, regenerate config.toml and reconnect to pick up new sources
-        // (Codex reads MCP config from file at startup, unlike Claude which has runtime injection)
-        if (managed.agent instanceof CodexBackend) {
-          await regenCodexConfigAndReconnect(
-            managed.agent, sessionPath, allEnabledSources, mcpServers,
-            managed.id, workspaceRootPath, 'source enable'
-          )
-        }
-
-        // For Copilot backend, write bridge config for API sources
-        if (managed.agent instanceof CopilotAgent) {
-          const copilotConfigDir = join(sessionPath, '.copilot-config')
-          await setupCopilotBridgeConfig(copilotConfigDir, allEnabledSources)
-        }
+        // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+        await applyBridgeUpdates(managed.agent!, sessionPath, allEnabledSources, mcpServers, managed.id, workspaceRootPath, 'source enable', managed.poolServer?.url)
 
         managed.agent!.setSourceServers(mcpServers, apiServers, intendedSlugs)
 
@@ -3537,22 +3550,11 @@ export class SessionManager {
       // Set active source servers (tools are only available from these)
       const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
 
-      // For Copilot backend, write bridge config for API sources before setting servers
-      if (managed.agent instanceof CopilotAgent) {
-        const copilotConfigDir = join(sessionPath, '.copilot-config')
-        await setupCopilotBridgeConfig(copilotConfigDir, sources.filter(isSourceUsable))
-      }
+      // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+      const usableSources = sources.filter(isSourceUsable)
+      await applyBridgeUpdates(managed.agent, sessionPath, usableSources, mcpServers, managed.id, workspaceRootPath, 'source config change', managed.poolServer?.url)
 
       managed.agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
-
-      // For Codex backend, regenerate config.toml and reconnect to pick up new sources
-      // (Codex reads MCP config from file at startup, unlike Claude which has runtime injection)
-      if (managed.agent instanceof CodexBackend) {
-        await regenCodexConfigAndReconnect(
-          managed.agent, sessionPath, sources, mcpServers,
-          managed.id, workspaceRootPath, 'source config change'
-        )
-      }
 
       sessionLog.info(`Applied ${Object.keys(mcpServers).length} MCP + ${Object.keys(apiServers).length} API sources to active agent (${allSources.length} total)`)
     }
@@ -3952,6 +3954,13 @@ export class SessionManager {
       managed.agent.dispose()
     }
 
+    // Stop pool server (HTTP MCP server for external SDK subprocesses)
+    if (managed.poolServer) {
+      managed.poolServer.stop().catch(err => {
+        sessionLog.warn(`Failed to stop pool server for ${sessionId}: ${err instanceof Error ? err.message : err}`)
+      })
+    }
+
     this.sessions.delete(sessionId)
 
     // Clean up session metadata in HookSystem (prevents memory leak)
@@ -3984,14 +3993,17 @@ export class SessionManager {
     // Ensure messages are loaded before we try to add new ones
     await this.ensureMessagesLoaded(managed)
 
-    // If currently processing, queue the message and interrupt via forceAbort.
-    // The abort throws an AbortError (caught in the catch block) which calls
-    // onProcessingStopped → processNextQueuedMessage to drain the queue.
+    // If currently processing, redirect mid-stream. Each backend decides its strategy:
+    // - Pi: steers (injects message, events continue through existing stream)
+    // - Claude/Codex/Copilot: aborts internally, session layer queues for re-send
     if (managed.isProcessing) {
-      sessionLog.info(`Session ${sessionId} is processing, queueing message and interrupting`)
+      const agent = managed.agent
+      const steered = agent?.redirect(message) ?? false
 
-      // Create user message for queued state (so UI can show it)
-      const queuedMessage: Message = {
+      sessionLog.info(`Session ${sessionId} ${steered ? 'redirected mid-stream (steer)' : 'aborting to queue message'}`)
+
+      // Create user message for UI
+      const userMessage: Message = {
         id: generateMessageId(),
         role: 'user',
         content: message,
@@ -3999,27 +4011,25 @@ export class SessionManager {
         attachments: storedAttachments,
         badges: options?.badges,
       }
+      managed.messages.push(userMessage)
 
-      // Add to messages immediately so it's persisted
-      managed.messages.push(queuedMessage)
-
-      // Queue the message info (with the generated ID for later matching)
-      managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId: queuedMessage.id, optimisticMessageId: options?.optimisticMessageId })
-
-      // Emit user_message event so UI can show queued state
+      // Emit to UI — 'accepted' if steered (processing now), 'queued' if aborted (will re-send)
       this.sendEvent({
         type: 'user_message',
         sessionId,
-        message: queuedMessage,
-        status: 'queued',
+        message: userMessage,
+        status: steered ? 'accepted' : 'queued',
         optimisticMessageId: options?.optimisticMessageId
       }, managed.workspace.id)
 
-      // Force-abort via Query.close() - immediately stops processing.
-      // The for-await loop will complete, triggering onProcessingStopped → queue drain.
-      managed.wasInterrupted = true
-      managed.agent?.forceAbort(AbortReason.Redirect)
+      if (!steered) {
+        // Backend aborted — queue message for re-send after processing stops.
+        // forceAbort(Redirect) was already called by redirect().
+        managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId: userMessage.id, optimisticMessageId: options?.optimisticMessageId })
+        managed.wasInterrupted = true
+      }
 
+      this.persistSession(managed)
       return
     }
 
@@ -4235,11 +4245,9 @@ export class SessionManager {
         // Pass intended slugs so agent shows sources as active even if build failed
         const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
 
-        // For Copilot backend, write bridge config for API sources before setting servers
-        if (agent instanceof CopilotAgent) {
-          const copilotConfigDir = join(sessionPath, '.copilot-config')
-          await setupCopilotBridgeConfig(copilotConfigDir, sources.filter(isSourceUsable))
-        }
+        // Update bridge-mcp-server config/credentials for backends that use it (Codex, Copilot)
+        const usableSources = sources.filter(isSourceUsable)
+        await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
 
         agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
         sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
@@ -4255,7 +4263,7 @@ export class SessionManager {
           sources,
           sessionPath,
           managed.tokenRefreshManager,
-          { sessionId, workspaceRootPath }
+          { sessionId, workspaceRootPath, poolServerUrl: managed.poolServer?.url }
         )
         if (refreshResult.failedSources.length > 0) {
           sessionLog.warn('[OAuth] Some sources failed token refresh:', refreshResult.failedSources.map(f => f.slug))

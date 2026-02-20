@@ -396,7 +396,7 @@ export function verifySDKCopy(config: BuildConfig): void {
 }
 
 /**
- * Copy network interceptor (Anthropic — runs under Bun via --preload)
+ * Copy network interceptor source files (Anthropic — runs under Bun via --preload)
  */
 export function copyInterceptor(config: BuildConfig): void {
   const { rootDir, electronDir } = config;
@@ -405,22 +405,22 @@ export function copyInterceptor(config: BuildConfig): void {
   const sourceDir = join(rootDir, sharedSrcDir);
   const destDir = join(electronDir, sharedSrcDir);
 
-  const interceptorSource = join(sourceDir, 'network-interceptor.ts');
+  const interceptorSource = join(sourceDir, 'unified-network-interceptor.ts');
   if (!existsSync(interceptorSource)) {
     throw new Error(`Interceptor not found at ${interceptorSource}`);
   }
 
   console.log('Copying interceptor...');
   mkdirSync(destDir, { recursive: true });
-  copyFileSync(interceptorSource, join(destDir, 'network-interceptor.ts'));
+  copyFileSync(interceptorSource, join(destDir, 'unified-network-interceptor.ts'));
 
-  // Also copy shared infrastructure (imported by network-interceptor.ts at runtime)
+  // Also copy shared infrastructure (imported by unified-network-interceptor.ts at runtime)
   const commonSource = join(sourceDir, 'interceptor-common.ts');
   if (existsSync(commonSource)) {
     copyFileSync(commonSource, join(destDir, 'interceptor-common.ts'));
   }
 
-  // Copy feature flags (imported by network-interceptor.ts for fast mode / source templates)
+  // Copy feature flags (imported by unified-network-interceptor.ts for fast mode / source templates)
   const featureFlagsSource = join(sourceDir, 'feature-flags.ts');
   if (existsSync(featureFlagsSource)) {
     copyFileSync(featureFlagsSource, join(destDir, 'feature-flags.ts'));
@@ -428,20 +428,20 @@ export function copyInterceptor(config: BuildConfig): void {
 }
 
 /**
- * Copy Copilot network interceptor (bundled CJS — runs under Node.js via --require)
- * Built by `bun run build:copilot-interceptor` into apps/electron/dist/
+ * Verify the unified interceptor CJS bundle exists (runs under Node.js via --require)
+ * Built by `bun run build:interceptor` into apps/electron/dist/
  */
-export function copyCopilotInterceptor(config: BuildConfig): void {
+export function copyInterceptorBundle(config: BuildConfig): void {
   const { electronDir } = config;
 
-  const source = join(electronDir, 'dist', 'copilot-interceptor.cjs');
+  const source = join(electronDir, 'dist', 'interceptor.cjs');
   if (!existsSync(source)) {
-    console.warn('Warning: Copilot interceptor not found at', source, '— tool metadata will be unavailable for Copilot sessions');
+    console.warn('Warning: Interceptor bundle not found at', source, '— tool metadata will be unavailable for Copilot/Pi sessions');
     return;
   }
 
   // Already in dist/ which is included in the packaged app — just verify it exists
-  console.log('Copilot interceptor verified at:', source);
+  console.log('Interceptor bundle verified at:', source);
 }
 
 /**

@@ -18,6 +18,7 @@ import type { ThinkingLevel } from '../thinking-levels.ts';
 import type { PermissionMode } from '../mode-manager.ts';
 import type { LoadedSource } from '../../sources/types.ts';
 import type { AuthRequest } from '../session-scoped-tools.ts';
+import type { McpClientPool } from '../../mcp/mcp-pool.ts';
 import type { Workspace } from '../../config/storage.ts';
 import type { SessionConfig as Session } from '../../sessions/storage.ts';
 
@@ -165,6 +166,29 @@ export interface AgentBackend {
    * @param reason - AbortReason enum value
    */
   forceAbort(reason: AbortReason): void;
+
+  /**
+   * Redirect the agent mid-stream with a new user message.
+   * Called when the user sends a message while the agent is still processing.
+   *
+   * Each backend decides its own strategy:
+   * - Backends with native steering (e.g., Pi) inject the message into the
+   *   current stream and return true — events continue through the existing
+   *   generator, no abort needed.
+   * - Backends without steering call forceAbort(Redirect) internally and
+   *   return false — the session layer queues the message for re-send.
+   *
+   * @param message - The new user message
+   * @returns true if steered (events flow through existing stream),
+   *          false if aborted (session layer must queue + re-send)
+   */
+  redirect(message: string): boolean;
+
+  /**
+   * Run a simple text completion using the backend's auth infrastructure.
+   * Used for connection testing, title generation, and summarization.
+   */
+  runMiniCompletion(prompt: string): Promise<string | null>;
 
   /**
    * Clean up resources (MCP connections, watchers, etc.)
@@ -358,11 +382,12 @@ export interface BackendConfig {
   copilotCliPath?: string;
 
   /**
-   * Path to the Copilot network interceptor (CopilotAgent only).
-   * Loaded via NODE_OPTIONS="--require ..." into the Copilot CLI subprocess.
-   * Intercepts fetch() to inject tool metadata and capture it from responses.
+   * Path to the unified network interceptor bundle (CJS).
+   * Loaded via NODE_OPTIONS="--require ..." into Node-based SDK subprocesses
+   * (Copilot CLI, Pi agent server). Intercepts fetch() to inject tool metadata
+   * and capture it from responses. Auto-detects API format (Anthropic/OpenAI/Google).
    */
-  copilotInterceptorPath?: string;
+  interceptorPath?: string;
 
   /**
    * Per-session config directory for Copilot SDK (CopilotAgent only).
@@ -391,11 +416,28 @@ export interface BackendConfig {
   bridgeServerPath?: string;
 
   /**
+   * Centralized MCP client pool for source tool execution.
+   * Owns all MCP source connections in the main process.
+   * All backends route MCP source tool calls through this pool:
+   * - Claude/Pi: in-process proxy tools
+   * - Codex/Copilot: via poolServerUrl (HTTP MCP server wrapping the pool)
+   */
+  mcpPool?: McpClientPool;
+
+  /**
+   * URL of the McpPoolServer HTTP endpoint for this session.
+   * External SDK subprocesses (Codex, Copilot) connect to this URL
+   * to access pool-managed MCP source tools.
+   */
+  poolServerUrl?: string;
+
+  /**
    * Path to the pi-agent-server entry point (stdio subprocess for PiAgent).
    * PiAgent spawns this as a child process and communicates via JSON-RPC over stdio.
    * Resolved in the Electron main process and passed here.
    */
   piServerPath?: string;
+
 
   /** Callback when SDK session ID is captured/updated */
   onSdkSessionIdUpdate?: (sdkSessionId: string) => void;

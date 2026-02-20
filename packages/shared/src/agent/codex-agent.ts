@@ -90,6 +90,9 @@ import {
   BUILT_IN_TOOLS,
 } from './core/pre-tool-use.ts';
 
+// Cross-process tool metadata store (file-based)
+import { toolMetadataStore } from '../interceptor-common.ts';
+
 // Import types from generated codex-types
 import type {
   RequestId,
@@ -276,8 +279,19 @@ export class CodexAgent extends BaseAgent {
     // Restore thread ID from previous session (for resume)
     this.codexThreadId = config.session?.sdkSessionId || null;
 
+    // Set up toolMetadataStore session dir for cross-process metadata sharing
+    const codexSessionDir = config.session?.id && config.workspace.rootPath
+      ? join(config.workspace.rootPath, 'sessions', config.session.id)
+      : undefined;
+    if (codexSessionDir) {
+      toolMetadataStore.setSessionDir(codexSessionDir);
+    }
+
     // Initialize event adapter
     this.adapter = new CodexEventAdapter();
+    if (codexSessionDir) {
+      this.adapter.setSessionDir(codexSessionDir);
+    }
 
     // Start config watcher for hot-reloading source changes (non-headless only)
     if (!config.isHeadless) {
@@ -1029,7 +1043,7 @@ export class CodexAgent extends BaseAgent {
 
     // Check for source blocking (MCP tools from inactive sources)
     if (toolType === 'mcp' && mcpServer) {
-      const sourceSlug = this.extractSourceSlugFromMcpServer(mcpServer, mcpTool);
+      const sourceSlug = this.extractSourceSlugFromMcpServer(mcpServer);
       if (sourceSlug && !this.sourceManager.isSourceActive(sourceSlug)) {
         // Source is inactive - attempt auto-activation
         this.debug(`PreToolUse: MCP tool from inactive source "${sourceSlug}", attempting activation...`);
@@ -1161,9 +1175,21 @@ export class CodexAgent extends BaseAgent {
     }
 
     // ============================================================
-    // TOOL METADATA STRIPPING: Remove _intent/_displayName from ALL tools
-    // (extracted for UI in tool-matching.ts, stripped here before execution)
+    // TOOL METADATA EXTRACTION + STRIPPING
+    // Extract _intent/_displayName from tool input (or params.metadata from Codex fork)
+    // and store in toolMetadataStore before stripping for execution.
     // ============================================================
+    {
+      const currentInput = (modifiedInput || inputObj) as Record<string, unknown>;
+      const intent = params.metadata?.intent
+        || (typeof currentInput._intent === 'string' ? currentInput._intent : undefined);
+      const displayName = params.metadata?.displayName
+        || (typeof currentInput._displayName === 'string' ? currentInput._displayName : undefined);
+      if (intent || displayName) {
+        toolMetadataStore.set(itemId, { intent, displayName, timestamp: Date.now() });
+        this.debug(`PreToolUse: Captured metadata for ${itemId} — intent="${intent}", displayName="${displayName}"`);
+      }
+    }
     const metadataResult = stripToolMetadata(
       sdkToolName,
       modifiedInput || inputObj,
@@ -1223,31 +1249,19 @@ export class CodexAgent extends BaseAgent {
   /**
    * Built-in MCP servers that are always available (not user sources).
    * Must match the set in claude-agent.ts to keep behavior consistent.
+   * Note: preferences and craft-agents-docs are now bundled into the session server.
    */
   private static readonly BUILT_IN_MCP_SERVERS = new Set([
-    'preferences',
     'session',
-    'craft-agents-docs',
-    'api-bridge',
   ]);
 
   /**
    * Extract source slug from MCP server name.
-   * Returns null for built-in MCP servers (session, preferences, etc.)
+   * Returns null for built-in MCP servers (session, etc.)
    * so that PreToolUse doesn't try to activate them as user sources.
-   *
-   * Special case: api-bridge is a built-in server that proxies API sources.
-   * The real source slug is embedded in the tool name (e.g., "api_slack" → "slack").
    */
-  private extractSourceSlugFromMcpServer(mcpServer: string, mcpTool?: string): string | null {
+  private extractSourceSlugFromMcpServer(mcpServer: string): string | null {
     if (!mcpServer) return null;
-    // api-bridge proxies API sources — resolve the real source slug from the tool name
-    if (mcpServer === 'api-bridge') {
-      if (mcpTool?.startsWith('api_')) {
-        return mcpTool.slice(4);
-      }
-      return null;
-    }
     if (CodexAgent.BUILT_IN_MCP_SERVERS.has(mcpServer)) {
       return null;
     }
@@ -2485,37 +2499,11 @@ export class CodexAgent extends BaseAgent {
   // Source Management (Codex-specific override)
   // ============================================================
 
-  /**
-   * Override to add Codex-specific warnings about MCP server configuration.
-   * In app-server mode, MCP servers must be configured via ~/.codex/config.toml.
-   */
-  override setSourceServers(
-    mcpServers: Record<string, SdkMcpServerConfig>,
-    apiServers: Record<string, unknown>,
-    intendedSlugs?: string[]
-  ): void {
-    // Call base implementation for SourceManager state tracking
-    super.setSourceServers(mcpServers, apiServers, intendedSlugs);
-
-    // Note: App-server mode uses ~/.codex/config.toml for MCP server configuration
-    // Runtime injection is not supported in the same way as exec mode
-    // Users should configure MCP servers in their Codex config file
-    const mcpServerCount = Object.keys(mcpServers).length;
-    if (mcpServerCount > 0) {
-      this.debug(
-        `MCP servers (${mcpServerCount}) should be configured in ~/.codex/config.toml for app-server mode. ` +
-        `Runtime injection is not supported. Servers: ${Object.keys(mcpServers).join(', ')}`
-      );
-    }
-
-    const apiServerCount = Object.keys(apiServers).length;
-    if (apiServerCount > 0) {
-      this.debug(
-        `API servers (${apiServerCount}) are not supported in Codex backend. ` +
-        `Servers: ${Object.keys(apiServers).join(', ')}`
-      );
-    }
-  }
+  // setSourceServers is inherited from BaseAgent.
+  // BaseAgent.setSourceServers() handles:
+  //   1. SourceManager state tracking (active slugs)
+  //   2. McpClientPool sync (connecting/disconnecting MCP sources)
+  // Codex MCP servers are also configured in config.toml for tool discovery.
 
   // ============================================================
   // LLM Tool Pre-Execution (call_llm via PreToolUse intercept)
@@ -2631,96 +2619,91 @@ export class CodexAgent extends BaseAgent {
   async runMiniCompletion(prompt: string): Promise<string | null> {
     this.debug(`[runMiniCompletion] Starting`);
 
+    // Ensure client is connected (includes auth injection)
+    const client = await this.ensureClient();
+    this.debug(`[runMiniCompletion] Client connected`);
+
+    if (!this.config.miniModel) {
+      throw new Error('CodexAgent.runMiniCompletion: config.miniModel is required');
+    }
+    const model = this.config.miniModel;
+    this.debug(`[runMiniCompletion] Using model: ${model}`);
+
+    // Start an ephemeral thread with no system prompt.
+    // Mark as ephemeral so main event handlers ignore its events.
+    this.debug(`[runMiniCompletion] Starting ephemeral thread...`);
+    this._startingEphemeralThread = true;
+    const threadResponse = await client.threadStart({
+      model,
+      cwd: this.workingDirectory,
+      baseInstructions: '', // Empty - no system prompt
+      ephemeral: true, // Don't persist this thread
+    });
+    this._startingEphemeralThread = false;
+    const threadId = threadResponse.thread.id;
+    this._ephemeralThreadIds.add(threadId);
+    this.debug(`[runMiniCompletion] Started ephemeral thread: ${threadId}`);
+
+    // Set up Promise-based completion tracking
+    let result = '';
+    let completionResolve: () => void;
+    const completionPromise = new Promise<void>((resolve) => {
+      completionResolve = resolve;
+    });
+
+    // Collect response text from deltas
+    const textHandler = (notification: { threadId: string; delta?: string }) => {
+      if (notification.threadId === threadId && notification.delta) {
+        result += notification.delta;
+        this.debug(`[runMiniCompletion] Delta: ${notification.delta}`);
+      }
+    };
+
+    // Resolve when turn completes
+    const completionHandler = (notification: { threadId: string }) => {
+      if (notification.threadId === threadId) {
+        this.debug(`[runMiniCompletion] Turn completed`);
+        completionResolve();
+      }
+    };
+
+    // Set up listeners
+    client.on('item/agentMessage/delta', textHandler);
+    client.on('turn/completed', completionHandler);
+
     try {
-      // Ensure client is connected (includes auth injection)
-      const client = await this.ensureClient();
-      this.debug(`[runMiniCompletion] Client connected`);
-
-      if (!this.config.miniModel) {
-        throw new Error('CodexAgent.runMiniCompletion: config.miniModel is required');
-      }
-      const model = this.config.miniModel;
-      this.debug(`[runMiniCompletion] Using model: ${model}`);
-
-      // Start an ephemeral thread with no system prompt.
-      // Mark as ephemeral so main event handlers ignore its events.
-      this.debug(`[runMiniCompletion] Starting ephemeral thread...`);
-      this._startingEphemeralThread = true;
-      const threadResponse = await client.threadStart({
-        model,
-        cwd: this.workingDirectory,
-        baseInstructions: '', // Empty - no system prompt
-        ephemeral: true, // Don't persist this thread
+      // Start the turn with our prompt
+      this.debug(`[runMiniCompletion] Starting turn...`);
+      await client.turnStart({
+        threadId,
+        input: [{ type: 'text', text: prompt, text_elements: [] }],
+        cwd: null,
+        approvalPolicy: null,
+        sandboxPolicy: null,
+        model: null,
+        effort: null,
+        summary: null,
+        personality: null,
+        outputSchema: null,
+        collaborationMode: null,
       });
-      this._startingEphemeralThread = false;
-      const threadId = threadResponse.thread.id;
-      this._ephemeralThreadIds.add(threadId);
-      this.debug(`[runMiniCompletion] Started ephemeral thread: ${threadId}`);
+      this.debug(`[runMiniCompletion] Turn started`);
 
-      // Set up Promise-based completion tracking
-      let result = '';
-      let completionResolve: () => void;
-      const completionPromise = new Promise<void>((resolve) => {
-        completionResolve = resolve;
-      });
-
-      // Collect response text from deltas
-      const textHandler = (notification: { threadId: string; delta?: string }) => {
-        if (notification.threadId === threadId && notification.delta) {
-          result += notification.delta;
-          this.debug(`[runMiniCompletion] Delta: ${notification.delta}`);
-        }
-      };
-
-      // Resolve when turn completes
-      const completionHandler = (notification: { threadId: string }) => {
-        if (notification.threadId === threadId) {
-          this.debug(`[runMiniCompletion] Turn completed`);
-          completionResolve();
-        }
-      };
-
-      // Set up listeners
-      client.on('item/agentMessage/delta', textHandler);
-      client.on('turn/completed', completionHandler);
-
+      // Wait for turn completion with timeout
       try {
-        // Start the turn with our prompt
-        this.debug(`[runMiniCompletion] Starting turn...`);
-        await client.turnStart({
-          threadId,
-          input: [{ type: 'text', text: prompt, text_elements: [] }],
-          cwd: null,
-          approvalPolicy: null,
-          sandboxPolicy: null,
-          model: null,
-          effort: null,
-          summary: null,
-          personality: null,
-          outputSchema: null,
-          collaborationMode: null,
-        });
-        this.debug(`[runMiniCompletion] Turn started`);
-
-        // Wait for turn completion with timeout
-        try {
-          await withTimeout(completionPromise, 30000, 'runMiniCompletion timed out after 30s');
-        } catch (e) {
-          this.debug(`[runMiniCompletion] Timeout waiting for completion`);
-        }
-
-        const text = result.trim() || null;
-        this.debug(`[runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
-        return text;
-      } finally {
-        // Clean up listeners and ephemeral thread tracking
-        client.off('item/agentMessage/delta', textHandler);
-        client.off('turn/completed', completionHandler);
-        this._ephemeralThreadIds.delete(threadId);
+        await withTimeout(completionPromise, 30000, 'runMiniCompletion timed out after 30s');
+      } catch (e) {
+        this.debug(`[runMiniCompletion] Timeout waiting for completion`);
       }
-    } catch (error) {
-      this.debug(`[runMiniCompletion] Failed: ${error}`);
-      return null;
+
+      const text = result.trim() || null;
+      this.debug(`[runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
+      return text;
+    } finally {
+      // Clean up listeners and ephemeral thread tracking
+      client.off('item/agentMessage/delta', textHandler);
+      client.off('turn/completed', completionHandler);
+      this._ephemeralThreadIds.delete(threadId);
     }
   }
 }

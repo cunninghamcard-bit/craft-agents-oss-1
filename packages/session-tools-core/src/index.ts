@@ -145,6 +145,12 @@ export {
   handleMicrosoftOAuthTrigger,
   // Credential Prompt
   handleCredentialPrompt,
+  // Update Preferences
+  handleUpdatePreferences,
+  // Transform Data
+  handleTransformData,
+  // Render Template
+  handleRenderTemplate,
 } from './handlers/index.ts';
 
 export type {
@@ -158,6 +164,9 @@ export type {
   SlackOAuthTriggerArgs,
   MicrosoftOAuthTriggerArgs,
   CredentialPromptArgs,
+  UpdatePreferencesArgs,
+  TransformDataArgs,
+  RenderTemplateArgs,
 } from './handlers/index.ts';
 
 // Tool definitions — single source of truth
@@ -171,6 +180,9 @@ export {
   SourceOAuthTriggerSchema,
   CredentialPromptSchema,
   CallLlmSchema,
+  UpdatePreferencesSchema,
+  TransformDataSchema,
+  RenderTemplateSchema,
   // Descriptions
   TOOL_DESCRIPTIONS,
   // Registry

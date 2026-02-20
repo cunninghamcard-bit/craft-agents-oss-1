@@ -51,8 +51,8 @@ export function CredentialsStep({
   const isCopilotOAuth = apiSetupMethod === 'copilot_oauth' || apiSetupMethod === 'pi_copilot_oauth'
   const isAnthropicApiKey = apiSetupMethod === 'anthropic_api_key'
   const isOpenAiApiKey = apiSetupMethod === 'openai_api_key'
-  const isPiGoogleApiKey = apiSetupMethod === 'pi_google_api_key'
-  const isApiKey = isAnthropicApiKey || isOpenAiApiKey || isPiGoogleApiKey
+  const isPiApiKey = apiSetupMethod === 'pi_api_key'
+  const isApiKey = isAnthropicApiKey || isOpenAiApiKey || isPiApiKey
 
   // Pi OAuth variants use the same UI with Pi-specific titles
   const isPiOAuth = apiSetupMethod === 'pi_chatgpt_oauth' || apiSetupMethod === 'pi_copilot_oauth'
@@ -251,9 +251,9 @@ export function CredentialsStep({
 
   // --- API Key flow ---
   // Determine provider type and description based on selected method
-  const providerType = isPiGoogleApiKey ? 'google' : isOpenAiApiKey ? 'openai' : 'anthropic'
-  const apiKeyDescription = isPiGoogleApiKey
-    ? "Enter your Google AI Studio API key for Gemini models via Pi."
+  const providerType = isPiApiKey ? 'pi_api_key' : isOpenAiApiKey ? 'openai' : 'anthropic'
+  const apiKeyDescription = isPiApiKey
+    ? "Select your LLM provider and enter the API key."
     : isOpenAiApiKey
     ? "Enter your OpenAI API key."
     : "Enter your API key. Optionally configure a custom endpoint for OpenRouter, Ollama, or compatible APIs."

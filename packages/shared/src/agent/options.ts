@@ -226,7 +226,7 @@ export function getDefaultOptions(envOverrides?: Record<string, string>): Partia
             // eliminating the need for external Node or Bun installation
             executable: process.execPath as 'bun',
             // Inject network interceptor into SDK subprocess for API error capture and MCP schema injection
-            executableArgs: [envFileFlag, '--preload', join(baseDir, 'network-interceptor.ts')],
+            executableArgs: [envFileFlag, '--preload', join(baseDir, 'unified-network-interceptor.ts')],
             env: {
                 ...process.env,
                 BUN_BE_BUN: '1',

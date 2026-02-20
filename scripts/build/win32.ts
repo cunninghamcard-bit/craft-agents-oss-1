@@ -174,10 +174,10 @@ export async function buildElectronAppWindows(config: BuildConfig): Promise<void
   // Build main process with OAuth defines
   buildMainProcess(config);
 
-  // Build Copilot network interceptor (--require hook for tool metadata)
-  console.log('  Building Copilot interceptor...');
+  // Build unified network interceptor (--require hook for tool metadata)
+  console.log('  Building interceptor...');
   run(
-    'node ./node_modules/esbuild/bin/esbuild packages/shared/src/copilot-network-interceptor.ts --bundle --platform=node --format=cjs --outfile=apps/electron/dist/copilot-interceptor.cjs',
+    'node ./node_modules/esbuild/bin/esbuild packages/shared/src/unified-network-interceptor.ts --bundle --platform=node --format=cjs --outfile=apps/electron/dist/interceptor.cjs',
     rootDir
   );
 

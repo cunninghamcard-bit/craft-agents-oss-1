@@ -291,7 +291,7 @@ export class CopilotEventAdapter extends BaseEventAdapter {
         );
 
         // Look up metadata captured by the network interceptor (cross-process via file)
-        const storedMeta = toolMetadataStore.get(toolCallId);
+        const storedMeta = toolMetadataStore.get(toolCallId, this.sessionDir);
         const intent = storedMeta?.intent
           || (event.data as { description?: string }).description
           || undefined;

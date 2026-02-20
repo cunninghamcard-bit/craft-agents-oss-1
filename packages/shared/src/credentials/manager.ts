@@ -293,6 +293,15 @@ export class CredentialManager {
   }
 
   /**
+   * Delete API key for an LLM connection.
+   * @param connectionSlug - The connection slug
+   * @returns true if deleted, false if not found
+   */
+  async deleteLlmApiKey(connectionSlug: string): Promise<boolean> {
+    return this.delete({ type: 'llm_api_key', connectionSlug });
+  }
+
+  /**
    * Get OAuth token for an LLM connection.
    * @param connectionSlug - The connection slug
    * @returns OAuth credentials or null if not found

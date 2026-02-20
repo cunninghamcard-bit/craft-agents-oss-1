@@ -1,7 +1,7 @@
 // Capture errors in the isolated preload context and forward to Sentry
 import '@sentry/electron/preload'
 import { contextBridge, ipcRenderer } from 'electron'
-import { IPC_CHANNELS, type SessionEvent, type ElectronAPI, type FileAttachment, type LlmConnectionSetup } from '../shared/types'
+import { IPC_CHANNELS, type SessionEvent, type ElectronAPI, type FileAttachment, type LlmConnectionSetup, type TestLlmConnectionParams } from '../shared/types'
 
 const api: ElectronAPI = {
   // Session management
@@ -198,10 +198,8 @@ const api: ElectronAPI = {
   // Settings - API Setup
   setupLlmConnection: (setup: LlmConnectionSetup) =>
     ipcRenderer.invoke(IPC_CHANNELS.SETUP_LLM_CONNECTION, setup),
-  testApiConnection: (apiKey: string, baseUrl?: string, models?: string[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_TEST_API_CONNECTION, apiKey, baseUrl, models),
-  testOpenAiConnection: (apiKey: string, baseUrl?: string, models?: string[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_TEST_OPENAI_CONNECTION, apiKey, baseUrl, models),
+  testLlmConnectionSetup: (params: TestLlmConnectionParams) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_TEST_LLM_CONNECTION_SETUP, params),
 
   // Session-specific model (overrides global)
   getSessionModel: (sessionId: string, workspaceId: string) =>

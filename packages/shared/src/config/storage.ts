@@ -1831,6 +1831,8 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
     awsRegion: updates.awsRegion !== undefined ? updates.awsRegion : existing.awsRegion,
     gcpProjectId: updates.gcpProjectId !== undefined ? updates.gcpProjectId : existing.gcpProjectId,
     gcpRegion: updates.gcpRegion !== undefined ? updates.gcpRegion : existing.gcpRegion,
+    // Pi auth provider
+    piAuthProvider: updates.piAuthProvider !== undefined ? updates.piAuthProvider : existing.piAuthProvider,
     // Timestamps
     lastUsedAt: updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
   };

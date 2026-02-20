@@ -27,6 +27,7 @@ export { parseMermaid } from './parser.ts'
 export { renderMermaidAscii } from './ascii/index.ts'
 export type { AsciiRenderOptions } from './ascii/index.ts'
 
+import { decodeXML } from 'entities'
 import { parseMermaid } from './parser.ts'
 import { layoutGraph, layoutGraphSync } from './layout.ts'
 import { renderSvg } from './renderer.ts'
@@ -113,6 +114,10 @@ export async function renderMermaid(
   text: string,
   options: RenderOptions = {}
 ): Promise<string> {
+  // Decode XML entities that may leak from markdown parsers (e.g. rehype-raw).
+  // Without this, escapeXml() double-encodes them: &lt; → &amp;lt; → literal "&lt;" in SVG.
+  text = decodeXML(text)
+
   const colors = buildColors(options)
   const font = options.font ?? 'Inter'
   const transparent = options.transparent ?? false
@@ -160,6 +165,10 @@ export function renderMermaidSync(
   text: string,
   options: RenderOptions = {}
 ): string {
+  // Decode XML entities that may leak from markdown parsers (e.g. rehype-raw).
+  // Without this, escapeXml() double-encodes them: &lt; → &amp;lt; → literal "&lt;" in SVG.
+  text = decodeXML(text)
+
   const colors = buildColors(options)
   const font = options.font ?? 'Inter'
   const transparent = options.transparent ?? false

@@ -4,8 +4,12 @@
  * Tests the Copilot SDK SessionEvent → AgentEvent conversion.
  * Each test provides mock SessionEvent objects and verifies the AgentEvents produced.
  */
-import { describe, it, expect, beforeEach } from 'bun:test';
+import { describe, it, expect, beforeEach, afterEach } from 'bun:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { CopilotEventAdapter } from '../backend/copilot/event-adapter.ts';
+import { toolMetadataStore } from '../../interceptor-common.ts';
 
 // Helper: collect all events from a generator
 function collect(gen: Generator<any>): any[] {
@@ -14,10 +18,18 @@ function collect(gen: Generator<any>): any[] {
 
 describe('CopilotEventAdapter', () => {
   let adapter: CopilotEventAdapter;
+  let sessionDir: string;
 
   beforeEach(() => {
     adapter = new CopilotEventAdapter();
+    sessionDir = mkdtempSync(join(tmpdir(), 'copilot-adapter-'));
+    adapter.setSessionDir(sessionDir);
+    toolMetadataStore.setSessionDir(sessionDir);
     adapter.startTurn();
+  });
+
+  afterEach(() => {
+    rmSync(sessionDir, { recursive: true, force: true });
   });
 
   describe('session lifecycle', () => {
@@ -420,6 +432,28 @@ describe('CopilotEventAdapter', () => {
         toolName: 'Bash', // normalized from lowercase
         toolUseId: 'tc-1',
         input: { command: 'ls -la' },
+      });
+    });
+
+    it('should use stored metadata from toolMetadataStore when present', () => {
+      toolMetadataStore.set('tc-meta', {
+        intent: 'List repository files',
+        displayName: 'List Files',
+        timestamp: Date.now(),
+      });
+
+      const events = collect(adapter.adaptEvent({
+        type: 'tool.execution_start',
+        data: {
+          toolCallId: 'tc-meta',
+          toolName: 'bash',
+          arguments: { command: 'ls -la' },
+        },
+      } as any));
+
+      expect(events[0]).toMatchObject({
+        intent: 'List repository files',
+        displayName: 'List Files',
       });
     });
 

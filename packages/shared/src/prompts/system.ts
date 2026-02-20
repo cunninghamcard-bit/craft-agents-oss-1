@@ -4,7 +4,6 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, relative, basename } from 'path';
 import { DOC_REFS, APP_ROOT } from '../docs/index.ts';
 import { PERMISSION_MODE_CONFIG } from '../agent/mode-types.ts';
-import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { APP_VERSION } from '../version/index.ts';
 import { readPluginName } from '../utils/workspace.ts';
 import { globSync } from 'glob';
@@ -788,7 +787,7 @@ transform_data({
 **Security:** Content renders in a sandboxed iframe — JavaScript is blocked, links are non-clickable. No sanitization needed.
 
 **Reference:** \`${DOC_REFS.htmlPreview}\`
-${FEATURE_FLAGS.sourceTemplates ? `
+
 ## Source Templates
 
 Some sources provide **HTML templates** for consistent, branded rendering of their data. Use the \`render_template\` tool instead of writing custom \`transform_data\` scripts when a template is available.
@@ -817,7 +816,7 @@ render_template({
 **Discovering templates:** Check the source's \`guide.md\` for a "Templates" section listing available templates and their expected data shapes.
 
 **Soft validation:** Templates declare required fields. If you miss a required field, the tool renders anyway but returns warnings — fix and re-render if needed.
-` : ''}
+
 ## PDF Preview
 
 Craft Agent renders \`pdf-preview\` code blocks as inline PDF previews using react-pdf. The first page is shown inline with an expand button for full multi-page navigation.

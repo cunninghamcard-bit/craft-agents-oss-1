@@ -56,6 +56,11 @@ interface PreToolUseHookInput {
   cwd: string;
   toolName: string;
   toolArgs: unknown;
+  toolCallId?: string;
+  metadata?: {
+    intent?: string;
+    displayName?: string;
+  };
 }
 
 interface PreToolUseHookOutput {
@@ -106,6 +111,7 @@ import {
   registerSessionScopedToolCallbacks,
   unregisterSessionScopedToolCallbacks,
 } from './session-scoped-tools.ts';
+import { toolMetadataStore } from '../interceptor-common.ts';
 
 // Path utilities
 import { join } from 'path';
@@ -208,9 +214,8 @@ export class CopilotAgent extends BaseAgent {
   // Current user message (for context in summarization)
   private currentUserMessage: string = '';
 
-  // Source MCP server configs
-  private sourceMcpServers: Record<string, SdkMcpServerConfig> = {};
-  private sourceApiServers: Record<string, unknown> = {};
+  // Pool server URL (HTTP MCP server in main process exposing all source tools)
+  private poolServerUrl?: string;
 
   // Session event unsubscribe function
   private unsubscribeEvents: (() => void) | null = null;
@@ -260,7 +265,13 @@ export class CopilotAgent extends BaseAgent {
     super({ ...config, model: resolvedModel }, resolvedModel, modelDef?.contextWindow);
 
     this.copilotSessionId = config.session?.sdkSessionId || null;
+    this.poolServerUrl = config.poolServerUrl;
     this.adapter = new CopilotEventAdapter();
+
+    // Set session dir on adapter for concurrent-safe toolMetadataStore lookups
+    if (config.session?.id && config.workspace.rootPath) {
+      this.adapter.setSessionDir(join(config.workspace.rootPath, 'sessions', config.session.id));
+    }
 
     if (!config.isHeadless) {
       this.startConfigWatcher();
@@ -346,14 +357,15 @@ export class CopilotAgent extends BaseAgent {
     const clientEnv: Record<string, string | undefined> = { ...process.env };
 
     // Preload network interceptor for tool metadata capture
-    if (this.config.copilotInterceptorPath) {
+    if (this.config.interceptorPath) {
       const existing = clientEnv.NODE_OPTIONS || '';
-      clientEnv.NODE_OPTIONS = `${existing} --require ${this.config.copilotInterceptorPath}`.trim();
+      clientEnv.NODE_OPTIONS = `${existing} --require ${this.config.interceptorPath}`.trim();
     }
 
     // Session dir for cross-process toolMetadataStore
-    if (process.env.CRAFT_SESSION_DIR) {
-      clientEnv.CRAFT_SESSION_DIR = process.env.CRAFT_SESSION_DIR;
+    // Compute from session config (not process.env which is never set in the main process)
+    if (this.config.session?.id && this.config.workspace.rootPath) {
+      clientEnv.CRAFT_SESSION_DIR = join(this.config.workspace.rootPath, 'sessions', this.config.session.id);
     }
 
     // Propagate debug mode
@@ -729,7 +741,7 @@ export class CopilotAgent extends BaseAgent {
    * Reuses the same permission logic as ClaudeAgent/CodexAgent.
    */
   private async onPreToolUse(input: PreToolUseHookInput): Promise<PreToolUseHookOutput | void> {
-    const { toolName, toolArgs } = input;
+    const { toolName, toolArgs, toolCallId } = input;
 
     // Parse toolArgs defensively — may arrive as JSON string or parsed object.
     // See parseCopilotToolArgs() for full explanation of why this is needed.
@@ -808,7 +820,7 @@ export class CopilotAgent extends BaseAgent {
     // Copilot uses `mcp__server__tool` format for MCP tool names
     if (toolName.startsWith('mcp__')) {
       const parts = toolName.split('__');
-      const sourceSlug = this.extractSourceSlugFromMcpTool(parts[1], parts[2]);
+      const sourceSlug = this.extractSourceSlugFromMcpTool(parts[1]);
       if (sourceSlug && !this.sourceManager.isSourceActive(sourceSlug)) {
         this.debug(`PreToolUse: MCP tool from inactive source "${sourceSlug}", attempting activation...`);
 
@@ -878,10 +890,20 @@ export class CopilotAgent extends BaseAgent {
       (msg) => this.debug(msg)
     );
 
-    // Metadata stripping
+    // Metadata extraction + stripping
     const currentInput = skillResult.modified ? skillResult.input
       : pathResult.modified ? pathResult.input
       : inputObj;
+
+    const intent = input.metadata?.intent
+      || (typeof currentInput._intent === 'string' ? currentInput._intent : undefined);
+    const displayName = input.metadata?.displayName
+      || (typeof currentInput._displayName === 'string' ? currentInput._displayName : undefined);
+    if (toolCallId && (intent || displayName)) {
+      toolMetadataStore.set(toolCallId, { intent, displayName, timestamp: Date.now() });
+      this.debug(`PreToolUse: Captured metadata for ${toolCallId} — intent="${intent}", displayName="${displayName}"`);
+    }
+
     const metaResult = stripToolMetadata(sdkToolName, currentInput, (msg) => this.debug(msg));
 
     // Build modified args if any transformations happened
@@ -1010,9 +1032,9 @@ export class CopilotAgent extends BaseAgent {
     apiServers: Record<string, unknown>,
     intendedSlugs?: string[]
   ): void {
+    // BaseAgent handles SourceManager state + McpClientPool sync
+    // Pool server auto-serves updated tools (reads from pool at request time)
     super.setSourceServers(mcpServers, apiServers, intendedSlugs);
-    this.sourceMcpServers = mcpServers;
-    this.sourceApiServers = apiServers;
     // Copilot passes MCP config at session creation — destroy active session
     // so next chat() recreates with updated config
     if (this.session) {
@@ -1027,24 +1049,14 @@ export class CopilotAgent extends BaseAgent {
   private buildMcpConfig(): Record<string, CopilotMCPServerConfig> {
     const config: Record<string, CopilotMCPServerConfig> = {};
 
-    for (const [slug, server] of Object.entries(this.sourceMcpServers)) {
-      if (server.type === 'http' || server.type === 'sse') {
-        config[slug] = {
-          type: server.type,
-          url: server.url,
-          headers: server.headers,
-          tools: ['*'],
-        };
-      } else if (server.type === 'stdio') {
-        config[slug] = {
-          type: 'local',
-          command: server.command,
-          args: server.args || [],
-          env: server.env,
-          cwd: server.cwd,
-          tools: ['*'],
-        };
-      }
+    // MCP sources: served through centralized pool server (single HTTP endpoint)
+    // The McpPoolServer in the main process manages all source connections.
+    if (this.poolServerUrl) {
+      config['sources'] = {
+        type: 'sse',
+        url: this.poolServerUrl,
+        tools: ['*'],
+      };
     }
 
     // Add session-scoped MCP server (provides SubmitPlan, config_validate, source_test, etc.)
@@ -1074,31 +1086,6 @@ export class CopilotAgent extends BaseAgent {
           tools: ['*'],
         };
       }
-    }
-
-    // Add bridge MCP server for API sources (REST API → MCP bridge)
-    // The bridge server exposes API sources as api_{slug} tools via stdio MCP.
-    // Bridge config JSON and credential caches are written by the main process
-    // (setupCopilotBridgeConfig in sessions.ts) before session creation.
-    if (Object.keys(this.sourceApiServers).length > 0 && this.config.bridgeServerPath && this.config.copilotConfigDir) {
-      const nodePath = this.config.nodePath || 'bun';
-      const bridgeConfigPath = join(this.config.copilotConfigDir, 'bridge-config.json');
-      const workspaceId = this.config.workspace.id;
-      const sessionId = this.config.session?.id;
-      const sessionPath = sessionId
-        ? join(this.config.workspace.rootPath, 'sessions', sessionId)
-        : undefined;
-
-      const bridgeArgs = [this.config.bridgeServerPath, '--config', bridgeConfigPath];
-      if (sessionPath) bridgeArgs.push('--session', sessionPath);
-      if (workspaceId) bridgeArgs.push('--workspace', workspaceId);
-
-      config['api-bridge'] = {
-        type: 'local',
-        command: nodePath,
-        args: bridgeArgs,
-        tools: ['*'],
-      };
     }
 
     return config;
@@ -1298,31 +1285,19 @@ export class CopilotAgent extends BaseAgent {
   /**
    * Built-in MCP servers that are always available (not user sources).
    * Must match the set in codex-agent.ts to keep behavior consistent.
+   * Note: preferences and craft-agents-docs are now bundled into the session server.
    */
   private static readonly BUILT_IN_MCP_SERVERS = new Set([
-    'preferences',
     'session',
-    'craft-agents-docs',
-    'api-bridge',
   ]);
 
   /**
    * Extract source slug from MCP tool name parts.
    * Returns null for built-in MCP servers (session, preferences, etc.)
    * so that PreToolUse doesn't try to activate them as user sources.
-   *
-   * Special case: api-bridge is a built-in server that proxies API sources.
-   * The real source slug is embedded in the tool name (e.g., "api_gmail" → "gmail").
    */
-  private extractSourceSlugFromMcpTool(mcpServer?: string, mcpTool?: string): string | null {
+  private extractSourceSlugFromMcpTool(mcpServer?: string): string | null {
     if (!mcpServer) return null;
-    // api-bridge proxies API sources — resolve the real source slug from the tool name
-    if (mcpServer === 'api-bridge') {
-      if (mcpTool?.startsWith('api_')) {
-        return mcpTool.slice(4);
-      }
-      return null;
-    }
     if (CopilotAgent.BUILT_IN_MCP_SERVERS.has(mcpServer)) {
       return null;
     }

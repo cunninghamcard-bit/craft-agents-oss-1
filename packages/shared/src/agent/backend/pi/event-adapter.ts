@@ -19,6 +19,7 @@ import type {
 import type { AssistantMessageEvent } from '@mariozechner/pi-ai';
 import { BaseEventAdapter } from '../base-event-adapter.ts';
 import { PI_TOOL_NAME_MAP } from './constants.ts';
+import { toolMetadataStore } from '../../../interceptor-common.ts';
 
 /**
  * Combined event type the adapter can handle.
@@ -182,6 +183,11 @@ export class PiEventAdapter extends BaseEventAdapter {
 
         const args = (event.args ?? {}) as Record<string, unknown>;
 
+        // Look up metadata from the store (populated by the interceptor in the Pi subprocess)
+        const storedMeta = toolMetadataStore.get(toolCallId, this.sessionDir);
+        const intent = storedMeta?.intent
+          || (typeof args.description === 'string' ? args.description : undefined);
+
         // Classify bash commands that are actually file reads
         if (toolName === 'Bash' && typeof args.command === 'string') {
           const readInfo = this.classifyReadCommand(toolCallId, args.command);
@@ -189,7 +195,7 @@ export class PiEventAdapter extends BaseEventAdapter {
             yield this.createReadToolStart(
               toolCallId,
               readInfo,
-              undefined, // intent
+              intent,
               'Read File',
             );
             break;
@@ -200,8 +206,8 @@ export class PiEventAdapter extends BaseEventAdapter {
           toolCallId,
           toolName,
           args,
-          undefined, // intent
-          this.getToolDisplayName(toolName),
+          intent,
+          storedMeta?.displayName || this.getToolDisplayName(toolName),
         );
         break;
       }

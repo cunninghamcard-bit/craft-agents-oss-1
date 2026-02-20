@@ -79,6 +79,7 @@ type InboundMessage =
   | { type: 'set_active_sources'; slugs: string[] }
   | { type: 'mini_completion'; id: string; prompt: string }
   | { type: 'set_model'; model: string }
+  | { type: 'steer'; message: string }
   | { type: 'shutdown' };
 
 /** Proxy tool definition from main process */
@@ -133,6 +134,9 @@ const pendingSessionToolCalls = new Map<string, { toolName: string; arguments: R
 
 // Proxy tool definitions from main process
 let proxyToolDefs: ProxyToolDef[] = [];
+
+// Flag: proxy tools changed since last session creation — session needs recreation
+let toolsChanged = false;
 
 // Callback server for call_llm
 let callbackServer: http.Server | null = null;
@@ -339,16 +343,36 @@ async function ensureSession(): Promise<AgentSession> {
 
   // Create the session
   const { session } = await createAgentSession(sessionOptions);
-
-  // CRITICAL: Pi SDK's createAgentSession ignores our wrapped tool objects.
-  // It extracts only tool names from options.tools and creates its own internal
-  // tool instances via createAllTools(). Our wrapSingleTool permission enforcement
-  // is silently discarded. To fix this, we set piSession first and then call
-  // rebuildSessionTools() which injects our wrapped tools via the session's
-  // baseToolsOverride mechanism and rebuilds the runtime.
   piSession = session;
-  rebuildSessionTools();
-  debugLog(`Created Pi session: ${session.sessionId}`);
+
+  // HACK: Pi SDK's createAgentSession ignores our wrapped tool objects — it
+  // extracts only tool names and creates its own internal instances via
+  // createAllTools(). Our wrapSingleTool permission/summarization hooks are
+  // silently discarded. Inject our wrapped tools via the internal
+  // _baseToolsOverride property and rebuild the runtime.
+  //
+  // Pinned to @mariozechner/pi-coding-agent@0.53.x — will break on SDK updates.
+  // TODO: Upstream a public API for custom tool injection.
+  const sessionInternal = piSession as any;
+  if (typeof sessionInternal._buildRuntime !== 'function') {
+    throw new Error(
+      'Pi SDK internal API changed: _buildRuntime not found. ' +
+      'Update ensureSession() for the new SDK version.',
+    );
+  }
+
+  const baseToolsOverride: Record<string, AgentTool<any>> = {};
+  for (const tool of allTools) {
+    baseToolsOverride[tool.name] = tool;
+  }
+  sessionInternal._baseToolsOverride = baseToolsOverride;
+  sessionInternal._buildRuntime({
+    activeToolNames: Object.keys(baseToolsOverride),
+    includeAllExtensionTools: true,
+  });
+
+  toolsChanged = false;
+  debugLog(`Created Pi session: ${session.sessionId} (${Object.keys(baseToolsOverride).length} tools)`);
 
   // Notify main process of session ID
   send({ type: 'session_id_update', sessionId: session.sessionId });
@@ -356,55 +380,6 @@ async function ensureSession(): Promise<AgentSession> {
   return session;
 }
 
-/**
- * Rebuild the session's tool registry in-place when proxy tools change.
- *
- * HACK: Pi SDK's createAgentSession() ignores custom tool wrappers — it
- * extracts only tool names and creates its own internal tool instances.
- * We inject our wrapped tools via the internal _baseToolsOverride property
- * and trigger a runtime rebuild via _buildRuntime().
- *
- * This WILL break on SDK updates — pinned to @mariozechner/pi-coding-agent@0.53.x.
- * TODO: Upstream a public API for custom tool injection.
- */
-function rebuildSessionTools(): void {
-  if (!piSession) return;
-
-  // Guard: fail fast if internal API changed
-  const internal = piSession as Record<string, unknown>;
-  if (typeof internal._buildRuntime !== 'function') {
-    throw new Error(
-      'Pi SDK internal API changed: _buildRuntime not found. ' +
-      'Update rebuildSessionTools() for the new SDK version.',
-    );
-  }
-
-  const isGoogleProvider = initConfig?.piAuth?.provider === 'google';
-  const googleApiKey = initConfig?.piAuth?.credential?.type === 'api_key'
-    ? initConfig.piAuth.credential.key : undefined;
-  const searchTool = isGoogleProvider && googleApiKey
-    ? createGoogleSearchTool(googleApiKey)
-    : webSearchTool;
-  const webTools = [searchTool, webFetchTool];
-  const wrappedCodingTools = wrapToolsWithHooks([...codingTools, ...webTools]);
-  const proxyTools = buildProxyTools();
-
-  const baseToolsOverride: Record<string, AgentTool<any>> = {};
-  for (const tool of wrappedCodingTools) {
-    baseToolsOverride[tool.name] = tool;
-  }
-  for (const tool of proxyTools) {
-    baseToolsOverride[tool.name] = tool;
-  }
-
-  const sessionInternal = piSession as any;
-  sessionInternal._baseToolsOverride = baseToolsOverride;
-  sessionInternal._buildRuntime({
-    activeToolNames: Object.keys(baseToolsOverride),
-    includeAllExtensionTools: true,
-  });
-  debugLog(`Rebuilt session tools in-place: ${Object.keys(baseToolsOverride).length} tools`);
-}
 
 // ============================================================
 // Tool Wrapping (Permission Enforcement + Large Response Summarization)
@@ -718,8 +693,9 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     ephemeralSession.agent.setSystemPrompt('Reply with ONLY the requested text. No explanation.');
   }
 
-  // Collect response text from events
+  // Collect response text and errors from events
   let result = '';
+  let lastError = '';
   let completionResolve: () => void;
   const completionPromise = new Promise<void>((resolve) => {
     completionResolve = resolve;
@@ -731,8 +707,16 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
       const msg = event.message as {
         role?: string;
         content?: string | Array<{ type: string; text?: string }>;
+        stopReason?: string;
+        errorMessage?: string;
       };
       if (msg.role !== 'assistant') return;
+
+      // Capture API errors from message_end (e.g. auth failures, model errors)
+      if (msg.stopReason === 'error' && msg.errorMessage) {
+        lastError = msg.errorMessage;
+        debugLog(`[queryLlm] API error in message_end: ${msg.errorMessage}`);
+      }
 
       if (typeof msg.content === 'string') {
         result = msg.content;
@@ -752,6 +736,12 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
     await ephemeralSession.prompt(request.prompt);
     await withTimeout(completionPromise, 30000, 'queryLlm timed out after 30s');
     debugLog(`[queryLlm] Result length: ${result.trim().length}`);
+
+    // If we got no text but captured an error, throw so callers see the real issue
+    if (!result.trim() && lastError) {
+      throw new Error(lastError);
+    }
+
     return { text: result.trim(), model };
   } finally {
     unsub();
@@ -852,6 +842,19 @@ async function handlePrompt(msg: Extract<InboundMessage, { type: 'prompt' }>): P
   currentUserMessage = msg.message;
 
   try {
+    // If proxy tools changed since last session creation, dispose and recreate.
+    // This avoids calling _buildRuntime() for dynamic tool updates — instead
+    // we create a fresh session via continueRecent() with all tools known upfront.
+    if (toolsChanged && piSession) {
+      debugLog('Recreating session due to tool changes');
+      if (unsubscribeEvents) {
+        unsubscribeEvents();
+        unsubscribeEvents = null;
+      }
+      piSession.dispose();
+      piSession = null;
+    }
+
     const session = await ensureSession();
 
     // Set system prompt
@@ -887,8 +890,12 @@ function handleRegisterTools(msg: Extract<InboundMessage, { type: 'register_tool
   ];
   debugLog(`Registered ${msg.tools.length} proxy tools (total: ${proxyToolDefs.length}): ${msg.tools.map(t => t.name).join(', ')}`);
 
-  // If session exists, rebuild tools in-place (no disposal needed)
-  rebuildSessionTools();
+  // If session exists, mark for recreation on next prompt.
+  // Don't dispose mid-generation — the flag is checked in handlePrompt().
+  if (piSession) {
+    toolsChanged = true;
+    debugLog('Proxy tools changed — session will be recreated on next prompt');
+  }
 }
 
 function handleToolExecuteResponse(msg: Extract<InboundMessage, { type: 'tool_execute_response' }>): void {
@@ -928,8 +935,17 @@ async function handleAbort(): Promise<void> {
 }
 
 async function handleMiniCompletion(msg: Extract<InboundMessage, { type: 'mini_completion' }>): Promise<void> {
-  const text = await runMiniCompletion(msg.prompt);
-  send({ type: 'mini_completion_result', id: msg.id, text });
+  // Call queryLlm directly (not runMiniCompletion) so auth errors propagate
+  // as 'error' messages instead of being swallowed and returned as null.
+  // runMiniCompletion is kept for the summarize callback where null is acceptable.
+  try {
+    const result = await queryLlm({ prompt: msg.prompt });
+    send({ type: 'mini_completion_result', id: msg.id, text: result.text || null });
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    debugLog(`[handleMiniCompletion] Error: ${errorMsg}`);
+    send({ type: 'error', message: errorMsg });
+  }
 }
 
 async function handleSetModel(msg: Extract<InboundMessage, { type: 'set_model' }>): Promise<void> {
@@ -1030,6 +1046,15 @@ async function processMessage(msg: InboundMessage): Promise<void> {
 
     case 'set_model':
       await handleSetModel(msg);
+      break;
+
+    case 'steer':
+      if (piSession) {
+        debugLog(`Steering with: "${msg.message.slice(0, 100)}"`);
+        await piSession.steer(msg.message);
+      } else {
+        debugLog('Steer ignored — no active session');
+      }
       break;
 
     case 'shutdown':

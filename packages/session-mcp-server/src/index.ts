@@ -23,6 +23,8 @@
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -88,7 +90,7 @@ interface CredentialCacheEntry {
  * The main process writes decrypted credentials to these files.
  */
 function getCredentialCachePath(workspaceRootPath: string, sourceSlug: string): string {
-  return `${workspaceRootPath}/sources/${sourceSlug}/.credential-cache.json`;
+  return join(workspaceRootPath, 'sources', sourceSlug, '.credential-cache.json');
 }
 
 /**
@@ -187,6 +189,10 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
   // Create credential manager that reads from cache files
   const credentialManager = createCredentialManager(workspaceRootPath);
 
+  // Session paths for transform_data / render_template
+  const sessionsDir = join(workspaceRootPath, 'sessions', sessionId);
+  const sessionDataDir = join(sessionsDir, 'data');
+
   // Build context
   return {
     sessionId,
@@ -194,6 +200,8 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
     get sourcesPath() { return join(workspaceRootPath, 'sources'); },
     get skillsPath() { return join(workspaceRootPath, 'skills'); },
     plansFolderPath,
+    sessionPath: sessionsDir,
+    dataPath: sessionDataDir,
     callbacks,
     fs,
     loadSourceConfig: (sourceSlug: string): SourceConfig | null => {
@@ -202,6 +210,32 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
 
     // Credential manager reads from cache files written by main process
     credentialManager,
+
+    // Preferences: write directly to preferences.json
+    updatePreferences: (updates: Record<string, unknown>) => {
+      // Resolve preferences path from config dir (parent of workspaces dir)
+      // workspaceRootPath = ~/.craft-agent/workspaces/{id}
+      // preferencesPath = ~/.craft-agent/preferences.json
+      const configDir = join(workspaceRootPath, '..', '..');
+      const prefsPath = join(configDir, 'preferences.json');
+      try {
+        let current: Record<string, unknown> = {};
+        if (existsSync(prefsPath)) {
+          current = JSON.parse(readFileSync(prefsPath, 'utf-8'));
+        }
+        const merged = {
+          ...current,
+          ...updates,
+          location: updates.location
+            ? { ...(current.location as Record<string, unknown> || {}), ...(updates.location as Record<string, unknown>) }
+            : current.location,
+          updatedAt: Date.now(),
+        };
+        writeFileSync(prefsPath, JSON.stringify(merged, null, 2), 'utf-8');
+      } catch (err) {
+        console.error('Failed to update preferences:', err);
+      }
+    },
 
     // Note: saveSourceConfig, validators, renderMermaid
     // are not available in Codex context (require Electron internals)
@@ -212,12 +246,80 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
 // Tool Definitions (from canonical registry)
 // ============================================================
 
-function createTools(): Tool[] {
+function createSessionTools(): Tool[] {
   return getToolDefsAsJsonSchema().map(def => ({
     name: def.name,
     description: def.description,
     inputSchema: def.inputSchema as Tool['inputSchema'],
   }));
+}
+
+// ============================================================
+// Craft Agents Docs Upstream Proxy
+// ============================================================
+
+const DOCS_MCP_URL = 'https://agents.craft.do/docs/mcp';
+
+/** Cached upstream client + tool list */
+let docsClient: Client | null = null;
+let docsTools: Tool[] = [];
+
+/**
+ * Connect to the craft-agents-docs MCP server and fetch its tool definitions.
+ * Falls back gracefully if the server is unreachable (tools will just be empty).
+ */
+async function connectDocsUpstream(): Promise<void> {
+  try {
+    const client = new Client(
+      { name: 'craft-agent-session-proxy', version: '1.0.0' },
+      { capabilities: {} }
+    );
+
+    const transport = new StreamableHTTPClientTransport(new URL(DOCS_MCP_URL));
+    await client.connect(transport);
+
+    const result = await client.listTools();
+    docsTools = (result.tools || []) as Tool[];
+    docsClient = client;
+
+    console.error(`Craft Agents Docs proxy connected: ${docsTools.length} tools`);
+  } catch (err) {
+    console.error(`Craft Agents Docs proxy connection failed (non-fatal): ${err instanceof Error ? err.message : String(err)}`);
+    docsClient = null;
+    docsTools = [];
+  }
+}
+
+/**
+ * Route a tool call to the upstream docs client.
+ */
+async function callDocsUpstream(
+  name: string,
+  args: Record<string, unknown>
+): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
+  if (!docsClient) {
+    return errorResponse(`Craft Agents Docs server is not connected. Tool '${name}' unavailable.`);
+  }
+
+  try {
+    const result = await docsClient.callTool({ name, arguments: args });
+    // Convert MCP result to our format
+    const textContent = (result.content as Array<{ type: string; text?: string }> || [])
+      .filter(c => c.type === 'text' && c.text)
+      .map(c => ({ type: 'text' as const, text: c.text! }));
+
+    return {
+      content: textContent.length > 0 ? textContent : [{ type: 'text', text: '(No response from docs server)' }],
+      isError: result.isError as boolean | undefined,
+    };
+  } catch (err) {
+    return errorResponse(`Docs tool '${name}' failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** Check if a tool name belongs to the docs upstream */
+function isDocsUpstreamTool(name: string): boolean {
+  return docsTools.some(t => t.name === name);
 }
 
 // ============================================================
@@ -349,12 +451,15 @@ async function main() {
     }
   );
 
-  // Handle tool listing
+  // Connect to upstream docs server (non-blocking, best-effort)
+  await connectDocsUpstream();
+
+  // Handle tool listing — session tools + docs upstream tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: createTools(),
+    tools: [...createSessionTools(), ...docsTools],
   }));
 
-  // Handle tool calls - route via canonical registry + call_llm special case
+  // Handle tool calls — route via canonical registry, call_llm, or docs upstream
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: toolArgs } = request.params;
 
@@ -364,13 +469,18 @@ async function main() {
         return await handleCallLlm(toolArgs as Record<string, unknown>, config);
       }
 
-      // All other tools: look up in the canonical registry
+      // Check canonical session tool registry first
       const def = SESSION_TOOL_REGISTRY.get(name);
-      if (!def?.handler) {
-        return errorResponse(`Unknown tool: ${name}`);
+      if (def?.handler) {
+        return await def.handler(ctx, toolArgs);
       }
 
-      return await def.handler(ctx, toolArgs);
+      // Route to docs upstream if it's a docs tool
+      if (isDocsUpstreamTool(name)) {
+        return await callDocsUpstream(name, toolArgs as Record<string, unknown>);
+      }
+
+      return errorResponse(`Unknown tool: ${name}`);
     } catch (error) {
       return errorResponse(
         `Tool '${name}' failed: ${error instanceof Error ? error.message : String(error)}`

@@ -689,6 +689,74 @@ describe('measureMultilineText – formatting tag exclusion', () => {
 })
 
 // ============================================================================
+// HTML entity decoding — prevents double-escaping in SVG output
+// ============================================================================
+
+describe('renderMermaid – HTML entity decoding', () => {
+  it('decodes &lt; and &gt; in node labels (prevents double-escaping)', async () => {
+    // Input has pre-encoded entities (as delivered by react-markdown + rehype-raw)
+    const svg = await renderMermaid('graph LR\n  A[AsyncGenerator&lt;AgentEvent&gt;]')
+
+    // SVG should contain single-encoded &lt; (correct XML), NOT double-encoded &amp;lt;
+    expect(svg).toContain('AsyncGenerator&lt;AgentEvent&gt;')
+    expect(svg).not.toContain('&amp;lt;')
+    expect(svg).not.toContain('&amp;gt;')
+  })
+
+  it('decodes &amp; in node labels', async () => {
+    const svg = await renderMermaid('graph LR\n  A[Tom &amp; Jerry]')
+
+    expect(svg).toContain('Tom &amp; Jerry')
+    expect(svg).not.toContain('&amp;amp;')
+  })
+
+  it('decodes numeric entity references (decimal)', async () => {
+    // &#60; = <, &#62; = >
+    const svg = await renderMermaid('graph LR\n  A[List&#60;Item&#62;]')
+
+    expect(svg).toContain('List&lt;Item&gt;')
+    expect(svg).not.toContain('&#60;')
+    expect(svg).not.toContain('&#62;')
+  })
+
+  it('decodes numeric entity references (hex)', async () => {
+    // &#x3C; = <, &#x3E; = >
+    const svg = await renderMermaid('graph LR\n  A[Map&#x3C;K, V&#x3E;]')
+
+    expect(svg).toContain('Map&lt;K, V&gt;')
+    expect(svg).not.toContain('&#x3C;')
+    expect(svg).not.toContain('&#x3E;')
+  })
+
+  it('decodes entities in edge labels', async () => {
+    const svg = await renderMermaid('graph LR\n  A -->|returns &lt;T&gt;| B')
+
+    expect(svg).toContain('returns &lt;T&gt;')
+    expect(svg).not.toContain('&amp;lt;')
+  })
+
+  it('decodes entities in class diagram generics', async () => {
+    const svg = await renderMermaid(`classDiagram
+      class MyService~T~
+      MyService --> Handler : uses
+    `)
+
+    // Class parser converts ~T~ to <T> in the label, then escapeXml encodes it
+    expect(svg).toContain('MyService&lt;T&gt;')
+  })
+
+  it('handles raw angle brackets the same as decoded entities', async () => {
+    // Raw < and decoded &lt; should produce identical SVG output
+    const svgRaw = await renderMermaid('graph LR\n  A[List<Item>]')
+    const svgEncoded = await renderMermaid('graph LR\n  A[List&lt;Item&gt;]')
+
+    // Both should contain the same single-encoded entity in SVG
+    expect(svgRaw).toContain('List&lt;Item&gt;')
+    expect(svgEncoded).toContain('List&lt;Item&gt;')
+  })
+})
+
+// ============================================================================
 // Helper functions
 // ============================================================================
 

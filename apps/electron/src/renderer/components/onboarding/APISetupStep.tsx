@@ -10,7 +10,7 @@ export type ProviderSegment = 'anthropic' | 'openai' | 'copilot' | 'pi'
 const SEGMENT_LABELS: Record<ProviderSegment, string> = {
   anthropic: 'Claude',
   openai: 'Codex',
-  copilot: 'GitHub Copilot',
+  copilot: 'Copilot',
   pi: 'Pi',
 }
 
@@ -45,7 +45,7 @@ export type ApiSetupMethod =
   | 'copilot_oauth'
   | 'pi_chatgpt_oauth'
   | 'pi_copilot_oauth'
-  | 'pi_google_api_key'
+  | 'pi_api_key'
 
 /**
  * Map ApiSetupMethod to the underlying LLM connection types.
@@ -69,7 +69,7 @@ export function apiSetupMethodToConnectionTypes(method: ApiSetupMethod): {
       return { providerType: 'pi', authType: 'oauth' };
     case 'pi_copilot_oauth':
       return { providerType: 'pi', authType: 'oauth' };
-    case 'pi_google_api_key':
+    case 'pi_api_key':
       return { providerType: 'pi', authType: 'api_key' };
   }
 }
@@ -133,9 +133,9 @@ const API_SETUP_OPTIONS: ApiSetupOption[] = [
     providerType: 'pi',
   },
   {
-    id: 'pi_google_api_key',
-    name: 'Pi + Google AI Studio',
-    description: 'Use your Google AI Studio API key for Gemini models via Pi.',
+    id: 'pi_api_key',
+    name: 'Pi + API Key',
+    description: 'Use your API key from Anthropic, OpenAI, Google, and more.',
     icon: <Key className="size-4" />,
     providerType: 'pi',
   },

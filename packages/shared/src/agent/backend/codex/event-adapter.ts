@@ -12,6 +12,7 @@ import type { AgentEvent, AgentEventUsage } from '@craft-agent/core/types';
 
 import { BaseEventAdapter } from '../base-event-adapter.ts';
 import type { ReadCommandInfo } from '../read-patterns.ts';
+import { toolMetadataStore } from '../../../interceptor-common.ts';
 
 /** Max chars for command/MCP tool output before truncation (~25K tokens, matches Claude SDK behavior) */
 const MAX_COMMAND_OUTPUT_CHARS = 100_000;
@@ -212,8 +213,9 @@ export class CodexEventAdapter extends BaseEventAdapter {
           break;
         }
 
-        // Use LLM-provided displayName from Codex, fall back to commandActions classification
-        const displayName = item.displayName ?? this.getCommandDisplayName(item.commandActions);
+        // Use LLM-provided displayName from Codex, fall back to commandActions, then toolMetadataStore
+        const bashMeta = toolMetadataStore.get(item.id, this.sessionDir);
+        const displayName = item.displayName ?? this.getCommandDisplayName(item.commandActions) ?? bashMeta?.displayName;
 
         yield this.createToolStart(
           item.id,
@@ -223,23 +225,32 @@ export class CodexEventAdapter extends BaseEventAdapter {
             cwd: item.cwd,
             description: item.description,
           },
-          item.description ?? undefined,  // intent from Codex description (convert null to undefined)
-          displayName ?? undefined,       // displayName from LLM or commandActions
+          item.description ?? bashMeta?.intent ?? undefined,
+          displayName ?? undefined,
         );
         break;
       }
 
-      case 'fileChange':
-        yield this.createToolStart(item.id, 'Edit', {
-          changes: item.changes,
-        });
+      case 'fileChange': {
+        const fileMeta = toolMetadataStore.get(item.id, this.sessionDir);
+        yield this.createToolStart(
+          item.id,
+          'Edit',
+          { changes: item.changes },
+          fileMeta?.intent,
+          fileMeta?.displayName,
+        );
         break;
+      }
 
       case 'mcpToolCall': {
-        // Extract intent/displayName from arguments if available (MCP tools may include these)
+        // Extract intent/displayName from arguments, then check toolMetadataStore as fallback
         const args = item.arguments as Record<string, unknown>;
-        const mcpIntent = typeof args?._intent === 'string' ? args._intent : undefined;
-        const mcpDisplayName = typeof args?._displayName === 'string' ? args._displayName : undefined;
+        const mcpStoredMeta = toolMetadataStore.get(item.id, this.sessionDir);
+        const mcpIntent = typeof args?._intent === 'string' ? args._intent
+          : mcpStoredMeta?.intent;
+        const mcpDisplayName = typeof args?._displayName === 'string' ? args._displayName
+          : mcpStoredMeta?.displayName;
         yield this.createToolStart(
           item.id,
           `mcp__${item.server}__${item.tool}`,

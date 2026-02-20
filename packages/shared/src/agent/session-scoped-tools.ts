@@ -7,51 +7,26 @@
  * This file is a thin adapter that wraps the shared handlers from
  * @craft-agent/session-tools-core for use with the Claude SDK.
  *
- * Tools included:
- * - SubmitPlan: Submit a plan file for user review/display
- * - config_validate: Validate configuration files
- * - skill_validate: Validate skill SKILL.md files
- * - mermaid_validate: Validate Mermaid diagram syntax
- * - source_test: Validate schema, download icons, test connections
- * - source_oauth_trigger: Start OAuth authentication for MCP sources
- * - source_google_oauth_trigger: Start Google OAuth authentication
- * - source_slack_oauth_trigger: Start Slack OAuth authentication
- * - source_microsoft_oauth_trigger: Start Microsoft OAuth authentication
- * - source_credential_prompt: Prompt user for API credentials
- * - transform_data: Transform data files via script for datatable/spreadsheet blocks
- * - render_template: Render a source's HTML template with data
+ * All tool definitions, schemas, and handlers live in session-tools-core.
+ * This adapter only handles:
+ * - Session callback registry (per-session onPlanSubmitted, onAuthRequest, queryFn)
+ * - Plan state management
+ * - Claude SDK tool() wrapping with DOC_REF-enriched descriptions
+ * - call_llm (backend-specific, not in registry)
  */
 
 import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
-import { z } from 'zod';
-import { getSessionPlansPath, getSessionDataPath, getSessionPath } from '../sessions/storage.ts';
+import { getSessionPlansPath } from '../sessions/storage.ts';
 import { debug } from '../utils/debug.ts';
 import { DOC_REFS } from '../docs/index.ts';
 import { createClaudeContext } from './claude-context.ts';
-import { basename, join, normalize, resolve } from 'node:path';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, unlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-
-// Feature flags
-import { FEATURE_FLAGS } from '../feature-flags.ts';
-
-// Template rendering
-import { loadTemplate, validateTemplateData } from '../templates/loader.ts';
-import { renderMustache } from '../templates/mustache.ts';
+import { basename } from 'node:path';
 
 // Import from session-tools-core: registry + schemas + base descriptions
 import {
   SESSION_TOOL_REGISTRY,
+  SESSION_TOOL_DEFS,
   TOOL_DESCRIPTIONS as BASE_DESCRIPTIONS,
-  // Individual schemas (for Claude SDK .shape extraction)
-  SubmitPlanSchema,
-  ConfigValidateSchema,
-  SkillValidateSchema,
-  MermaidValidateSchema,
-  SourceTestSchema,
-  SourceOAuthTriggerSchema,
-  CredentialPromptSchema,
   // Types
   type ToolResult,
   type AuthRequest,
@@ -206,313 +181,17 @@ export function cleanupSessionScopedTools(sessionId: string): void {
 }
 
 // ============================================================
-// Tool Schemas
-// ============================================================
-// Note: _displayName/_intent metadata is injected dynamically by the network
-// interceptor and stripped by pre-tool-use.ts before Zod validation runs.
-// Do NOT add them here — stripping happens first, causing validation failures.
-//
-// Core tool schemas are imported from @craft-agent/session-tools-core.
-// Claude-only tools (render_template, transform_data) are defined locally.
-
-const renderTemplateSchema = {
-  source: z.string().describe('Source slug (e.g., "linear", "gmail")'),
-  template: z.string().describe('Template ID (e.g., "issue-detail", "issue-list")'),
-  data: z.record(z.string(), z.unknown()).describe('JSON data to render into the template'),
-};
-
-const transformDataSchema = {
-  language: z.enum(['python3', 'node', 'bun']).describe('Script runtime to use'),
-  script: z.string().describe('Transform script source code. Receives input file paths as command-line args (sys.argv[1:] or process.argv.slice(2)), last arg is the output file path.'),
-  inputFiles: z.array(z.string()).describe('Input file paths relative to session dir (e.g., "long_responses/stripe_txns.txt")'),
-  outputFile: z.string().describe('Output file name relative to session data/ dir (e.g., "transactions.json")'),
-};
-
-// ============================================================
 // Tool Descriptions (base from registry + Claude-specific DOC_REFS)
 // ============================================================
 
-const TOOL_DESCRIPTIONS = {
+const TOOL_DESCRIPTIONS: Record<string, string> = {
   ...BASE_DESCRIPTIONS,
   // Claude-specific enrichments with DOC_REFs
   config_validate: BASE_DESCRIPTIONS.config_validate + `\n\n**Reference:** ${DOC_REFS.sources}`,
   skill_validate: BASE_DESCRIPTIONS.skill_validate + `\n\n**Reference:** ${DOC_REFS.skills}`,
   mermaid_validate: BASE_DESCRIPTIONS.mermaid_validate + `\n\n**Reference:** ${DOC_REFS.mermaid}`,
   source_test: BASE_DESCRIPTIONS.source_test + `\n\n**Reference:** ${DOC_REFS.sources}`,
-  // Claude-only tool descriptions (not in registry)
-  render_template: `Render a source's HTML template with data.
-
-Use this when a source provides HTML templates for rich rendering of its data (e.g., issue detail views, email threads, ticket summaries).
-
-**Workflow:**
-1. Fetch data from the source (via MCP tools or API calls)
-2. Call \`render_template\` with the source slug, template ID, and data
-3. Output an \`html-preview\` block with the returned file path as \`"src"\`
-
-**Available templates** are documented in each source's \`guide.md\` under the "Templates" section.
-
-Templates use Mustache syntax — the tool handles rendering and writes the output HTML to the session data folder.`,
-
-  transform_data: `Transform data files using a script and write structured output for datatable/spreadsheet blocks, or extract HTML content for html-preview blocks.
-
-Use this tool when you need to transform large datasets (20+ rows) into structured JSON for display, or extract/decode HTML content for rendering. Write a transform script that reads the input file and produces an output file, then reference it via \`"src"\` in your datatable/spreadsheet/html-preview/pdf-preview block.
-
-**Workflow:**
-1. Call \`transform_data\` with a script that reads input files and writes output
-2. Output a datatable/spreadsheet block with \`"src": "data/output.json"\`, an html-preview block with \`"src": "data/output.html"\`, or a pdf-preview block with \`"src": "data/output.pdf"\`
-
-**Script conventions:**
-- Input file paths are passed as command-line arguments (last arg = output file path)
-- Python: \`sys.argv[1:-1]\` = input files, \`sys.argv[-1]\` = output path
-- Node/Bun: \`process.argv.slice(2, -1)\` = input files, \`process.argv.at(-1)\` = output path
-- For datatable/spreadsheet: output must be valid JSON: \`{"title": "...", "columns": [...], "rows": [...]}\`
-- For html-preview: output is an HTML file (any valid HTML)
-
-**Security:** Runs in an isolated subprocess with no access to API keys or credentials. 30-second timeout.`,
 };
-
-// ============================================================
-// Env Vars to Strip from Subprocess
-// ============================================================
-
-const BLOCKED_ENV_VARS = [
-  'ANTHROPIC_API_KEY',
-  'CLAUDE_CODE_OAUTH_TOKEN',
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
-  'AWS_SESSION_TOKEN',
-  'GITHUB_TOKEN',
-  'GH_TOKEN',
-  'OPENAI_API_KEY',
-  'GOOGLE_API_KEY',
-  'STRIPE_SECRET_KEY',
-  'NPM_TOKEN',
-];
-
-// ============================================================
-// transform_data Handler
-// ============================================================
-
-const TRANSFORM_DATA_TIMEOUT_MS = 30_000;
-
-async function handleTransformData(
-  sessionId: string,
-  workspaceRootPath: string,
-  args: {
-    language: 'python3' | 'node' | 'bun';
-    script: string;
-    inputFiles: string[];
-    outputFile: string;
-  }
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  const sessionDir = getSessionPath(workspaceRootPath, sessionId);
-  const dataDir = getSessionDataPath(workspaceRootPath, sessionId);
-
-  // Validate outputFile doesn't escape data/ directory
-  const resolvedOutput = resolve(dataDir, args.outputFile);
-  if (!resolvedOutput.startsWith(normalize(dataDir))) {
-    return {
-      content: [{ type: 'text', text: `Error: outputFile must be within the session data directory. Got: ${args.outputFile}` }],
-      isError: true,
-    };
-  }
-
-  // Resolve and validate input files (relative to session dir)
-  const resolvedInputs: string[] = [];
-  for (const inputFile of args.inputFiles) {
-    const resolvedInput = resolve(sessionDir, inputFile);
-    if (!resolvedInput.startsWith(normalize(sessionDir))) {
-      return {
-        content: [{ type: 'text', text: `Error: inputFile must be within the session directory. Got: ${inputFile}` }],
-        isError: true,
-      };
-    }
-    if (!existsSync(resolvedInput)) {
-      return {
-        content: [{ type: 'text', text: `Error: input file not found: ${inputFile}` }],
-        isError: true,
-      };
-    }
-    resolvedInputs.push(resolvedInput);
-  }
-
-  // Ensure data directory exists
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
-  }
-
-  // Write script to temp file
-  const ext = args.language === 'python3' ? '.py' : '.js';
-  const tempScript = join(tmpdir(), `craft-transform-${sessionId}-${Date.now()}${ext}`);
-  writeFileSync(tempScript, args.script, 'utf-8');
-
-  try {
-    // Build command
-    const cmd = args.language === 'python3' ? 'python3' : args.language;
-    const spawnArgs = [tempScript, ...resolvedInputs, resolvedOutput];
-
-    // Strip sensitive env vars
-    const env = { ...process.env };
-    for (const key of BLOCKED_ENV_VARS) {
-      delete env[key];
-    }
-
-    // Spawn subprocess with manual timeout that escalates to SIGKILL.
-    // We can't rely on spawn()'s built-in `timeout` option because it only sends
-    // SIGTERM, which can be caught/ignored — leaving the promise hanging forever.
-    const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolvePromise, reject) => {
-      const child = spawn(cmd, spawnArgs, {
-        cwd: dataDir,
-        env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let stdout = '';
-      let stderr = '';
-      let timedOut = false;
-
-      const killTimer = setTimeout(() => {
-        timedOut = true;
-        child.kill('SIGKILL');
-      }, TRANSFORM_DATA_TIMEOUT_MS);
-
-      child.stdout.on('data', (data: Buffer) => { stdout += data.toString(); });
-      child.stderr.on('data', (data: Buffer) => { stderr += data.toString(); });
-
-      child.on('close', (code) => {
-        clearTimeout(killTimer);
-        if (timedOut) {
-          resolvePromise({ stdout, stderr: `Script timed out after ${TRANSFORM_DATA_TIMEOUT_MS / 1000}s and was killed`, code });
-        } else {
-          resolvePromise({ stdout, stderr, code });
-        }
-      });
-
-      child.on('error', (err) => {
-        clearTimeout(killTimer);
-        reject(err);
-      });
-    });
-
-    if (result.code !== 0) {
-      const errorOutput = result.stderr || result.stdout || 'Script exited with non-zero code';
-      debug('session-scoped-tools', `transform_data failed (exit code ${result.code}): ${errorOutput.slice(0, 200)}`);
-      return {
-        content: [{ type: 'text', text: `Script failed (exit code ${result.code}):\n${errorOutput.slice(0, 2000)}` }],
-        isError: true,
-      };
-    }
-
-    // Verify output file was created
-    if (!existsSync(resolvedOutput)) {
-      return {
-        content: [{ type: 'text', text: `Script completed but output file was not created: ${args.outputFile}\n\nStdout: ${result.stdout.slice(0, 500)}` }],
-        isError: true,
-      };
-    }
-
-    // Return the absolute path for use in the datatable/spreadsheet/html-preview "src" field
-    // The UI's file reader requires absolute paths for security validation
-    const lines = [`Output written to: ${resolvedOutput}`];
-    lines.push(`\nUse this absolute path as the "src" value in your datatable, spreadsheet, html-preview, or pdf-preview block.`);
-    if (result.stdout.trim()) {
-      lines.push(`\nStdout:\n${result.stdout.slice(0, 500)}`);
-    }
-
-    debug('session-scoped-tools', `transform_data succeeded: ${resolvedOutput}`);
-    return {
-      content: [{ type: 'text', text: lines.join('') }],
-    };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: `Error running script: ${msg}` }],
-      isError: true,
-    };
-  } finally {
-    // Clean up temp script
-    try { unlinkSync(tempScript); } catch { /* ignore */ }
-  }
-}
-
-// ============================================================
-// render_template Handler
-// ============================================================
-
-async function handleRenderTemplate(
-  sessionId: string,
-  workspaceRootPath: string,
-  args: {
-    source: string;
-    template: string;
-    data: Record<string, unknown>;
-  }
-): Promise<{ content: Array<{ type: 'text'; text: string }>; isError?: boolean }> {
-  const sourcePath = join(workspaceRootPath, 'sources', args.source);
-
-  // Validate source exists
-  if (!existsSync(sourcePath)) {
-    return {
-      content: [{ type: 'text', text: `Error: Source "${args.source}" not found at ${sourcePath}` }],
-      isError: true,
-    };
-  }
-
-  // Load template
-  const template = loadTemplate(sourcePath, args.template);
-  if (!template) {
-    return {
-      content: [{ type: 'text', text: `Error: Template "${args.template}" not found for source "${args.source}".\n\nExpected file: ${join(sourcePath, 'templates', `${args.template}.html`)}` }],
-      isError: true,
-    };
-  }
-
-  // Soft validation
-  const warnings = validateTemplateData(template.meta, args.data);
-
-  // Render template
-  let rendered: string;
-  try {
-    rendered = renderMustache(template.content, args.data);
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return {
-      content: [{ type: 'text', text: `Error rendering template "${args.template}": ${msg}` }],
-      isError: true,
-    };
-  }
-
-  // Write output to session data folder
-  const dataDir = getSessionDataPath(workspaceRootPath, sessionId);
-  if (!existsSync(dataDir)) {
-    mkdirSync(dataDir, { recursive: true });
-  }
-
-  const outputFileName = `${args.source}-${args.template}-${Date.now()}.html`;
-  const outputPath = join(dataDir, outputFileName);
-  writeFileSync(outputPath, rendered, 'utf-8');
-
-  // Build response
-  const lines: string[] = [];
-  lines.push(`Rendered template: ${template.meta.name || args.template}`);
-  lines.push(`Output: ${outputPath}`);
-  lines.push('');
-  lines.push(`Use this absolute path as the "src" value in your html-preview block.`);
-
-  if (warnings.length > 0) {
-    lines.push('');
-    lines.push('⚠ Warnings:');
-    for (const w of warnings) {
-      lines.push(`  - ${w.message}`);
-    }
-    lines.push('The template was rendered but may have blank sections. Consider re-rendering with the missing fields.');
-  }
-
-  debug('session-scoped-tools', `render_template succeeded: ${outputPath} (${warnings.length} warnings)`);
-  return {
-    content: [{ type: 'text', text: lines.join('\n') }],
-  };
-}
 
 // ============================================================
 // Main Factory Function
@@ -521,6 +200,9 @@ async function handleRenderTemplate(
 /**
  * Get or create session-scoped tools for a session.
  * Returns an MCP server with all session-scoped tools registered.
+ *
+ * All tools come from the canonical SESSION_TOOL_DEFS registry in session-tools-core,
+ * except call_llm which is backend-specific.
  */
 export function getSessionScopedTools(
   sessionId: string,
@@ -557,38 +239,19 @@ export function getSessionScopedTools(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   function registryTool(name: string, schema: any) {
     const def = SESSION_TOOL_REGISTRY.get(name)!;
-    return tool(name, TOOL_DESCRIPTIONS[name as keyof typeof TOOL_DESCRIPTIONS] || def.description, schema, async (args: any) => {
+    return tool(name, TOOL_DESCRIPTIONS[name] || def.description, schema, async (args: any) => {
       const result = await def.handler!(ctx, args);
       return convertResult(result);
     });
   }
 
-  // Create tools using shared handlers from the canonical registry
-  const tools = [
-    registryTool('SubmitPlan', SubmitPlanSchema.shape),
-    registryTool('config_validate', ConfigValidateSchema.shape),
-    registryTool('skill_validate', SkillValidateSchema.shape),
-    registryTool('mermaid_validate', MermaidValidateSchema.shape),
-    registryTool('source_test', SourceTestSchema.shape),
-    registryTool('source_oauth_trigger', SourceOAuthTriggerSchema.shape),
-    registryTool('source_google_oauth_trigger', SourceOAuthTriggerSchema.shape),
-    registryTool('source_slack_oauth_trigger', SourceOAuthTriggerSchema.shape),
-    registryTool('source_microsoft_oauth_trigger', SourceOAuthTriggerSchema.shape),
-    registryTool('source_credential_prompt', CredentialPromptSchema.shape),
+  // Create tools from the canonical registry — all tools with handlers
+  const tools = SESSION_TOOL_DEFS
+    .filter(def => def.handler !== null) // Skip backend-specific tools (call_llm)
+    .map(def => registryTool(def.name, def.inputSchema.shape));
 
-    // transform_data (Claude-only, not in registry)
-    tool('transform_data', TOOL_DESCRIPTIONS.transform_data, transformDataSchema, async (args) => {
-      return handleTransformData(sessionId, workspaceRootPath, args);
-    }),
-
-    // render_template (feature-flagged)
-    ...(FEATURE_FLAGS.sourceTemplates ? [
-      tool('render_template', TOOL_DESCRIPTIONS.render_template, renderTemplateSchema, async (args) => {
-        return handleRenderTemplate(sessionId, workspaceRootPath, args);
-      }),
-    ] : []),
-
-    // call_llm — secondary LLM calls for subtasks
+  // Add call_llm — backend-specific (not in registry handler)
+  tools.push(
     createLLMTool({
       sessionId,
       getQueryFn: () => {
@@ -596,8 +259,7 @@ export function getSessionScopedTools(
         return callbacks?.queryFn;
       },
     }),
-
-  ];
+  );
 
   // Create MCP server
   cached = createSdkMcpServer({

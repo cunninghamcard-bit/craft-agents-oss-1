@@ -10,6 +10,9 @@
  * 3. Update llm-connections.ts if adding a new built-in connection
  */
 
+import { getProviders, getModels } from '@mariozechner/pi-ai';
+import type { KnownProvider, Model, Api } from '@mariozechner/pi-ai';
+
 // ============================================
 // TYPES
 // ============================================
@@ -88,10 +91,11 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
   // ----------------------------------------
   // OpenAI Codex Models — FALLBACK entries only.
   // At runtime, models are discovered dynamically via model/list from the Codex app-server.
-  // See fetchAndStoreCodexModels() in ipc.ts. These entries are used when:
+  // See ModelRefreshService in apps/electron/src/main/model-fetchers/.
+  // These entries are used as layer 4 (last resort) when:
   //   - App-server is not running (e.g., first launch before auth)
   //   - model/list call fails (network, timeout)
-  //   - Offline mode
+  //   - Cloudflare JSON also unavailable
   // ----------------------------------------
   {
     id: 'gpt-5.3-codex',
@@ -111,73 +115,12 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
   },
 
   // ----------------------------------------
-  // GitHub Copilot Models (via Copilot SDK)
-  // No hardcoded entries — models are discovered at runtime via client.listModels()
-  // and stored on the connection. See fetchAndStoreCopilotModels() in ipc.ts.
+  // GitHub Copilot & Pi Models
+  // No hardcoded entries — models are discovered dynamically:
+  //   - Copilot: client.listModels() via Copilot SDK
+  //   - Pi: getModels(provider) from @mariozechner/pi-ai SDK
+  // See ModelRefreshService in apps/electron/src/main/model-fetchers/
   // ----------------------------------------
-
-  // ----------------------------------------
-  // Pi Models (via @mariozechner/pi-coding-agent)
-  // Pi supports 20+ providers through its unified API.
-  // At runtime, models are discovered dynamically via ModelRegistry.
-  // These entries are fallbacks for offline/first-launch scenarios.
-  // ----------------------------------------
-  {
-    id: 'pi/claude-sonnet-4-5',
-    name: 'Claude Sonnet 4.5 (Pi)',
-    shortName: 'Sonnet (Pi)',
-    description: 'Anthropic Claude via Pi unified API',
-    provider: 'pi',
-    contextWindow: 200_000,
-  },
-  {
-    id: 'pi/gpt-5.3-codex',
-    name: 'GPT-5.3 Codex (Pi)',
-    shortName: 'Codex (Pi)',
-    description: 'Latest OpenAI Codex via Pi unified API',
-    provider: 'pi',
-    contextWindow: 272_000,
-  },
-  {
-    id: 'pi/gpt-5.2-codex',
-    name: 'GPT-5.2 Codex (Pi)',
-    shortName: 'Codex 5.2 (Pi)',
-    description: 'OpenAI Codex via Pi unified API',
-    provider: 'pi',
-    contextWindow: 272_000,
-  },
-  {
-    id: 'pi/gpt-5.2',
-    name: 'GPT-5.2 (Pi)',
-    shortName: 'GPT-5.2 (Pi)',
-    description: 'OpenAI GPT via Pi unified API',
-    provider: 'pi',
-    contextWindow: 272_000,
-  },
-  {
-    id: 'pi/gpt-5.1-codex-mini',
-    name: 'GPT-5.1 Codex Mini (Pi)',
-    shortName: 'Codex Mini (Pi)',
-    description: 'Fast OpenAI Codex via Pi unified API',
-    provider: 'pi',
-    contextWindow: 272_000,
-  },
-  {
-    id: 'pi/gpt-5.1-codex-max',
-    name: 'GPT-5.1 Codex Max (Pi)',
-    shortName: 'Codex Max (Pi)',
-    description: 'OpenAI Codex Max via Pi unified API',
-    provider: 'pi',
-    contextWindow: 272_000,
-  },
-  {
-    id: 'pi/gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro (Pi)',
-    shortName: 'Gemini Pro (Pi)',
-    description: 'Google Gemini via Pi unified API',
-    provider: 'pi',
-    contextWindow: 1_000_000,
-  },
 ];
 
 // ============================================
@@ -197,43 +140,143 @@ export const ANTHROPIC_MODELS = getModelsByProvider('anthropic');
 /** All OpenAI/Codex models */
 export const OPENAI_MODELS = getModelsByProvider('openai');
 
-/** All GitHub Copilot models */
-export const COPILOT_MODELS = getModelsByProvider('copilot');
 
-/** All Pi models */
-export const PI_MODELS = getModelsByProvider('pi');
+// ============================================
+// PI MODEL DISCOVERY (from SDK)
+// ============================================
 
 /**
- * Pi model ID prefix → piAuthProvider mapping.
- * Used to filter Pi fallback models based on which provider the user authenticated with.
+ * Convert a Pi SDK Model to our ModelDefinition format.
  */
-const PI_AUTH_PROVIDER_PREFIXES: Record<string, string[]> = {
-  'anthropic': ['claude'],
-  'openai': ['gpt', 'o1', 'o3', 'o4'],
-  'openai-codex': ['gpt', 'o1', 'o3', 'o4'],
-  'azure-openai-responses': ['gpt', 'o1', 'o3', 'o4'],
-  'github-copilot': ['claude', 'gpt', 'o1', 'o3', 'o4'],
-  'google': ['gemini'],
+function piModelToDefinition(m: Model<Api>): ModelDefinition {
+  // Derive a short display name: "Claude 4.5 Sonnet" → "Sonnet (Pi)"
+  // Just use the name as-is with " (Pi)" suffix for shortName
+  const lastPart = m.name.split(/[\s-]/).pop() ?? m.name;
+  const shortName = m.name.length > 20
+    ? lastPart + ' (Pi)'
+    : m.name + ' (Pi)';
+
+  return {
+    id: `pi/${m.id}`,
+    name: `${m.name} (Pi)`,
+    shortName,
+    description: `${m.provider} model via Pi unified API`,
+    provider: 'pi',
+    contextWindow: m.contextWindow,
+    supportsThinking: m.reasoning,
+  };
+}
+
+/**
+ * Get Pi models for a specific auth provider directly from the Pi SDK.
+ * The SDK's getModels() already filters by provider — no manual prefix matching needed.
+ *
+ * @param piAuthProvider - The Pi auth provider name (e.g., 'anthropic', 'openai', 'google')
+ * @returns Pi models for that provider, mapped to ModelDefinition format
+ */
+export function getPiModelsForAuthProvider(piAuthProvider: string): ModelDefinition[] {
+  try {
+    const models = getModels(piAuthProvider as KnownProvider);
+    if (models.length > 0) {
+      return models.map(piModelToDefinition);
+    }
+  } catch {
+    // Provider not recognized by SDK — fall through
+  }
+  return [];
+}
+
+/**
+ * Get all Pi models across all providers from the SDK.
+ * Used as fallback when no specific piAuthProvider is set.
+ *
+ * @returns All Pi models from all known providers
+ */
+export function getAllPiModels(): ModelDefinition[] {
+  const allModels: ModelDefinition[] = [];
+  for (const provider of getProviders()) {
+    try {
+      const models = getModels(provider);
+      allModels.push(...models.map(piModelToDefinition));
+    } catch {
+      // Skip providers that fail
+    }
+  }
+  return allModels;
+}
+
+// ============================================
+// PI PROVIDER DISCOVERY (from SDK)
+// ============================================
+
+/**
+ * Display metadata for Pi SDK providers.
+ * Providers not in this map use a derived display name (e.g., 'xai' → 'Xai').
+ */
+const PI_PROVIDER_DISPLAY: Partial<Record<KnownProvider, { label: string; placeholder: string }>> = {
+  'anthropic':              { label: 'Anthropic',          placeholder: 'sk-ant-...' },
+  'google':                 { label: 'Google AI Studio',   placeholder: 'AIza...' },
+  'openai':                 { label: 'OpenAI',             placeholder: 'sk-...' },
+  'openrouter':             { label: 'OpenRouter',         placeholder: 'sk-or-...' },
+  'groq':                   { label: 'Groq',               placeholder: 'gsk_...' },
+  'mistral':                { label: 'Mistral',            placeholder: 'sk-...' },
+  'xai':                    { label: 'xAI (Grok)',         placeholder: 'xai-...' },
+  'cerebras':               { label: 'Cerebras',           placeholder: 'csk-...' },
+  'amazon-bedrock':         { label: 'Amazon Bedrock',     placeholder: 'AKIA...' },
+  'azure-openai-responses': { label: 'Azure OpenAI',       placeholder: 'sk-...' },
+  'vercel-ai-gateway':      { label: 'Vercel AI Gateway',  placeholder: 'sk-...' },
+  'huggingface':            { label: 'Hugging Face',       placeholder: 'hf_...' },
 };
 
 /**
- * Get Pi models filtered by auth provider.
- * When a Pi connection authenticates with a specific provider (e.g., Anthropic),
- * only models from that provider should be shown.
- *
- * @param piAuthProvider - The Pi auth provider name (e.g., 'anthropic', 'openai', 'github-copilot')
- * @returns Filtered Pi models matching the auth provider, or all PI_MODELS as fallback
+ * Providers to EXCLUDE from the Pi API key dropdown.
+ * These use OAuth, device flows, or other non-API-key auth.
  */
-export function getPiModelsForAuthProvider(piAuthProvider: string): ModelDefinition[] {
-  const prefixes = PI_AUTH_PROVIDER_PREFIXES[piAuthProvider];
-  if (!prefixes) return PI_MODELS;
+const PI_EXCLUDED_PROVIDERS: Set<string> = new Set([
+  'github-copilot',      // Uses OAuth device flow (separate onboarding card)
+  'openai-codex',        // Uses ChatGPT OAuth (separate onboarding card)
+  'google-vertex',       // Requires service account / gcloud auth
+  'google-gemini-cli',   // Internal Google CLI variant
+  'google-antigravity',  // Internal Google variant
+]);
 
-  const filtered = PI_MODELS.filter(m => {
-    const bareId = m.id.replace(/^pi\//, '').toLowerCase();
-    return prefixes.some(p => bareId.startsWith(p));
-  });
+/** Info for a Pi provider available in the API key flow. */
+export interface PiProviderInfo {
+  key: string;
+  label: string;
+  placeholder: string;
+}
 
-  return filtered.length > 0 ? filtered : PI_MODELS;
+/** Convert 'vercel-ai-gateway' → 'Vercel Ai Gateway' etc. */
+function formatProviderName(key: string): string {
+  return key.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+}
+
+/**
+ * Get all Pi providers available for API key authentication.
+ * Dynamically loaded from the Pi SDK — updates automatically when SDK adds providers.
+ */
+export function getPiApiKeyProviders(): PiProviderInfo[] {
+  return getProviders()
+    .filter(p => !PI_EXCLUDED_PROVIDERS.has(p))
+    .map(p => {
+      const display = PI_PROVIDER_DISPLAY[p];
+      return {
+        key: p,
+        label: display?.label ?? formatProviderName(p),
+        placeholder: display?.placeholder ?? 'sk-...',
+      };
+    })
+    .sort((a, b) => {
+      // Pin the big 3 at top, rest alphabetical
+      const priority = ['anthropic', 'google', 'openai'];
+      const ai = priority.indexOf(a.key);
+      const bi = priority.indexOf(b.key);
+      if (ai !== -1 && bi !== -1) return ai - bi;
+      if (ai !== -1) return -1;
+      if (bi !== -1) return 1;
+      return a.label.localeCompare(b.label);
+    });
 }
 
 /**
@@ -270,11 +313,6 @@ export const DEFAULT_MODEL = getModelIdByShortName('Opus');
 /** Default model for Codex/OpenAI connections (used when creating/backfilling connections) */
 export const DEFAULT_CODEX_MODEL = getModelIdByShortName('Codex');
 
-/** Default model for Copilot connections — no hardcoded default; models come from listModels() */
-export const DEFAULT_COPILOT_MODEL: string | undefined = undefined;
-
-/** Default model for Pi connections — no hardcoded default; models are dynamic */
-export const DEFAULT_PI_MODEL: string | undefined = undefined;
 
 // ============================================
 // UTILITY MODELS
@@ -364,28 +402,36 @@ export function isClaudeModel(modelId: string): boolean {
 
 /**
  * Check if a model ID refers to a Codex/OpenAI model.
- * Matches patterns like 'gpt-5.3-codex', 'gpt-5.1-codex-mini', etc.
+ * Checks MODEL_REGISTRY first, then optionally searches provided models
+ * (e.g. dynamically-fetched connection models not in the registry).
+ * Falls back to legacy string pattern for models not yet in registry.
  */
-export function isCodexModel(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
-  return lower.includes('codex');
+export function isCodexModel(modelId: string, connectionModels?: ModelDefinition[]): boolean {
+  const model = getModelById(modelId);
+  if (model) return model.provider === 'openai';
+  // Dynamic models aren't in MODEL_REGISTRY — check connection models if provided
+  if (connectionModels) {
+    return connectionModels.some(m => m.id === modelId && m.provider === 'openai');
+  }
+  // Fallback: legacy string pattern
+  return modelId.toLowerCase().includes('codex');
 }
 
 /**
  * Check if a model ID refers to a Copilot model.
+ * Checks MODEL_REGISTRY first, then optionally searches provided models
+ * (e.g. dynamically-fetched connection models not in the registry).
  */
-export function isCopilotModel(modelId: string): boolean {
+export function isCopilotModel(modelId: string, connectionModels?: ModelDefinition[]): boolean {
   const model = getModelById(modelId);
-  return model?.provider === 'copilot';
+  if (model) return model.provider === 'copilot';
+  // Dynamic models aren't in MODEL_REGISTRY — check connection models if provided
+  if (connectionModels) {
+    return connectionModels.some(m => m.id === modelId && m.provider === 'copilot');
+  }
+  return false;
 }
 
-/**
- * Check if a model ID refers to a Pi model.
- */
-export function isPiModel(modelId: string): boolean {
-  const model = getModelById(modelId);
-  return model?.provider === 'pi';
-}
 
 /**
  * Get the provider for a model ID.

@@ -9,6 +9,7 @@
  * The generated config is written to the session's CODEX_HOME directory.
  */
 
+import { join } from 'path';
 import type { LoadedSource } from '../sources/types.ts';
 import type { SdkMcpServerConfig } from '../agent/backend/types.ts';
 import { isSourceUsable } from '../sources/storage.ts';
@@ -143,6 +144,13 @@ export interface CodexConfigGeneratorOptions {
    */
   plansFolderPath?: string;
 
+  /**
+   * URL of the McpPoolServer (HTTP MCP server in the main process).
+   * When set, MCP sources are served through this single endpoint instead
+   * of individual [mcp_servers.{slug}] entries. The pool manages all source
+   * connections centrally.
+   */
+  poolServerUrl?: string;
 }
 
 /**
@@ -450,6 +458,7 @@ export function generateCodexConfig(options: CodexConfigGeneratorOptions): Codex
     workspaceRootPath,
     plansFolderPath,
     nodePath,
+    poolServerUrl,
   } = options;
 
   const mcpSources: string[] = [];
@@ -475,42 +484,53 @@ export function generateCodexConfig(options: CodexConfigGeneratorOptions): Codex
     sections.push('');
   }
 
-  // Process each source
+  // Process each source — categorize into MCP and API
   for (const source of sources) {
     if (!isSourceUsable(source)) continue;
 
     const slug = source.config.slug;
 
     if (source.config.type === 'mcp') {
-      // MCP source - use pre-built config if available
-      const serverConfig = mcpServerConfigs[slug];
-      if (serverConfig) {
-        // Validate slug before using (may throw for invalid slugs)
-        try {
-          sections.push(generateMcpServerSection(slug, serverConfig));
-          sections.push('');
-          mcpSources.push(slug);
-        } catch (error) {
-          // Slug validation failed - add warning and skip this source
+      if (poolServerUrl) {
+        // Pool server handles all MCP sources — just track the slug
+        mcpSources.push(slug);
+      } else {
+        // Fallback: individual [mcp_servers.{slug}] entries (no pool server)
+        const serverConfig = mcpServerConfigs[slug];
+        if (serverConfig) {
+          try {
+            sections.push(generateMcpServerSection(slug, serverConfig));
+            sections.push('');
+            mcpSources.push(slug);
+          } catch (error) {
+            warnings.push({
+              sourceSlug: slug,
+              type: 'slug_validation_failed',
+              message: error instanceof Error ? error.message : `Invalid slug: ${slug}`,
+            });
+          }
+        } else {
           warnings.push({
             sourceSlug: slug,
-            type: 'slug_validation_failed',
-            message: error instanceof Error ? error.message : `Invalid slug: ${slug}`,
+            type: 'missing_server_config',
+            message: `MCP source "${slug}" is enabled but has no server config (missing credentials?)`,
           });
         }
-      } else {
-        // Enabled MCP source without server config - likely auth missing
-        warnings.push({
-          sourceSlug: slug,
-          type: 'missing_server_config',
-          message: `MCP source "${slug}" is enabled but has no server config (missing credentials?)`,
-        });
       }
     } else if (source.config.type === 'api') {
-      // API source - needs bridge server
       apiSources.push(slug);
     }
-    // Local sources are not currently supported via Codex config
+  }
+
+  // Pool server: single HTTP MCP endpoint for all source tools
+  // The McpPoolServer in the main process manages all source connections.
+  if (poolServerUrl && mcpSources.length > 0) {
+    sections.push('# MCP sources via centralized pool (all source tools served from one endpoint)');
+    sections.push('[mcp_servers.sources]');
+    sections.push(`url = ${formatTomlValue(poolServerUrl)}`);
+    sections.push('startup_timeout_sec = 10');
+    sections.push('tool_timeout_sec = 120');
+    sections.push('');
   }
 
   // Add bridge server if we have API sources
@@ -553,15 +573,8 @@ export function generateCodexConfig(options: CodexConfigGeneratorOptions): Codex
     sections.push('');
   }
 
-  // Craft Agents documentation - public Mintlify MCP server, no auth needed.
-  // Provides SearchCraftAgents tool for finding source setup guides.
-  // This matches the craft-agents-docs server in Claude's SDK options.
-  sections.push('# Craft Agents documentation (source setup guides, API references)');
-  sections.push('[mcp_servers.craft-agents-docs]');
-  sections.push('url = "https://agents.craft.do/docs/mcp"');
-  sections.push('startup_timeout_sec = 10');
-  sections.push('tool_timeout_sec = 30');
-  sections.push('');
+  // Craft Agents documentation (SearchCraftAgents) is now proxied through session-mcp-server,
+  // so no separate [mcp_servers.craft-agents-docs] section is needed.
 
   return {
     toml: sections.join('\n'),
@@ -589,7 +602,7 @@ export function getCredentialCachePath(
   workspaceRootPath: string,
   sourceSlug: string
 ): string {
-  return `${workspaceRootPath}/sources/${sourceSlug}/.credential-cache.json`;
+  return join(workspaceRootPath, 'sources', sourceSlug, '.credential-cache.json');
 }
 
 /**

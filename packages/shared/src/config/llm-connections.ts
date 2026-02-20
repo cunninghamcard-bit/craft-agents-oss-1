@@ -11,8 +11,8 @@ import {
   type ModelDefinition,
   ANTHROPIC_MODELS,
   OPENAI_MODELS,
-  PI_MODELS,
   getPiModelsForAuthProvider,
+  getAllPiModels,
 } from './models';
 
 // ============================================================
@@ -392,9 +392,9 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
     return []; // Copilot models are dynamic — fetched via listModels(), no hardcoded fallbacks
   }
 
-  // Pi: filter by auth provider if known; pi_compat already handled by isCompatProvider above
+  // Pi: fetch models from SDK, filtered by auth provider if known
   if (providerType === 'pi') {
-    return piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : PI_MODELS;
+    return piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels();
   }
 
   // Anthropic, Bedrock, Vertex all use Claude models
@@ -412,6 +412,20 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
  * @param piAuthProvider - Optional Pi auth provider for filtering Pi models
  * @returns Default model list (ModelDefinition[] for standard, string[] for compat)
  */
+/**
+ * Preferred default model IDs per Pi auth provider.
+ * The Pi SDK returns models in arbitrary order (alphabetical by ID), which means
+ * deprecated models like claude-3-5-haiku-20241022 can end up first.
+ * This map ensures getDefaultModelForConnection() picks a modern, capable model.
+ *
+ * Format: bare model IDs (without pi/ prefix). Matched against pi/{id} or pi/{id}-*.
+ */
+export const PI_PREFERRED_DEFAULTS: Record<string, string[]> = {
+  anthropic: ['claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-sonnet-4-0', 'claude-haiku-4-5'],
+  openai: ['gpt-5.2', 'gpt-5.1', 'gpt-5', 'o4-mini', 'o3', 'gpt-4o'],
+  google: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+};
+
 export function getDefaultModelsForConnection(providerType: LlmProviderType, piAuthProvider?: string): Array<ModelDefinition | string> {
   if (providerType === 'openai_compat') return [
     'openai/gpt-5.2-codex',
@@ -419,7 +433,21 @@ export function getDefaultModelsForConnection(providerType: LlmProviderType, piA
   ];
   if (providerType === 'openai') return OPENAI_MODELS;
   if (providerType === 'copilot') return []; // Dynamic — fetched via listModels()
-  if (providerType === 'pi') return piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : PI_MODELS;
+  if (providerType === 'pi') {
+    const models = piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels();
+    // Sort preferred defaults first so getDefaultModelForConnection picks a modern model
+    const preferred = (piAuthProvider && PI_PREFERRED_DEFAULTS[piAuthProvider]) || [];
+    if (preferred.length > 0) {
+      models.sort((a, b) => {
+        const aIdx = preferred.findIndex(p => a.id === `pi/${p}` || a.id.startsWith(`pi/${p}-`));
+        const bIdx = preferred.findIndex(p => b.id === `pi/${p}` || b.id.startsWith(`pi/${p}-`));
+        const aPrio = aIdx >= 0 ? aIdx : preferred.length;
+        const bPrio = bIdx >= 0 ? bIdx : preferred.length;
+        return aPrio - bPrio;
+      });
+    }
+    return models;
+  }
   if (providerType === 'pi_compat') return [];  // Dynamic — user specifies
   if (providerType === 'anthropic_compat') return [
     'anthropic/claude-opus-4.6',

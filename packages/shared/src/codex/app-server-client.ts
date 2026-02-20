@@ -148,6 +148,11 @@ export interface ToolCallPreExecuteParams {
   input: unknown;       // JSON value of tool input
   mcpServer?: string;   // For MCP tools
   mcpTool?: string;     // For MCP tools
+  /** Tool metadata from Codex fork (populated when fork includes metadata in PreExecute params) */
+  metadata?: {
+    intent?: string;
+    displayName?: string;
+  };
 }
 
 /**
@@ -1101,6 +1106,13 @@ export class AppServerClient extends EventEmitter {
 
       case 'sessionConfigured':
         this.emit('sessionConfigured', params as SessionConfiguredNotification);
+        break;
+
+      // Codex fork emits these as duplicates of the v2 protocol notifications above.
+      // Already handled via item/agentMessage/delta, item/completed, etc.
+      case 'codex/event/agent_message_delta':
+      case 'codex/event/item_completed':
+      case 'codex/event/agent_message':
         break;
 
       default:

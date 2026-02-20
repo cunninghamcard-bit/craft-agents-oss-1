@@ -10,9 +10,10 @@
  * Used in: Onboarding CredentialsStep, Settings API dialog
  */
 
-import { useState } from "react"
+import { useState, useMemo } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { getPiApiKeyProviders } from "@config/models"
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -29,6 +30,7 @@ export interface ApiKeySubmitData {
   baseUrl?: string
   connectionDefaultModel?: string
   models?: string[]
+  piAuthProvider?: string
 }
 
 export interface ApiKeyInputProps {
@@ -43,11 +45,11 @@ export interface ApiKeyInputProps {
   /** Disable the input (e.g. during validation) */
   disabled?: boolean
   /** Provider type determines which presets and placeholders to show */
-  providerType?: 'anthropic' | 'openai' | 'pi' | 'google'
+  providerType?: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'
 }
 
-// Preset key includes both provider defaults ('anthropic', 'openai', 'pi') and third-party services
-type PresetKey = 'anthropic' | 'openai' | 'pi' | 'openrouter' | 'vercel' | 'ollama' | 'custom'
+// Preset key — string to support dynamic Pi SDK providers
+type PresetKey = string
 
 interface Preset {
   key: PresetKey
@@ -84,10 +86,20 @@ const GOOGLE_PRESETS: Preset[] = [
   { key: 'google', label: 'Google AI Studio', url: '' },
 ]
 
+// Pi API Key provider presets — built dynamically from Pi SDK's provider registry
+function buildPiApiKeyProviders(): Preset[] {
+  return getPiApiKeyProviders().map(p => ({
+    key: p.key,
+    label: p.label,
+    url: '',
+  }))
+}
+
 const COMPAT_ANTHROPIC_DEFAULTS = 'anthropic/claude-opus-4.6, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5'
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
 
-function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google'): Preset[] {
+function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
+  if (providerType === 'pi_api_key') return buildPiApiKeyProviders()
   if (providerType === 'google') return GOOGLE_PRESETS
   if (providerType === 'pi') return PI_PRESETS
   return providerType === 'openai' ? OPENAI_PRESETS : ANTHROPIC_PRESETS
@@ -127,10 +139,21 @@ export function ApiKeyInput({
   const isDisabled = disabled || status === 'validating'
 
   // Determine if we're using the default provider preset (hide base URL field)
-  const isDefaultProviderPreset = activePreset === 'anthropic' || activePreset === 'openai' || activePreset === 'pi' || activePreset === 'google'
+  const isPiApiKeyFlow = providerType === 'pi_api_key'
+  // For Pi API key flow, all presets are "default" (Pi SDK has built-in endpoints)
+  const isDefaultProviderPreset = isPiApiKeyFlow
+    || activePreset === 'anthropic' || activePreset === 'openai' || activePreset === 'pi' || activePreset === 'google'
 
-  // Provider-specific placeholders
-  const apiKeyPlaceholder = providerType === 'google' ? 'AIza...' : providerType === 'pi' ? 'pi-...' : providerType === 'openai' ? 'sk-...' : 'sk-ant-...'
+  // Provider-specific placeholders — dynamic for Pi API key, static for others
+  const piProviderInfo = useMemo(
+    () => isPiApiKeyFlow ? getPiApiKeyProviders().find(p => p.key === activePreset) : undefined,
+    [isPiApiKeyFlow, activePreset],
+  )
+  const apiKeyPlaceholder = piProviderInfo?.placeholder
+    ?? (providerType === 'google' ? 'AIza...'
+    : providerType === 'pi' ? 'pi-...'
+    : providerType === 'openai' ? 'sk-...'
+    : 'sk-ant-...')
 
   const handlePresetSelect = (preset: Preset) => {
     setActivePreset(preset.key)
@@ -185,6 +208,7 @@ export function ApiKeyInput({
       baseUrl: isDefault ? undefined : effectiveBaseUrl,
       connectionDefaultModel: parsedModels[0],
       models: parsedModels.length > 0 ? parsedModels : undefined,
+      piAuthProvider: isPiApiKeyFlow ? activePreset : undefined,
     })
   }
 
@@ -225,11 +249,11 @@ export function ApiKeyInput({
         </div>
       </div>
 
-      {/* Endpoint Preset Selector - hidden when only one preset (e.g. Codex/OpenAI direct) */}
+      {/* Endpoint/Provider Preset Selector - hidden when only one preset (e.g. Codex/OpenAI direct) */}
       {presets.length > 1 && (
       <div className="space-y-2">
         <div className="flex items-center justify-between">
-          <Label htmlFor="base-url">Endpoint</Label>
+          <Label htmlFor="base-url">{isPiApiKeyFlow ? 'Provider' : 'Endpoint'}</Label>
           <DropdownMenu>
             <DropdownMenuTrigger
               disabled={isDisabled}

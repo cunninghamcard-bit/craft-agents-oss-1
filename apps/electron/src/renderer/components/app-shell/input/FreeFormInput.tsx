@@ -55,7 +55,7 @@ import { cn } from '@/lib/utils'
 import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
-import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, isCodexModel, isCopilotModel } from '@config/models'
+import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, isCodexModel, isCopilotModel, type ModelDefinition } from '@config/models'
 import { resolveEffectiveConnectionSlug, isCompatProvider } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
@@ -1863,7 +1863,7 @@ Model
               : null
             // Show badge when >= 80% of compaction threshold AND not currently compacting
             // Hide for Codex and Copilot models which don't support context compaction
-            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting && !isCodexModel(currentModel) && !isCopilotModel(currentModel)
+            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting && !isCodexModel(currentModel, availableModels as ModelDefinition[]) && !isCopilotModel(currentModel, availableModels as ModelDefinition[])
 
             if (!showWarning) return null
 

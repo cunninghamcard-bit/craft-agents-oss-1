@@ -66,7 +66,8 @@ Sentry.setUser({ id: machineId })
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { SessionManager } from './sessions'
-import { registerIpcHandlers, startCodexModelRefresh, stopCodexModelRefresh } from './ipc'
+import { registerIpcHandlers } from './ipc'
+import { initModelRefreshService, getModelRefreshService } from './model-fetchers'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
 import { loadWindowState, saveWindowState } from './window-state'
@@ -312,6 +313,23 @@ app.whenReady().then(async () => {
       }
     }
 
+    // Initialize model refresh service BEFORE IPC handlers —
+    // getModelRefreshService() is called from IPC handlers, so it must be ready
+    // before any renderer can send messages. The credential resolver uses lazy
+    // import() so it doesn't depend on session manager being initialized first.
+    const modelRefreshService = initModelRefreshService(async (slug: string) => {
+      const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+      const manager = getCredentialManager()
+      const [apiKey, oauth] = await Promise.all([
+        manager.getLlmApiKey(slug).catch(() => null),
+        manager.getLlmOAuth(slug).catch(() => null),
+      ])
+      return {
+        apiKey: apiKey ?? undefined,
+        oauthAccessToken: oauth?.accessToken,
+      }
+    })
+
     // Register IPC handlers (must happen before window creation)
     registerIpcHandlers(sessionManager, windowManager)
 
@@ -321,8 +339,8 @@ app.whenReady().then(async () => {
     // Initialize auth (must happen after window creation for error reporting)
     await sessionManager.initialize()
 
-    // Start periodic Codex model discovery (fetches model/list from app-server every 30 min)
-    startCodexModelRefresh()
+    // Start periodic model refresh after auth is initialized
+    modelRefreshService.startAll()
 
     // Run credential health check at startup to detect issues early
     // (corruption, machine migration, missing credentials for default connection)
@@ -451,8 +469,8 @@ app.on('before-quit', async (event) => {
     // Clean up SessionManager resources (file watchers, timers, etc.)
     sessionManager.cleanup()
 
-    // Stop periodic Codex model refresh
-    stopCodexModelRefresh()
+    // Stop all model refresh timers
+    getModelRefreshService().stopAll()
 
     // Clean up power manager (release power blocker)
     const { cleanup: cleanupPowerManager } = await import('./power-manager')

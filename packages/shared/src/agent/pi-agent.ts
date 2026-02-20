@@ -64,8 +64,8 @@ import { createClaudeContext, type SessionToolContext } from './claude-context.t
 // call_llm pre-execution pipeline
 import { buildCallLlmRequest } from './llm-tool.ts';
 
-// MCP client for source tool proxying
-import { CraftMcpClient, type McpClientConfig } from '../mcp/client.ts';
+// McpClientPool for source tool proxying (centralized pool from main process)
+import type { McpClientPool } from '../mcp/mcp-pool.ts';
 
 // Path utilities
 import { join } from 'path';
@@ -133,23 +133,14 @@ export class PiAgent extends BaseAgent {
   // Pending mini completions (correlation map for subprocess mini_completion_result)
   private pendingMiniCompletions: Map<string, {
     resolve: (text: string | null) => void;
+    reject: (error: Error) => void;
   }> = new Map();
 
   // Current user message (for context in summarization)
   private currentUserMessage: string = '';
 
-  // Source server configs for proxy tool routing
-  private sourceMcpServers: Record<string, SdkMcpServerConfig> = {};
-  private sourceApiServers: Record<string, unknown> = {};
-
-  // MCP clients for source tool execution (slug -> client)
-  private mcpClients: Map<string, CraftMcpClient> = new Map();
-  // MCP tool name -> source slug mapping (e.g., "linear_get_viewer" -> "linear")
-  private mcpToolToSlug: Map<string, string> = new Map();
-  // MCP tool name -> original tool name (e.g., "linear_get_viewer" -> "get_viewer")
-  private mcpToolToOriginal: Map<string, string> = new Map();
-  // Cached MCP proxy tool defs (for re-registration when subprocess respawns)
-  private mcpProxyDefs: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> = [];
+  // Pool reference for convenience (from this.config.mcpPool)
+  private get mcpPool(): McpClientPool | undefined { return this.config.mcpPool; }
 
   // Cached session tool context (lazy-created on first session tool call)
   private _sessionToolContext: SessionToolContext | null = null;
@@ -168,6 +159,11 @@ export class PiAgent extends BaseAgent {
 
     this.piSessionId = config.session?.sdkSessionId || null;
     this.adapter = new PiEventAdapter();
+
+    // Set session dir on adapter for concurrent-safe toolMetadataStore lookups
+    if (config.session?.id && config.workspace.rootPath) {
+      this.adapter.setSessionDir(join(config.workspace.rootPath, 'sessions', config.session.id));
+    }
 
     if (!config.isHeadless) {
       this.startConfigWatcher();
@@ -210,13 +206,30 @@ export class PiAgent extends BaseAgent {
       this.subprocessReadyResolve = resolve;
     });
 
+    // Build session ID and session dir path upfront (used for spawn env + init command)
+    const sessionId = this.config.session?.id || `agent-${Date.now()}`;
+    const sessionDir = this.config.session
+      ? join(this.config.workspace.rootPath, 'sessions', sessionId)
+      : undefined;
+
+    // Build spawn args — optionally preload the network interceptor
+    // for tool metadata injection/capture across all API formats.
+    const args = [piServerPath];
+    if (this.config.interceptorPath) {
+      args.unshift('--require', this.config.interceptorPath);
+    }
+
     // Spawn the subprocess
-    const child = spawn(nodePath, [piServerPath], {
+    const child = spawn(nodePath, args, {
       cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
         ...this.config.envOverrides,
+        // Pass session dir for cross-process toolMetadataStore
+        ...(sessionDir ? { CRAFT_SESSION_DIR: sessionDir } : {}),
+        // Propagate debug mode
+        CRAFT_DEBUG: (process.argv.includes('--debug') || process.env.CRAFT_DEBUG === '1') ? '1' : '0',
       },
     });
 
@@ -254,9 +267,6 @@ export class PiAgent extends BaseAgent {
     // Retrieve auth credentials for the subprocess
     const piAuth = await this.getPiAuth();
     const legacyApiKey = piAuth ? undefined : await this.getApiKey();
-
-    // Build session path for the subprocess
-    const sessionId = this.config.session?.id || `agent-${Date.now()}`;
     const sessionPath = this.config.session
       ? getSessionPlansPath(this.config.workspace.rootPath, sessionId).replace(/\/plans$/, '')
       : '';
@@ -307,22 +317,22 @@ export class PiAgent extends BaseAgent {
     });
     this.debug(`Registered ${sessionToolDefs.length} session tools with subprocess`);
 
-    // If MCP sources were set before subprocess was spawned, register their tools now.
-    if (this.mcpProxyDefs.length > 0) {
-      this.registerMcpToolsWithSubprocess();
-    }
+    // If pool has source tools, register them with the subprocess.
+    this.registerPoolToolsWithSubprocess();
   }
 
   /**
-   * Send cached MCP source tool defs to subprocess as proxy tools.
+   * Send pool's proxy tool defs to subprocess for model visibility.
    */
-  private registerMcpToolsWithSubprocess(): void {
-    if (this.mcpProxyDefs.length > 0) {
+  private registerPoolToolsWithSubprocess(): void {
+    if (!this.mcpPool) return;
+    const proxyDefs = this.mcpPool.getProxyToolDefs();
+    if (proxyDefs.length > 0) {
       this.send({
         type: 'register_tools',
-        tools: this.mcpProxyDefs,
+        tools: proxyDefs,
       });
-      this.debug(`Re-registered ${this.mcpProxyDefs.length} MCP source tools with new subprocess`);
+      this.debug(`Registered ${proxyDefs.length} MCP source tools from pool with subprocess`);
     }
   }
 
@@ -486,6 +496,11 @@ export class PiAgent extends BaseAgent {
 
       case 'error':
         this.debug(`Subprocess error: ${msg.message}`);
+        // Reject any pending mini completions so errors propagate immediately
+        for (const [id, pending] of this.pendingMiniCompletions) {
+          pending.reject(new Error(String(msg.message)));
+          this.pendingMiniCompletions.delete(id);
+        }
         this.eventQueue.enqueue({
           type: 'error',
           message: `Pi subprocess error: ${msg.message}`,
@@ -614,19 +629,9 @@ export class PiAgent extends BaseAgent {
       return this.executeSessionTool(strippedName, args);
     }
 
-    // MCP source tools — route to connected MCP client
-    const sourceSlug = this.mcpToolToSlug.get(toolName);
-    if (sourceSlug) {
-      return this.executeMcpTool(toolName, sourceSlug, args);
-    }
-
-    // API source tools
-    if (toolName.startsWith('api_')) {
-      return {
-        content: `API tool proxy for "${toolName}" is not yet connected. ` +
-                 `The Pi backend does not yet support API source tool proxying.`,
-        isError: true,
-      };
+    // MCP source tools — route through centralized pool
+    if (this.mcpPool?.isProxyTool(toolName)) {
+      return this.mcpPool.callTool(toolName, args);
     }
 
     // Unknown tool
@@ -634,54 +639,6 @@ export class PiAgent extends BaseAgent {
       content: `Unknown proxy tool: ${toolName}`,
       isError: true,
     };
-  }
-
-  /**
-   * Execute an MCP source tool via the connected MCP client.
-   */
-  private async executeMcpTool(
-    proxyName: string,
-    sourceSlug: string,
-    args: Record<string, unknown>
-  ): Promise<{ content: string; isError: boolean }> {
-    const client = this.mcpClients.get(sourceSlug);
-    if (!client) {
-      return {
-        content: `MCP client for source "${sourceSlug}" is not connected.`,
-        isError: true,
-      };
-    }
-
-    const originalToolName = this.mcpToolToOriginal.get(proxyName);
-    if (!originalToolName) {
-      return {
-        content: `Unknown MCP tool mapping: ${proxyName}`,
-        isError: true,
-      };
-    }
-
-    try {
-      const result = await client.callTool(originalToolName, args) as {
-        content?: Array<{ type: string; text?: string }>;
-        isError?: boolean;
-      };
-
-      // Extract text from MCP result
-      const textParts = (result.content || [])
-        .filter((c: { type: string }) => c.type === 'text')
-        .map((c: { text?: string }) => c.text || '');
-      const text = textParts.join('\n') || JSON.stringify(result);
-
-      return {
-        content: text,
-        isError: !!result.isError,
-      };
-    } catch (err) {
-      return {
-        content: `MCP tool "${originalToolName}" failed: ${err instanceof Error ? err.message : String(err)}`,
-        isError: true,
-      };
-    }
   }
 
   /**
@@ -812,9 +769,11 @@ export class PiAgent extends BaseAgent {
       this.eventQueue.complete();
     }
 
-    // Reject all pending mini completions
+    // Reject pending mini completions with error (not null) so callers
+    // get a meaningful error instead of silently returning "no response"
+    const exitReason = signal ? `signal ${signal}` : `code ${code}`;
     for (const [, pending] of this.pendingMiniCompletions) {
-      pending.resolve(null);
+      pending.reject(new Error(`Pi subprocess exited unexpectedly (${exitReason})`));
     }
     this.pendingMiniCompletions.clear();
 
@@ -1041,9 +1000,10 @@ export class PiAgent extends BaseAgent {
     apiServers: Record<string, unknown>,
     intendedSlugs?: string[]
   ): void {
+    // BaseAgent.setSourceServers() handles:
+    //   1. SourceManager state tracking (active slugs)
+    //   2. McpClientPool sync (connecting/disconnecting MCP sources)
     super.setSourceServers(mcpServers, apiServers, intendedSlugs);
-    this.sourceMcpServers = mcpServers;
-    this.sourceApiServers = apiServers;
 
     // Notify subprocess of active source changes.
     if (this.subprocess) {
@@ -1053,112 +1013,15 @@ export class PiAgent extends BaseAgent {
       });
     }
 
-    // Connect to MCP servers and register their tools as proxy tools.
-    // This runs async — tools become available once connection completes.
-    this.connectMcpSources(mcpServers).catch(err => {
-      this.debug(`Failed to connect MCP sources: ${err instanceof Error ? err.message : String(err)}`);
-    });
-  }
-
-  /**
-   * Connect to MCP servers, list their tools, and register as proxy tools
-   * in the subprocess so the model can call them.
-   */
-  private async connectMcpSources(
-    mcpServers: Record<string, SdkMcpServerConfig>
-  ): Promise<void> {
-    // Close stale clients for removed servers
-    for (const [slug, client] of this.mcpClients) {
-      if (!(slug in mcpServers)) {
-        await client.close().catch(() => {});
-        this.mcpClients.delete(slug);
-      }
-    }
-
-    // Build new maps in locals — old maps stay valid for in-flight tool calls
-    // until we swap atomically after all async work completes.
-    const newToolToSlug = new Map<string, string>();
-    const newToolToOriginal = new Map<string, string>();
-    const allProxyDefs: Array<{ name: string; description: string; inputSchema: Record<string, unknown> }> = [];
-
-    for (const [slug, serverConfig] of Object.entries(mcpServers)) {
-      // Skip session MCP server (handled separately via session tools)
-      if (slug === 'session') continue;
-
-      try {
-        // Reuse existing client if still connected, or create new one
-        let client = this.mcpClients.get(slug);
-        if (!client) {
-          const clientConfig = this.sdkConfigToClientConfig(slug, serverConfig);
-          if (!clientConfig) continue;
-          client = new CraftMcpClient(clientConfig);
-          await client.connect();
-          this.mcpClients.set(slug, client);
-          this.debug(`Connected MCP client for source: ${slug}`);
-        }
-
-        // List tools from the MCP server
-        const tools = await client.listTools();
-        this.debug(`Source ${slug}: ${tools.length} tools available`);
-
-        for (const tool of tools) {
-          // Use mcp__slug__tool convention to match session tool naming
-          // (e.g., mcp__session__SubmitPlan). The model generalizes this
-          // pattern and expects all MCP tools to use it.
-          const proxyName = `mcp__${slug}__${tool.name}`;
-          newToolToSlug.set(proxyName, slug);
-          newToolToOriginal.set(proxyName, tool.name);
-
-          allProxyDefs.push({
-            name: proxyName,
-            description: tool.description || `Tool from ${slug}`,
-            inputSchema: (tool.inputSchema as Record<string, unknown>) || { type: 'object', properties: {} },
-          });
-        }
-      } catch (err) {
-        this.debug(`Failed to connect MCP source ${slug}: ${err instanceof Error ? err.message : String(err)}`);
-      }
-    }
-
-    // Atomic swap — old maps were valid until this point
-    this.mcpToolToSlug = newToolToSlug;
-    this.mcpToolToOriginal = newToolToOriginal;
-    this.mcpProxyDefs = allProxyDefs;
-
-    // Register MCP source tools with subprocess
-    if (allProxyDefs.length > 0 && this.subprocess) {
-      this.send({
-        type: 'register_tools',
-        tools: allProxyDefs,
+    // Register pool's proxy tool defs with subprocess so the model can call them.
+    // Pool sync (in BaseAgent) is async — await readiness before reading tools.
+    if (this.mcpPool) {
+      this.mcpPool.awaitReady().then(() => {
+        this.registerPoolToolsWithSubprocess();
       });
-      this.debug(`Registered ${allProxyDefs.length} MCP source tools with subprocess`);
+    } else {
+      this.registerPoolToolsWithSubprocess();
     }
-  }
-
-  /**
-   * Convert SdkMcpServerConfig to CraftMcpClient config format.
-   */
-  private sdkConfigToClientConfig(
-    slug: string,
-    config: SdkMcpServerConfig
-  ): McpClientConfig | null {
-    if (config.type === 'http' || config.type === 'sse') {
-      return {
-        transport: 'http',
-        url: config.url,
-        headers: config.headers,
-      };
-    }
-    if (config.type === 'stdio') {
-      return {
-        transport: 'stdio',
-        command: config.command,
-        args: config.args,
-        env: config.env,
-      };
-    }
-    this.debug(`Unknown MCP server type for ${slug}: ${(config as { type: string }).type}`);
-    return null;
   }
 
   // ============================================================
@@ -1209,6 +1072,23 @@ export class PiAgent extends BaseAgent {
     this.send({ type: 'abort' });
   }
 
+  /**
+   * Redirect mid-stream via Pi SDK's steer().
+   * Delivers the message after the current tool finishes, skips remaining
+   * queued tools, and continues with full context intact.
+   * Events flow through the existing generator — no abort needed.
+   */
+  override redirect(message: string): boolean {
+    if (!this._isProcessing || !this.subprocess) {
+      // Not streaming or no subprocess — fall back to abort
+      this.forceAbort(AbortReason.Redirect);
+      return false;
+    }
+    this.debug(`Steering mid-stream: "${message.slice(0, 100)}"`);
+    this.send({ type: 'steer', message });
+    return true;
+  }
+
   // ============================================================
   // Session ID overrides (match CopilotAgent pattern)
   // ============================================================
@@ -1244,22 +1124,9 @@ export class PiAgent extends BaseAgent {
     }
 
     this._sessionToolContext = null;
-    this.closeMcpClients();
+    // Pool clients are owned by the main process — don't close them here.
     this.killSubprocess();
     this.debug('PiAgent destroyed');
-  }
-
-  /**
-   * Close all MCP clients and clear tool mappings.
-   */
-  private closeMcpClients(): void {
-    for (const [, client] of this.mcpClients) {
-      client.close().catch(() => {});
-    }
-    this.mcpClients.clear();
-    this.mcpToolToSlug.clear();
-    this.mcpToolToOriginal.clear();
-    this.mcpProxyDefs = [];
   }
 
   /**
@@ -1304,35 +1171,30 @@ export class PiAgent extends BaseAgent {
    * Sends a mini_completion request and waits for the result.
    */
   async runMiniCompletion(prompt: string): Promise<string | null> {
-    try {
-      // If subprocess isn't running, spawn it
-      await this.ensureSubprocess();
+    // If subprocess isn't running, spawn it
+    await this.ensureSubprocess();
 
-      const id = `mini-${++this.rpcIdCounter}`;
-      const resultPromise = new Promise<string | null>((resolve) => {
-        this.pendingMiniCompletions.set(id, { resolve });
-      });
+    const id = `mini-${++this.rpcIdCounter}`;
+    const resultPromise = new Promise<string | null>((resolve, reject) => {
+      this.pendingMiniCompletions.set(id, { resolve, reject });
+    });
 
-      this.send({ type: 'mini_completion', id, prompt });
+    this.send({ type: 'mini_completion', id, prompt });
 
-      // 30s timeout
-      const timeout = new Promise<string | null>((resolve) => {
-        setTimeout(() => {
-          if (this.pendingMiniCompletions.has(id)) {
-            this.pendingMiniCompletions.delete(id);
-            this.debug('[runMiniCompletion] Timed out after 30s');
-            resolve(null);
-          }
-        }, 30000);
-      });
+    // 30s timeout
+    const timeout = new Promise<string | null>((resolve) => {
+      setTimeout(() => {
+        if (this.pendingMiniCompletions.has(id)) {
+          this.pendingMiniCompletions.delete(id);
+          this.debug('[runMiniCompletion] Timed out after 30s');
+          resolve(null);
+        }
+      }, 30000);
+    });
 
-      const text = await Promise.race([resultPromise, timeout]);
-      this.debug(`[runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
-      return text;
-    } catch (error) {
-      this.debug(`[runMiniCompletion] Failed: ${error instanceof Error ? error.message : String(error)}`);
-      return null;
-    }
+    const text = await Promise.race([resultPromise, timeout]);
+    this.debug(`[runMiniCompletion] Result: ${text ? `"${text.slice(0, 200)}"` : 'null'}`);
+    return text;
   }
 
   /**

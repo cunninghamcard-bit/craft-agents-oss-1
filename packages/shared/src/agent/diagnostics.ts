@@ -4,7 +4,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { getLastApiError } from '../network-interceptor.ts';
+import { getLastApiError } from '../interceptor-common.ts';
 import { type AuthType, getDefaultLlmConnection, getLlmConnection } from '../config/storage.ts';
 import { getCredentialManager } from '../credentials/index.ts';
 
@@ -122,7 +122,7 @@ function getProviderLabel(baseUrl: string): string {
  * Respects ANTHROPIC_BASE_URL so diagnostics are meaningful for all providers.
  */
 async function checkApiAvailability(): Promise<CheckResult> {
-  // Use the same base URL resolution as network-interceptor.ts
+  // Use the same base URL resolution as unified-network-interceptor.ts
   const baseUrl = process.env.ANTHROPIC_BASE_URL?.trim() || 'https://api.anthropic.com';
   const label = getProviderLabel(baseUrl);
 

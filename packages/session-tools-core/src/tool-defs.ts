@@ -9,9 +9,6 @@
  *
  * Adding a new tool: define the schema, description, handler import, and
  * one entry in SESSION_TOOL_DEFS.
- *
- * Note: `render_template` and `transform_data` are Claude-only (feature-flagged)
- * and live in session-scoped-tools.ts, not here.
  */
 
 import { z } from 'zod';
@@ -32,6 +29,9 @@ import {
   handleMicrosoftOAuthTrigger,
 } from './handlers/source-oauth.ts';
 import { handleCredentialPrompt } from './handlers/credential-prompt.ts';
+import { handleUpdatePreferences } from './handlers/update-preferences.ts';
+import { handleTransformData } from './handlers/transform-data.ts';
+import { handleRenderTemplate } from './handlers/render-template.ts';
 
 // ============================================================
 // Canonical Zod Schemas
@@ -101,6 +101,29 @@ export const CallLlmSchema = z.object({
     properties: z.record(z.string(), z.unknown()),
     required: z.array(z.string()).optional(),
   }).optional().describe('Custom JSON Schema for structured output'),
+});
+
+export const UpdatePreferencesSchema = z.object({
+  name: z.string().optional().describe("The user's preferred name or how they'd like to be addressed"),
+  timezone: z.string().optional().describe("The user's timezone in IANA format (e.g., 'America/New_York', 'Europe/London')"),
+  city: z.string().optional().describe("The user's city"),
+  region: z.string().optional().describe("The user's state/region/province"),
+  country: z.string().optional().describe("The user's country"),
+  language: z.string().optional().describe("The user's preferred language for responses"),
+  notes: z.string().optional().describe('Additional notes about the user that would be helpful to remember (preferences, context, etc.). Replaces any existing notes.'),
+});
+
+export const TransformDataSchema = z.object({
+  language: z.enum(['python3', 'node', 'bun']).describe('Script runtime to use'),
+  script: z.string().describe('Transform script source code. Receives input file paths as command-line args (sys.argv[1:] or process.argv.slice(2)), last arg is the output file path.'),
+  inputFiles: z.array(z.string()).describe('Input file paths relative to session dir (e.g., "long_responses/stripe_txns.txt")'),
+  outputFile: z.string().describe('Output file name relative to session data/ dir (e.g., "transactions.json")'),
+});
+
+export const RenderTemplateSchema = z.object({
+  source: z.string().describe('Source slug (e.g., "linear", "gmail")'),
+  template: z.string().describe('Template ID (e.g., "issue-detail", "issue-list")'),
+  data: z.record(z.string(), z.unknown()).describe('JSON data to render into the template'),
 });
 
 // ============================================================
@@ -208,6 +231,38 @@ The user will see a secure input UI with appropriate fields based on the auth mo
 
 **IMPORTANT:** After calling this tool, execution will be paused for user input.`,
 
+  update_user_preferences: `Update stored user preferences. Use this when you learn information about the user that would be helpful to remember for future conversations. This includes their name, timezone, location, preferred language, or any other relevant notes. Only update fields you have confirmed information about - don't guess.`,
+
+  transform_data: `Transform data files using a script and write structured output for datatable/spreadsheet blocks, or extract HTML content for html-preview blocks.
+
+Use this tool when you need to transform large datasets (20+ rows) into structured JSON for display, or extract/decode HTML content for rendering. Write a transform script that reads the input file and produces an output file, then reference it via \`"src"\` in your datatable/spreadsheet/html-preview/pdf-preview block.
+
+**Workflow:**
+1. Call \`transform_data\` with a script that reads input files and writes output
+2. Output a datatable/spreadsheet block with \`"src": "data/output.json"\`, an html-preview block with \`"src": "data/output.html"\`, or a pdf-preview block with \`"src": "data/output.pdf"\`
+
+**Script conventions:**
+- Input file paths are passed as command-line arguments (last arg = output file path)
+- Python: \`sys.argv[1:-1]\` = input files, \`sys.argv[-1]\` = output path
+- Node/Bun: \`process.argv.slice(2, -1)\` = input files, \`process.argv.at(-1)\` = output path
+- For datatable/spreadsheet: output must be valid JSON: \`{"title": "...", "columns": [...], "rows": [...]}\`
+- For html-preview: output is an HTML file (any valid HTML)
+
+**Security:** Runs in an isolated subprocess with no access to API keys or credentials. 30-second timeout.`,
+
+  render_template: `Render a source's HTML template with data.
+
+Use this when a source provides HTML templates for rich rendering of its data (e.g., issue detail views, email threads, ticket summaries).
+
+**Workflow:**
+1. Fetch data from the source (via MCP tools or API calls)
+2. Call \`render_template\` with the source slug, template ID, and data
+3. Output an \`html-preview\` block with the returned file path as \`"src"\`
+
+**Available templates** are documented in each source's \`guide.md\` under the "Templates" section.
+
+Templates use Mustache syntax — the tool handles rendering and writes the output HTML to the session data folder.`,
+
   call_llm: `Invoke a secondary LLM for focused subtasks. Use for:
 - Cost optimization: use a smaller model for simple tasks (summarization, classification)
 - Structured output: JSON schema compliance via prompt instructions
@@ -250,6 +305,9 @@ export const SESSION_TOOL_DEFS: SessionToolDef[] = [
   { name: 'source_slack_oauth_trigger', description: TOOL_DESCRIPTIONS.source_slack_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, handler: handleSlackOAuthTrigger },
   { name: 'source_microsoft_oauth_trigger', description: TOOL_DESCRIPTIONS.source_microsoft_oauth_trigger, inputSchema: SourceOAuthTriggerSchema, handler: handleMicrosoftOAuthTrigger },
   { name: 'source_credential_prompt', description: TOOL_DESCRIPTIONS.source_credential_prompt, inputSchema: CredentialPromptSchema, handler: handleCredentialPrompt },
+  { name: 'update_user_preferences', description: TOOL_DESCRIPTIONS.update_user_preferences, inputSchema: UpdatePreferencesSchema, handler: handleUpdatePreferences },
+  { name: 'transform_data', description: TOOL_DESCRIPTIONS.transform_data, inputSchema: TransformDataSchema, handler: handleTransformData },
+  { name: 'render_template', description: TOOL_DESCRIPTIONS.render_template, inputSchema: RenderTemplateSchema, handler: handleRenderTemplate },
   { name: 'call_llm', description: TOOL_DESCRIPTIONS.call_llm, inputSchema: CallLlmSchema, handler: null },
 ];
 

@@ -48,7 +48,7 @@ import {
   verifyLocalCodex,
   copySDK,
   copyInterceptor,
-  copyCopilotInterceptor,
+  copyInterceptorBundle,
   copyCopilotCli,
   buildMcpServers,
   copyBridgeServer,
@@ -237,7 +237,7 @@ async function main(): Promise<void> {
 
     console.log('\n[7/10] Copying interceptors...');
     copyInterceptor(config);
-    copyCopilotInterceptor(config);
+    copyInterceptorBundle(config);
 
     console.log('\n[7/10] Copying Copilot CLI...');
     copyCopilotCli(config);

@@ -16,7 +16,6 @@
 
 import { join } from 'node:path';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { debug } from '../utils/debug.ts';
 
 // ============================================================
 // Types
@@ -105,7 +104,6 @@ export function loadTemplate(sourcePath: string, templateId: string): LoadedTemp
   // Try exact filename match: {templateId}.html
   const filePath = join(templatesDir, `${templateId}.html`);
   if (!existsSync(filePath)) {
-    debug('templates', `Template file not found: ${filePath}`);
     return null;
   }
 
@@ -114,7 +112,6 @@ export function loadTemplate(sourcePath: string, templateId: string): LoadedTemp
     const meta = parseTemplateHeader(content);
 
     if (!meta) {
-      debug('templates', `No valid header in template: ${filePath}`);
       // Still load it — just with minimal metadata
       return {
         meta: {
@@ -130,8 +127,7 @@ export function loadTemplate(sourcePath: string, templateId: string): LoadedTemp
     }
 
     return { meta, content, filePath };
-  } catch (error) {
-    debug('templates', `Failed to read template ${filePath}:`, error);
+  } catch {
     return null;
   }
 }

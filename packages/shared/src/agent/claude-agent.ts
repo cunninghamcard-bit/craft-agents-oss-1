@@ -4,16 +4,16 @@ import type { ContentBlockParam } from '@anthropic-ai/sdk/resources';
 import { z } from 'zod';
 import { getSystemPrompt } from '../prompts/system.ts';
 import { BaseAgent, type MiniAgentConfig, MINI_AGENT_TOOLS, MINI_AGENT_MCP_KEYS } from './base-agent.ts';
-import type { BackendConfig, PermissionRequestType } from './backend/types.ts';
+import type { BackendConfig, PermissionRequestType, SdkMcpServerConfig } from './backend/types.ts';
 // Plan types are used by UI components; not needed in craft-agent.ts since Safe Mode is user-controlled
 import { parseError, type AgentError } from './errors.ts';
 import { runErrorDiagnostics } from './diagnostics.ts';
 import { loadStoredConfig, loadConfigDefaults, type Workspace, type AuthType, getDefaultLlmConnection, getLlmConnection } from '../config/storage.ts';
-import { isLocalMcpEnabled } from '../workspaces/storage.ts';
+import type { McpClientPool } from '../mcp/mcp-pool.ts';
 import { loadPlanFromPath, type SessionConfig as Session } from '../sessions/storage.ts';
 import { DEFAULT_MODEL, isClaudeModel, getDefaultSummarizationModel } from '../config/models.ts';
 import { getCredentialManager } from '../credentials/index.ts';
-import { updatePreferences, loadPreferences, formatPreferencesForPrompt, type UserPreferences } from '../config/preferences.ts';
+import { loadPreferences, formatPreferencesForPrompt } from '../config/preferences.ts';
 import type { FileAttachment } from '../utils/files.ts';
 import type { LLMQueryRequest, LLMQueryResult } from './llm-tool.ts';
 import { debug } from '../utils/debug.ts';
@@ -138,6 +138,8 @@ export interface ClaudeAgentConfig {
   envOverrides?: Record<string, string>;
   /** Mini/utility model for summarization, title generation, and mini completions. */
   miniModel?: string;
+  /** Centralized MCP client pool for source tool execution. */
+  mcpPool?: McpClientPool;
 }
 
 // Permission request tracking
@@ -230,105 +232,52 @@ export function clearGlobalPermissions(): void {
   globalPendingPermissions.clear();
 }
 
-// Handle preferences update (extracted for use in MCP tool)
-function handleUpdatePreferences(input: Record<string, unknown>): string {
-  const updates: Partial<UserPreferences> = {};
+/**
+ * Create an in-process MCP server that proxies source tool calls through the McpClientPool.
+ * This replaces direct MCP connections — the pool owns all source connections centrally.
+ *
+ * Returns a McpSdkServerConfigWithInstance that can be added to Options.mcpServers.
+ */
+/**
+ * Create one SDK MCP server per connected source, using original tool names.
+ * The SDK adds its own `mcp__{serverKey}__` prefix, so we use the source slug
+ * as the server key and original tool names to get the correct final names
+ * (e.g., `mcp__linear__createIssue`).
+ */
+function createSourceProxyServers(pool: McpClientPool): Record<string, ReturnType<typeof createSdkMcpServer>> {
+  const servers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
 
-  if (input.name && typeof input.name === 'string') {
-    updates.name = input.name;
-  }
-  if (input.timezone && typeof input.timezone === 'string') {
-    updates.timezone = input.timezone;
-  }
-  if (input.language && typeof input.language === 'string') {
-    updates.language = input.language;
-  }
+  for (const slug of pool.getConnectedSlugs()) {
+    const mcpTools = pool.getTools(slug);
+    if (mcpTools.length === 0) continue;
 
-  // Handle location fields
-  if (input.city || input.region || input.country) {
-    updates.location = {};
-    if (input.city && typeof input.city === 'string') {
-      updates.location.city = input.city;
-    }
-    if (input.region && typeof input.region === 'string') {
-      updates.location.region = input.region;
-    }
-    if (input.country && typeof input.country === 'string') {
-      updates.location.country = input.country;
-    }
-  }
+    const proxyTools = mcpTools.map(mcpTool => {
+      const proxyName = `mcp__${slug}__${mcpTool.name}`;
+      return tool(
+        mcpTool.name,
+        mcpTool.description || `Tool from ${slug}`,
+        // Permissive schema — accepts any properties the model sends.
+        // The actual parameter validation happens on the MCP server side.
+        z.object({}).catchall(z.unknown()).shape,
+        async (args: Record<string, unknown>) => {
+          const result = await pool.callTool(proxyName, args);
+          return {
+            content: [{ type: 'text' as const, text: result.content }],
+            ...(result.isError ? { isError: true } : {}),
+          };
+        }
+      );
+    });
 
-  // Handle notes (replace)
-  if (input.notes && typeof input.notes === 'string') {
-    updates.notes = input.notes;
-  }
-
-  // Check if anything was actually updated
-  const fields = Object.keys(updates).filter(k => k !== 'location');
-  if (updates.location) {
-    fields.push(...Object.keys(updates.location).map(k => `location.${k}`));
-  }
-
-  if (fields.length === 0) {
-    return 'No preferences were updated (no valid fields provided)';
-  }
-
-  updatePreferences(updates);
-  return `Updated user preferences: ${fields.join(', ')}`;
-}
-
-
-// Base tool: update_user_preferences (always available)
-const updateUserPreferencesTool = tool(
-  'update_user_preferences',
-  `Update stored user preferences. Use this when you learn information about the user that would be helpful to remember for future conversations. This includes their name, timezone, location, preferred language, or any other relevant notes. Only update fields you have confirmed information about - don't guess.`,
-  {
-    name: z.string().optional().describe("The user's preferred name or how they'd like to be addressed"),
-    timezone: z.string().optional().describe("The user's timezone in IANA format (e.g., 'America/New_York', 'Europe/London')"),
-    city: z.string().optional().describe("The user's city"),
-    region: z.string().optional().describe("The user's state/region/province"),
-    country: z.string().optional().describe("The user's country"),
-    language: z.string().optional().describe("The user's preferred language for responses"),
-    notes: z.string().optional().describe('Additional notes about the user that would be helpful to remember (preferences, context, etc.). Replaces any existing notes.'),
-  },
-  async (args) => {
-    try {
-      const result = handleUpdatePreferences(args);
-      return {
-        content: [{ type: 'text', text: result }],
-      };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      return {
-        content: [{ type: 'text', text: `Failed to update preferences: ${message}` }],
-        isError: true,
-      };
-    }
-  }
-);
-
-// Cached MCP server for preferences
-let cachedPrefToolsServer: ReturnType<typeof createSdkMcpServer> | null = null;
-
-// Preferences MCP server - user preferences tool
-function getPreferencesServer(_unused?: boolean): ReturnType<typeof createSdkMcpServer> {
-  if (!cachedPrefToolsServer) {
-    cachedPrefToolsServer = createSdkMcpServer({
-      name: 'preferences',
+    servers[slug] = createSdkMcpServer({
+      name: `source-proxy-${slug}`,
       version: '1.0.0',
-      tools: [updateUserPreferencesTool],
+      tools: proxyTools,
     });
   }
-  return cachedPrefToolsServer;
-}
 
-/**
- * SDK-compatible MCP server configuration.
- * Supports HTTP/SSE (remote) and stdio (local subprocess) transports.
- */
-export type SdkMcpServerConfig =
-  | { type: 'http' | 'sse'; url: string; headers?: Record<string, string> }
-  | { type: 'stdio'; command: string; args?: string[]; env?: Record<string, string> };
+  return servers;
+}
 
 // buildWindowsSkillsDirError is now in backend/claude/event-adapter.ts (exported)
 const buildWindowsSkillsDirError = buildWindowsSkillsDirErrorFn;
@@ -343,12 +292,11 @@ export class ClaudeAgent extends BaseAgent {
   private isHeadless: boolean = false;
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   // Permission whitelists are now managed by this.permissionManager (inherited from BaseAgent)
-  // Pre-built source server configs (user-defined sources, separate from agent)
-  // Supports both HTTP/SSE and stdio transports
-  private sourceMcpServers: Record<string, SdkMcpServerConfig> = {};
-  // In-process MCP servers for source API integrations
-  private sourceApiServers: Record<string, ReturnType<typeof createSdkMcpServer>> = {};
   // Source state tracking is now managed by this.sourceManager (inherited from BaseAgent)
+  // Source MCP connections are managed by this.config.mcpPool (centralized in main process)
+  // In-process API source servers (Gmail, Slack, etc.) — these are NOT in the pool
+  // because they use SDK-specific createSdkMcpServer() and handle REST API calls in-process.
+  private sourceApiServers: Record<string, unknown> = {};
   // Safe mode state - user-controlled read-only exploration mode
   private safeMode: boolean = false;
   // Event adapter for SDK message → AgentEvent conversion (testable, pluggable)
@@ -428,6 +376,7 @@ export class ClaudeAgent extends BaseAgent {
       getRecoveryMessages: config.getRecoveryMessages,
       envOverrides: config.envOverrides,
       miniModel: config.miniModel,
+      mcpPool: config.mcpPool,
     };
 
     // Call BaseAgent constructor - initializes model, thinkingLevel, permissionManager, sourceManager, etc.
@@ -636,15 +585,23 @@ export class ClaudeAgent extends BaseAgent {
       // Build MCP servers config
       // Mini agents: only session tools (config_validate) to minimize token usage
       // Regular agents: full set including preferences, docs, and user sources
-      const sourceMcpResult = this.getSourceMcpServersFiltered();
 
-      debug('[chat] sourceMcpServers:', sourceMcpResult.servers);
-      debug('[chat] sourceApiServers:', this.sourceApiServers);
+      // Wait for the MCP pool to finish connecting before reading tools.
+      // pool.sync() is fire-and-forget in setSourceServers(), so we must await here.
+      if (this.config.mcpPool) {
+        await this.config.mcpPool.awaitReady();
+      }
+
+      // Build per-source proxy servers from centralized MCP pool (if available)
+      const sourceProxies = this.config.mcpPool ? createSourceProxyServers(this.config.mcpPool) : {};
+      const sourceProxyCount = Object.keys(sourceProxies).length;
+      if (sourceProxyCount > 0) {
+        debug('[chat] Source proxy servers created for', sourceProxyCount, 'sources');
+      }
 
       // Build full MCP servers set first, then filter for mini agents
       const fullMcpServers: Options['mcpServers'] = {
-        preferences: getPreferencesServer(false),
-        // Session-scoped tools (SubmitPlan, source_test, etc.)
+        // Session-scoped tools (SubmitPlan, source_test, update_user_preferences, transform_data, etc.)
         session: getSessionScopedTools(sessionId, this.workspaceRootPath),
         // Craft Agents documentation - always available for searching setup guides
         // This is a public Mintlify MCP server, no auth needed
@@ -652,14 +609,17 @@ export class ClaudeAgent extends BaseAgent {
           type: 'http',
           url: 'https://agents.craft.do/docs/mcp',
         },
-        // Add user-defined source servers (MCP and API, filtered by local MCP setting)
-        // Note: Craft MCP server is now added via sources system
-        ...sourceMcpResult.servers,
+        // Per-source proxy servers from centralized MCP pool (MCP sources like Linear, GitHub)
+        // Each source gets its own SDK server keyed by slug (e.g., 'linear', 'github')
+        // so the SDK produces correct tool names: mcp__{slug}__{toolName}
+        ...sourceProxies,
+        // In-process API source servers (Gmail, Slack, Stripe, etc.)
+        // These handle REST API calls directly in-process with pre-built credentials.
         ...this.sourceApiServers,
       };
 
       // Mini agents: filter to minimal set using centralized keys
-      // Regular agents: use full set including preferences, docs, and user sources
+      // Regular agents: use full set including docs and user sources
       const mcpServers: Options['mcpServers'] = miniConfig.enabled
         ? this.filterMcpServersForMiniAgent(fullMcpServers, miniConfig.mcpServerKeys)
         : fullMcpServers;
@@ -868,10 +828,9 @@ export class ClaudeAgent extends BaseAgent {
                 const serverName = parts[1];
                 if (parts.length >= 3 && serverName) {
                   // Built-in MCP servers that are always available (not user sources)
-                  // - preferences: user preferences storage
                   // - session: session-scoped tools (SubmitPlan, source_test, etc.)
                   // - craft-agents-docs: always-available documentation search
-                  const builtInMcpServers = new Set(['preferences', 'session', 'craft-agents-docs']);
+                  const builtInMcpServers = new Set(['session', 'craft-agents-docs']);
 
                   // Check if this is a source server (not built-in)
                   if (!builtInMcpServers.has(serverName)) {
@@ -2263,65 +2222,22 @@ export class ClaudeAgent extends BaseAgent {
    * @param intendedSlugs Optional list of source slugs that should be considered active
    *                      (what the UI shows as active, even if build failed)
    */
-  setSourceServers(
+  override setSourceServers(
     mcpServers: Record<string, SdkMcpServerConfig>,
     apiServers: Record<string, unknown>,
     intendedSlugs?: string[]
   ): void {
-    // Store server configs for SDK options building
-    this.sourceMcpServers = mcpServers;
-    this.sourceApiServers = apiServers as Record<string, ReturnType<typeof createSdkMcpServer>>;
-
-    // Delegate state tracking to sourceManager (inherited from BaseAgent)
-    this.sourceManager.updateActiveState(
-      Object.keys(mcpServers),
-      Object.keys(apiServers),
-      intendedSlugs
-    );
+    // BaseAgent handles SourceManager state + McpClientPool sync for MCP sources
+    super.setSourceServers(mcpServers, apiServers, intendedSlugs);
+    // Store API servers separately — they're in-process MCP server instances
+    // (Gmail, Slack, Stripe, etc.) that get added directly to Options.mcpServers
+    this.sourceApiServers = apiServers;
   }
 
   // isSourceServerActive, getActiveSourceServerNames, setAllSources, getAllSources, markSourceUnseen
   // are now inherited from BaseAgent and delegate to this.sourceManager
 
   // setTemporaryClarifications is now inherited from BaseAgent
-
-  /**
-   * Get filtered source MCP servers based on local MCP setting
-   * @returns Object with filtered servers and names of any skipped stdio servers
-   */
-  private getSourceMcpServersFiltered(): { servers: Record<string, SdkMcpServerConfig>; skipped: string[] } {
-    return this.filterMcpServersByLocalEnabled(this.sourceMcpServers);
-  }
-
-  /**
-   * Filter MCP servers based on whether local (stdio) MCP is enabled for this workspace.
-   * When local MCP is disabled, stdio servers are filtered out.
-   *
-   * @returns Object with filtered servers and names of any skipped stdio servers
-   */
-  private filterMcpServersByLocalEnabled(
-    servers: Record<string, SdkMcpServerConfig>
-  ): { servers: Record<string, SdkMcpServerConfig>; skipped: string[] } {
-    const localEnabled = isLocalMcpEnabled(this.workspaceRootPath);
-
-    if (localEnabled) {
-      // Local MCP is enabled, return all servers
-      return { servers, skipped: [] };
-    }
-
-    // Local MCP is disabled, filter out stdio servers
-    const filtered: Record<string, SdkMcpServerConfig> = {};
-    const skipped: string[] = [];
-    for (const [name, config] of Object.entries(servers)) {
-      if (config.type !== 'stdio') {
-        filtered[name] = config;
-      } else {
-        debug(`[filterMcpServers] Filtering out stdio server "${name}" (local MCP disabled)`);
-        skipped.push(name);
-      }
-    }
-    return { servers: filtered, skipped };
-  }
 
   async close(): Promise<void> {
     this.forceAbort();
@@ -2413,36 +2329,30 @@ export class ClaudeAgent extends BaseAgent {
    * Uses the same auth infrastructure as the main agent.
    */
   async runMiniCompletion(prompt: string): Promise<string | null> {
-    try {
-      if (!this.config.miniModel) {
-        throw new Error('ClaudeAgent.runMiniCompletion: config.miniModel is required');
-      }
-      const model = this.config.miniModel;
+    if (!this.config.miniModel) {
+      throw new Error('ClaudeAgent.runMiniCompletion: config.miniModel is required');
+    }
+    const model = this.config.miniModel;
 
-      const options = {
-        ...getDefaultOptions(this.config.envOverrides),
-        model,
-        maxTurns: 1,
-        systemPrompt: 'Reply with ONLY the requested text. No explanation.', // Minimal - no Claude Code preset
-      };
+    const options = {
+      ...getDefaultOptions(this.config.envOverrides),
+      model,
+      maxTurns: 1,
+      systemPrompt: 'Reply with ONLY the requested text. No explanation.', // Minimal - no Claude Code preset
+    };
 
-      let result = '';
-      for await (const msg of query({ prompt, options })) {
-        if (msg.type === 'assistant') {
-          for (const block of msg.message.content) {
-            if (block.type === 'text') {
-              result += block.text;
-            }
+    let result = '';
+    for await (const msg of query({ prompt, options })) {
+      if (msg.type === 'assistant') {
+        for (const block of msg.message.content) {
+          if (block.type === 'text') {
+            result += block.text;
           }
         }
       }
-
-      return result.trim() || null;
-    } catch (error) {
-      this.debug(`[runMiniCompletion] Failed: ${error}`);
-      debug(`[ClaudeAgent.runMiniCompletion] Failed: ${error}`);
-      return null;
     }
+
+    return result.trim() || null;
   }
 
   // ============================================================

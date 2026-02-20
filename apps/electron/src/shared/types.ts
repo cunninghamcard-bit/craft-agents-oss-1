@@ -71,6 +71,27 @@ export interface LlmConnectionSetup {
   baseUrl?: string | null   // Custom API endpoint (null to clear)
   defaultModel?: string | null  // Custom model override (null to clear)
   models?: string[] | null  // Optional model list for compat providers
+  piAuthProvider?: string   // Pi auth provider (e.g. 'anthropic', 'google', 'openai') — for pi_api_key flow
+}
+
+/**
+ * Params for unified connection test (spawns a lightweight agent subprocess).
+ * Works for all agent types that use simple API key auth.
+ */
+export interface TestLlmConnectionParams {
+  provider: 'anthropic' | 'openai' | 'pi'
+  apiKey: string
+  baseUrl?: string           // Custom endpoint (anthropic/openai compat)
+  model?: string             // Model to test (uses provider default if omitted)
+  piAuthProvider?: string    // Pi SDK provider name (e.g. 'anthropic', 'google', 'openai')
+}
+
+/**
+ * Result of a unified connection test.
+ */
+export interface TestLlmConnectionResult {
+  success: boolean
+  error?: string             // User-friendly error message
 }
 
 
@@ -706,8 +727,7 @@ export const IPC_CHANNELS = {
 
   // Settings - API Setup
   SETUP_LLM_CONNECTION: 'settings:setupLlmConnection',
-  SETTINGS_TEST_API_CONNECTION: 'settings:testApiConnection',
-  SETTINGS_TEST_OPENAI_CONNECTION: 'settings:testOpenAiConnection',
+  SETTINGS_TEST_LLM_CONNECTION_SETUP: 'settings:testLlmConnectionSetup',
 
   // Settings - Model
   SESSION_GET_MODEL: 'session:getModel',
@@ -1002,8 +1022,8 @@ export interface ElectronAPI {
 
   /** Unified LLM connection setup */
   setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
-  testApiConnection(apiKey: string, baseUrl?: string, models?: string[]): Promise<{ success: boolean; error?: string; modelCount?: number }>
-  testOpenAiConnection(apiKey: string, baseUrl?: string, models?: string[]): Promise<{ success: boolean; error?: string }>
+  /** Unified connection test — spawns a lightweight agent subprocess to validate credentials */
+  testLlmConnectionSetup(params: TestLlmConnectionParams): Promise<TestLlmConnectionResult>
 
   // Session-specific model (overrides global)
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>

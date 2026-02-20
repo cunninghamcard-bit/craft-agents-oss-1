@@ -13,12 +13,10 @@ import { useState, useCallback, useEffect } from 'react'
 import type {
   OnboardingState,
   OnboardingStep,
-  LoginStatus,
-  CredentialStatus,
   ApiSetupMethod,
 } from '@/components/onboarding'
 import type { ApiKeySubmitData } from '@/components/apisetup'
-import type { SetupNeeds, GitBashStatus, LlmConnectionSetup } from '../../shared/types'
+import type { SetupNeeds, LlmConnectionSetup } from '../../shared/types'
 
 interface UseOnboardingOptions {
   /** Called when onboarding is complete */
@@ -86,7 +84,7 @@ const BASE_SLUG_FOR_METHOD: Record<ApiSetupMethod, string> = {
   copilot_oauth: 'copilot',
   pi_chatgpt_oauth: 'pi-codex',
   pi_copilot_oauth: 'pi-copilot',
-  pi_google_api_key: 'pi-google',
+  pi_api_key: 'pi-api-key',
 }
 
 /**
@@ -113,7 +111,7 @@ function resolveSlugForMethod(
 // Map ApiSetupMethod to LlmConnectionSetup for the new unified connection system
 function apiSetupMethodToConnectionSetup(
   method: ApiSetupMethod,
-  options: { credential?: string; baseUrl?: string; connectionDefaultModel?: string; models?: string[] },
+  options: { credential?: string; baseUrl?: string; connectionDefaultModel?: string; models?: string[]; piAuthProvider?: string },
   editingSlug: string | null,
   existingSlugs: Set<string>,
 ): LlmConnectionSetup {
@@ -149,10 +147,15 @@ function apiSetupMethodToConnectionSetup(
     case 'copilot_oauth':
     case 'pi_chatgpt_oauth':
     case 'pi_copilot_oauth':
-    case 'pi_google_api_key':
       return {
         slug,
         credential: options.credential,
+      }
+    case 'pi_api_key':
+      return {
+        slug,
+        credential: options.credential,
+        piAuthProvider: options.piAuthProvider,
       }
   }
 }
@@ -196,9 +199,10 @@ export function useOnboarding({
   }, [])
 
   // Save configuration using the new unified LLM connection API
-  const handleSaveConfig = useCallback(async (credential?: string, options?: { baseUrl?: string; connectionDefaultModel?: string; models?: string[] }) => {
+  // Returns true on success, false on failure (sets errorMessage on failure)
+  const handleSaveConfig = useCallback(async (credential?: string, options?: { baseUrl?: string; connectionDefaultModel?: string; models?: string[]; piAuthProvider?: string }): Promise<boolean> => {
     if (!state.apiSetupMethod) {
-      return
+      return false
     }
 
     setState(s => ({ ...s, completionStatus: 'saving' }))
@@ -210,6 +214,7 @@ export function useOnboarding({
         baseUrl: options?.baseUrl,
         connectionDefaultModel: options?.connectionDefaultModel,
         models: options?.models,
+        piAuthProvider: options?.piAuthProvider,
       }, editingSlug, existingSlugs)
       // Use new unified API
       const result = await window.electronAPI.setupLlmConnection(setup)
@@ -218,6 +223,7 @@ export function useOnboarding({
         setState(s => ({ ...s, completionStatus: 'complete' }))
         // Notify caller immediately so UI can reflect billing/model changes
         onConfigSaved?.()
+        return true
       } else {
         console.error('[Onboarding] Save failed:', result.error)
         setState(s => ({
@@ -225,6 +231,7 @@ export function useOnboarding({
           completionStatus: 'saving',
           errorMessage: result.error || 'Failed to save configuration',
         }))
+        return false
       }
     } catch (error) {
       console.error('[Onboarding] handleSaveConfig error:', error)
@@ -232,6 +239,7 @@ export function useOnboarding({
         ...s,
         errorMessage: error instanceof Error ? error.message : 'Failed to save configuration',
       }))
+      return false
     }
   }, [state.apiSetupMethod, onConfigSaved, editingSlug, existingSlugs])
 
@@ -300,7 +308,7 @@ export function useOnboarding({
     setState(s => ({ ...s, credentialStatus: 'validating', errorMessage: undefined }))
 
     const isOpenAiFlow = state.apiSetupMethod === 'openai_api_key'
-    const isPiGoogleFlow = state.apiSetupMethod === 'pi_google_api_key'
+    const isPiApiKeyFlow = state.apiSetupMethod === 'pi_api_key'
 
     try {
       // API key validation differs by provider:
@@ -316,12 +324,12 @@ export function useOnboarding({
           }))
           return
         }
-      } else if (isPiGoogleFlow) {
+      } else if (isPiApiKeyFlow) {
         if (!data.apiKey.trim()) {
           setState(s => ({
             ...s,
             credentialStatus: 'error',
-            errorMessage: 'Please enter a valid Google AI Studio API key',
+            errorMessage: 'Please enter a valid API key',
           }))
           return
         }
@@ -337,27 +345,14 @@ export function useOnboarding({
         }
       }
 
-      // Validate connection before saving using provider-specific validation
-      let testResult: { success: boolean; error?: string }
-
-      if (isOpenAiFlow) {
-        // OpenAI validation - tests against /v1/models endpoint
-        testResult = await window.electronAPI.testOpenAiConnection(
-          data.apiKey,
-          data.baseUrl,
-          data.models,
-        )
-      } else if (isPiGoogleFlow) {
-        // Pi/Google validation - skip connection test for now, just save the key
-        testResult = { success: true }
-      } else {
-        // Anthropic validation - tests auth, endpoint, model, and tool support
-        testResult = await window.electronAPI.testApiConnection(
-          data.apiKey,
-          data.baseUrl,
-          data.models,
-        )
-      }
+      // Validate connection by spawning a lightweight subprocess test
+      const testResult = await window.electronAPI.testLlmConnectionSetup({
+        provider: isPiApiKeyFlow ? 'pi' : isOpenAiFlow ? 'openai' : 'anthropic',
+        apiKey: data.apiKey,
+        baseUrl: data.baseUrl,
+        model: data.models?.[0],
+        piAuthProvider: data.piAuthProvider,
+      })
 
       if (!testResult.success) {
         setState(s => ({
@@ -368,17 +363,23 @@ export function useOnboarding({
         return
       }
 
-      await handleSaveConfig(data.apiKey, {
+      const saved = await handleSaveConfig(data.apiKey, {
         baseUrl: data.baseUrl,
         connectionDefaultModel: data.connectionDefaultModel,
         models: data.models,
+        piAuthProvider: data.piAuthProvider,
       })
 
-      setState(s => ({
-        ...s,
-        credentialStatus: 'success',
-        step: 'complete',
-      }))
+      if (saved) {
+        setState(s => ({
+          ...s,
+          credentialStatus: 'success',
+          step: 'complete',
+        }))
+      } else {
+        // Save failed — error is already set by handleSaveConfig, stay on credentials step
+        setState(s => ({ ...s, credentialStatus: 'error' }))
+      }
     } catch (error) {
       setState(s => ({
         ...s,
@@ -428,12 +429,17 @@ export function useOnboarding({
 
         if (result.success) {
           // Tokens captured automatically, save config and complete
-          await handleSaveConfig(undefined)
-          setState(s => ({
-            ...s,
-            credentialStatus: 'success',
-            step: 'complete',
-          }))
+          const saved = await handleSaveConfig(undefined)
+          if (saved) {
+            setState(s => ({
+              ...s,
+              credentialStatus: 'success',
+              step: 'complete',
+            }))
+          } else {
+            // Save failed — error is already set by handleSaveConfig, stay on credentials step
+            setState(s => ({ ...s, credentialStatus: 'error' }))
+          }
         } else {
           setState(s => ({
             ...s,
@@ -459,12 +465,17 @@ export function useOnboarding({
 
           if (result.success) {
             // Tokens captured, save config and complete
-            await handleSaveConfig(undefined)
-            setState(s => ({
-              ...s,
-              credentialStatus: 'success',
-              step: 'complete',
-            }))
+            const saved = await handleSaveConfig(undefined)
+            if (saved) {
+              setState(s => ({
+                ...s,
+                credentialStatus: 'success',
+                step: 'complete',
+              }))
+            } else {
+              // Save failed — error is already set by handleSaveConfig, stay on credentials step
+              setState(s => ({ ...s, credentialStatus: 'error' }))
+            }
           } else {
             setState(s => ({
               ...s,
@@ -480,7 +491,7 @@ export function useOnboarding({
       }
 
       // Claude OAuth (two-step flow - opens browser, user copies code)
-      // Also handles Pi + Claude Max variant
+      // Remaining method must be claude_oauth
       if (effectiveMethod !== 'claude_oauth') {
         setState(s => ({
           ...s,
@@ -531,13 +542,18 @@ export function useOnboarding({
 
       if (result.success && result.token) {
         setIsWaitingForCode(false)
-        await handleSaveConfig(result.token)
+        const saved = await handleSaveConfig(result.token)
 
-        setState(s => ({
-          ...s,
-          credentialStatus: 'success',
-          step: 'complete',
-        }))
+        if (saved) {
+          setState(s => ({
+            ...s,
+            credentialStatus: 'success',
+            step: 'complete',
+          }))
+        } else {
+          // Save failed — error is already set by handleSaveConfig, stay on credentials step
+          setState(s => ({ ...s, credentialStatus: 'error' }))
+        }
       } else {
         setState(s => ({
           ...s,

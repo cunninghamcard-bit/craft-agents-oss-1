@@ -49,7 +49,7 @@
     "./validation": "./src/validation/index.ts",
     "./version": "./src/version/index.ts",
     "./branding": "./src/branding.ts",
-    "./network-interceptor": "./src/network-interceptor.ts",
+    "./interceptor": "./src/interceptor-common.ts",
     "./search": "./src/search/index.ts",
     "./tools": "./src/tools/index.ts",
     "./codex": "./src/codex/index.ts",

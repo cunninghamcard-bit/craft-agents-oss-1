@@ -12,7 +12,7 @@ import { CraftMcpClient } from './client.js';
 import { debug } from '../utils/debug.ts';
 import { getDefaultSummarizationModel } from '../config/models.ts';
 import { parseError, type AgentError } from '../agent/errors.ts';
-import { getLastApiError } from '../network-interceptor.ts';
+import { getLastApiError } from '../interceptor-common.ts';
 
 export interface InvalidProperty {
   toolName: string;

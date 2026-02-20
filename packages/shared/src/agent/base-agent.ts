@@ -83,8 +83,8 @@ export interface MiniAgentConfig {
 /** Tool list for mini agents - quick config edits only */
 export const MINI_AGENT_TOOLS = ['Read', 'Edit', 'Write', 'Glob', 'Grep', 'Bash'] as const;
 
-/** MCP servers for mini agents - minimal set */
-export const MINI_AGENT_MCP_KEYS = ['session', 'craft-agents-docs'] as const;
+/** MCP servers for mini agents - minimal set (docs tools are now bundled in session) */
+export const MINI_AGENT_MCP_KEYS = ['session'] as const;
 
 // ============================================================
 // BaseAgent Abstract Class
@@ -468,6 +468,13 @@ export abstract class BaseAgent implements AgentBackend {
       Object.keys(apiServers),
       intendedSlugs
     );
+
+    // Sync the centralized MCP client pool (if available)
+    if (this.config.mcpPool) {
+      this.config.mcpPool.sync(mcpServers).catch(err => {
+        this.debug(`Failed to sync MCP pool: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
   }
 
   getActiveSourceSlugs(): string[] {
@@ -668,6 +675,14 @@ Please continue the conversation naturally from where we left off.
     this.permissionManager.clearWhitelists();
     this.sourceManager.resetSeenSources();
     this.usageTracker.reset();
+
+    // Disconnect MCP pool to avoid connection leaks
+    if (this.config.mcpPool) {
+      this.config.mcpPool.disconnectAll().catch(err => {
+        this.debug(`Failed to disconnect MCP pool: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+
     this.debug('Base agent destroyed');
   }
 
@@ -766,6 +781,15 @@ Please continue the conversation naturally from where we left off.
    * Used for auth requests, plan submissions where we need synchronous abort.
    */
   abstract forceAbort(reason: AbortReason): void;
+
+  /**
+   * Redirect the agent mid-stream. Default: abort and let session layer re-send.
+   * Override in backends that support native steering (e.g., Pi's steer()).
+   */
+  redirect(_message: string): boolean {
+    this.forceAbort(AbortReason.Redirect);
+    return false;
+  }
 
   /**
    * Check if currently processing a query.
