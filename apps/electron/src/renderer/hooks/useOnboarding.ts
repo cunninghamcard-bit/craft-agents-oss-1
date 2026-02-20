@@ -87,6 +87,8 @@ const BASE_SLUG_FOR_METHOD: Record<ApiSetupMethod, string> = {
   pi_chatgpt_oauth: 'pi-codex',
   pi_copilot_oauth: 'pi-copilot',
   pi_google_api_key: 'pi-google',
+  pi_custom_provider: 'pi-custom',
+  pi_ollama: 'pi-local',
 }
 
 /**
@@ -113,7 +115,7 @@ function resolveSlugForMethod(
 // Map ApiSetupMethod to LlmConnectionSetup for the new unified connection system
 function apiSetupMethodToConnectionSetup(
   method: ApiSetupMethod,
-  options: { credential?: string; baseUrl?: string; connectionDefaultModel?: string; models?: string[] },
+  options: { credential?: string; baseUrl?: string; connectionDefaultModel?: string; models?: string[]; piAuthProvider?: string },
   editingSlug: string | null,
   existingSlugs: Set<string>,
 ): LlmConnectionSetup {
@@ -153,6 +155,20 @@ function apiSetupMethodToConnectionSetup(
       return {
         slug,
         credential: options.credential,
+      }
+    case 'pi_custom_provider':
+      return {
+        slug,
+        credential: options.credential,
+        piAuthProvider: options.piAuthProvider,
+      }
+    case 'pi_ollama':
+      return {
+        slug,
+        credential: options.credential,  // empty string (no auth)
+        baseUrl: 'http://localhost:11434',
+        defaultModel: options.connectionDefaultModel || 'qwen3-coder',
+        models: options.models || ['qwen3-coder'],
       }
   }
 }
@@ -196,7 +212,7 @@ export function useOnboarding({
   }, [])
 
   // Save configuration using the new unified LLM connection API
-  const handleSaveConfig = useCallback(async (credential?: string, options?: { baseUrl?: string; connectionDefaultModel?: string; models?: string[] }) => {
+  const handleSaveConfig = useCallback(async (credential?: string, options?: { baseUrl?: string; connectionDefaultModel?: string; models?: string[]; piAuthProvider?: string }) => {
     if (!state.apiSetupMethod) {
       return
     }
@@ -210,6 +226,7 @@ export function useOnboarding({
         baseUrl: options?.baseUrl,
         connectionDefaultModel: options?.connectionDefaultModel,
         models: options?.models,
+        piAuthProvider: options?.piAuthProvider,
       }, editingSlug, existingSlugs)
       // Use new unified API
       const result = await window.electronAPI.setupLlmConnection(setup)
@@ -301,13 +318,23 @@ export function useOnboarding({
 
     const isOpenAiFlow = state.apiSetupMethod === 'openai_api_key'
     const isPiGoogleFlow = state.apiSetupMethod === 'pi_google_api_key'
+    const isPiCustomFlow = state.apiSetupMethod === 'pi_custom_provider'
+    const isPiOllamaFlow = state.apiSetupMethod === 'pi_ollama'
 
     try {
-      // API key validation differs by provider:
-      // - OpenAI flow: API key is always required
-      // - Pi flow: API key is always required
-      // - Anthropic flow: API key required for hosted providers, optional for Ollama/local
-      if (isOpenAiFlow) {
+      // API key validation differs by provider
+      if (isPiOllamaFlow) {
+        // Ollama doesn't require an API key — skip validation
+      } else if (isPiCustomFlow) {
+        if (!data.apiKey.trim()) {
+          setState(s => ({
+            ...s,
+            credentialStatus: 'error',
+            errorMessage: 'Please enter a valid API key for the selected provider',
+          }))
+          return
+        }
+      } else if (isOpenAiFlow) {
         if (!data.apiKey.trim()) {
           setState(s => ({
             ...s,
@@ -340,7 +367,10 @@ export function useOnboarding({
       // Validate connection before saving using provider-specific validation
       let testResult: { success: boolean; error?: string }
 
-      if (isOpenAiFlow) {
+      if (isPiCustomFlow || isPiOllamaFlow) {
+        // Skip connection test — validate at runtime
+        testResult = { success: true }
+      } else if (isOpenAiFlow) {
         // OpenAI validation - tests against /v1/models endpoint
         testResult = await window.electronAPI.testOpenAiConnection(
           data.apiKey,
@@ -372,6 +402,7 @@ export function useOnboarding({
         baseUrl: data.baseUrl,
         connectionDefaultModel: data.connectionDefaultModel,
         models: data.models,
+        piAuthProvider: data.piAuthProvider,
       })
 
       setState(s => ({

@@ -60,7 +60,7 @@ import type { LLMQueryRequest, LLMQueryResult } from '../../shared/src/agent/llm
 import { PI_TOOL_NAME_MAP, THINKING_TO_PI } from '../../shared/src/agent/backend/pi/constants.ts';
 import { getDefaultSummarizationModel } from '../../shared/src/config/models.ts';
 import { webSearchTool } from './tools/web-search.ts';
-import { webFetchTool } from './tools/web-fetch.ts';
+import { createWebFetchTool } from './tools/web-fetch.ts';
 import { createGoogleSearchTool } from './tools/google-search.ts';
 
 // ============================================================
@@ -295,6 +295,9 @@ async function ensureSession(): Promise<AgentSession> {
   const searchTool = isGoogleProvider && googleApiKey
     ? createGoogleSearchTool(googleApiKey)
     : webSearchTool;
+  const webFetchTool = createWebFetchTool(() =>
+    initConfig ? getSessionPath(initConfig.workspaceRootPath, initConfig.sessionId) : null
+  );
   const webTools = [searchTool, webFetchTool];
   const wrappedCodingTools = wrapToolsWithHooks([...codingTools, ...webTools]);
   const proxyTools = buildProxyTools();
@@ -392,6 +395,9 @@ function rebuildSessionTools(): void {
   const searchTool = isGoogleProvider && googleApiKey
     ? createGoogleSearchTool(googleApiKey)
     : webSearchTool;
+  const webFetchTool = createWebFetchTool(() =>
+    initConfig ? getSessionPath(initConfig.workspaceRootPath, initConfig.sessionId) : null
+  );
   const webTools = [searchTool, webFetchTool];
   const wrappedCodingTools = wrapToolsWithHooks([...codingTools, ...webTools]);
   const proxyTools = buildProxyTools();

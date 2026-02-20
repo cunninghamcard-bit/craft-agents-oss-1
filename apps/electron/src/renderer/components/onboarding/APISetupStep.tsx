@@ -46,6 +46,8 @@ export type ApiSetupMethod =
   | 'pi_chatgpt_oauth'
   | 'pi_copilot_oauth'
   | 'pi_google_api_key'
+  | 'pi_custom_provider'
+  | 'pi_ollama'
 
 /**
  * Map ApiSetupMethod to the underlying LLM connection types.
@@ -71,6 +73,10 @@ export function apiSetupMethodToConnectionTypes(method: ApiSetupMethod): {
       return { providerType: 'pi', authType: 'oauth' };
     case 'pi_google_api_key':
       return { providerType: 'pi', authType: 'api_key' };
+    case 'pi_custom_provider':
+      return { providerType: 'pi', authType: 'api_key' };
+    case 'pi_ollama':
+      return { providerType: 'pi_compat', authType: 'none' };
   }
 }
 
@@ -137,6 +143,20 @@ const API_SETUP_OPTIONS: ApiSetupOption[] = [
     name: 'Pi + Google AI Studio',
     description: 'Use your Google AI Studio API key for Gemini models via Pi.',
     icon: <Key className="size-4" />,
+    providerType: 'pi',
+  },
+  {
+    id: 'pi_custom_provider',
+    name: 'Pi + Custom Provider',
+    description: 'Connect OpenRouter, xAI, Groq, Mistral, or other Pi-supported providers.',
+    icon: <Key className="size-4" />,
+    providerType: 'pi',
+  },
+  {
+    id: 'pi_ollama',
+    name: 'Pi + Ollama',
+    description: 'Use local models via Ollama. No API key required.',
+    icon: <Cpu className="size-4" />,
     providerType: 'pi',
   },
 ]

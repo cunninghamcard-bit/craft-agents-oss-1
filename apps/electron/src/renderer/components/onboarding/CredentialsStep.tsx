@@ -52,7 +52,9 @@ export function CredentialsStep({
   const isAnthropicApiKey = apiSetupMethod === 'anthropic_api_key'
   const isOpenAiApiKey = apiSetupMethod === 'openai_api_key'
   const isPiGoogleApiKey = apiSetupMethod === 'pi_google_api_key'
-  const isApiKey = isAnthropicApiKey || isOpenAiApiKey || isPiGoogleApiKey
+  const isPiCustomProvider = apiSetupMethod === 'pi_custom_provider'
+  const isPiOllama = apiSetupMethod === 'pi_ollama'
+  const isApiKey = isAnthropicApiKey || isOpenAiApiKey || isPiGoogleApiKey || isPiCustomProvider || isPiOllama
 
   // Pi OAuth variants use the same UI with Pi-specific titles
   const isPiOAuth = apiSetupMethod === 'pi_chatgpt_oauth' || apiSetupMethod === 'pi_copilot_oauth'
@@ -251,8 +253,12 @@ export function CredentialsStep({
 
   // --- API Key flow ---
   // Determine provider type and description based on selected method
-  const providerType = isPiGoogleApiKey ? 'google' : isOpenAiApiKey ? 'openai' : 'anthropic'
-  const apiKeyDescription = isPiGoogleApiKey
+  const providerType = isPiCustomProvider ? 'pi_custom' as const : isPiOllama ? 'pi_ollama' as const : isPiGoogleApiKey ? 'google' as const : isOpenAiApiKey ? 'openai' as const : 'anthropic' as const
+  const apiKeyDescription = isPiCustomProvider
+    ? "Select your provider and enter your API key."
+    : isPiOllama
+    ? "Configure your local Ollama endpoint and default model."
+    : isPiGoogleApiKey
     ? "Enter your Google AI Studio API key for Gemini models via Pi."
     : isOpenAiApiKey
     ? "Enter your OpenAI API key."

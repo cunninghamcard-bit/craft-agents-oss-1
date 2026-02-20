@@ -171,12 +171,72 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
     contextWindow: 272_000,
   },
   {
-    id: 'pi/gemini-2.5-pro',
-    name: 'Gemini 2.5 Pro (Pi)',
-    shortName: 'Gemini Pro (Pi)',
-    description: 'Google Gemini via Pi unified API',
+    id: 'pi/gemini-3-pro-preview',
+    name: 'Gemini 3 Pro Preview (Pi)',
+    shortName: 'Gemini 3 Pro (Pi)',
+    description: 'Google Gemini 3 Pro via Pi unified API',
     provider: 'pi',
     contextWindow: 1_000_000,
+  },
+  {
+    id: 'pi/gemini-3-flash-preview',
+    name: 'Gemini 3 Flash Preview (Pi)',
+    shortName: 'Gemini 3 Flash (Pi)',
+    description: 'Google Gemini 3 Flash via Pi unified API',
+    provider: 'pi',
+    contextWindow: 1_048_576,
+  },
+  {
+    id: 'pi/gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro (Pi)',
+    shortName: 'Gemini 2.5 Pro (Pi)',
+    description: 'Google Gemini 2.5 Pro via Pi unified API',
+    provider: 'pi',
+    contextWindow: 1_048_576,
+  },
+  {
+    id: 'pi/gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash (Pi)',
+    shortName: 'Gemini 2.5 Flash (Pi)',
+    description: 'Fast Google Gemini via Pi unified API',
+    provider: 'pi',
+    contextWindow: 1_048_576,
+  },
+  {
+    id: 'pi/gemini-2.5-flash-lite',
+    name: 'Gemini 2.5 Flash Lite (Pi)',
+    shortName: 'Gemini Flash Lite (Pi)',
+    description: 'Lightweight Google Gemini via Pi unified API',
+    provider: 'pi',
+    contextWindow: 1_048_576,
+  },
+  {
+    id: 'pi/gemini-2.0-flash',
+    name: 'Gemini 2.0 Flash (Pi)',
+    shortName: 'Gemini 2.0 Flash (Pi)',
+    description: 'Google Gemini 2.0 Flash via Pi unified API',
+    provider: 'pi',
+    contextWindow: 1_048_576,
+  },
+
+  // ----------------------------------------
+  // xAI / Grok Models (via Pi)
+  // ----------------------------------------
+  {
+    id: 'pi/grok-3',
+    name: 'Grok 3 (Pi)',
+    shortName: 'Grok 3 (Pi)',
+    description: 'xAI Grok 3 via Pi unified API',
+    provider: 'pi',
+    contextWindow: 131_072,
+  },
+  {
+    id: 'pi/grok-3-mini',
+    name: 'Grok 3 Mini (Pi)',
+    shortName: 'Grok 3 Mini (Pi)',
+    description: 'xAI Grok 3 Mini via Pi unified API',
+    provider: 'pi',
+    contextWindow: 131_072,
   },
 ];
 
@@ -214,6 +274,12 @@ const PI_AUTH_PROVIDER_PREFIXES: Record<string, string[]> = {
   'azure-openai-responses': ['gpt', 'o1', 'o3', 'o4'],
   'github-copilot': ['claude', 'gpt', 'o1', 'o3', 'o4'],
   'google': ['gemini'],
+  'openrouter': ['claude', 'gpt', 'o1', 'o3', 'o4', 'gemini', 'mistral', 'deepseek', 'llama'],
+  'xai': ['grok'],
+  'groq': ['llama', 'gemma', 'deepseek', 'mistral'],
+  'mistral': ['mistral', 'codestral', 'pixtral'],
+  'cerebras': ['llama', 'deepseek'],
+  'huggingface': ['qwen', 'deepseek', 'llama', 'mistral'],
 };
 
 /**

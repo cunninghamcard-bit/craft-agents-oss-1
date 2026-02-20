@@ -29,6 +29,7 @@ export interface ApiKeySubmitData {
   baseUrl?: string
   connectionDefaultModel?: string
   models?: string[]
+  piAuthProvider?: string
 }
 
 export interface ApiKeyInputProps {
@@ -43,11 +44,11 @@ export interface ApiKeyInputProps {
   /** Disable the input (e.g. during validation) */
   disabled?: boolean
   /** Provider type determines which presets and placeholders to show */
-  providerType?: 'anthropic' | 'openai' | 'pi' | 'google'
+  providerType?: 'anthropic' | 'openai' | 'pi' | 'pi_custom' | 'pi_ollama' | 'google'
 }
 
 // Preset key includes both provider defaults ('anthropic', 'openai', 'pi') and third-party services
-type PresetKey = 'anthropic' | 'openai' | 'pi' | 'openrouter' | 'vercel' | 'ollama' | 'custom'
+type PresetKey = 'anthropic' | 'openai' | 'pi' | 'google' | 'openrouter' | 'vercel' | 'ollama' | 'custom'
 
 interface Preset {
   key: PresetKey
@@ -84,12 +85,22 @@ const GOOGLE_PRESETS: Preset[] = [
   { key: 'google', label: 'Google AI Studio', url: '' },
 ]
 
+// Pi custom providers — available via Pi SDK with API key auth
+const PI_CUSTOM_PROVIDERS = [
+  { key: 'openrouter', label: 'OpenRouter', placeholder: 'sk-or-...' },
+  { key: 'xai', label: 'xAI (Grok)', placeholder: 'xai-...' },
+  { key: 'groq', label: 'Groq', placeholder: 'gsk_...' },
+  { key: 'mistral', label: 'Mistral', placeholder: 'M...' },
+  { key: 'cerebras', label: 'Cerebras', placeholder: 'csk-...' },
+  { key: 'huggingface', label: 'HuggingFace', placeholder: 'hf_...' },
+] as const
+
 const COMPAT_ANTHROPIC_DEFAULTS = 'anthropic/claude-opus-4.6, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5'
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
 
-function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google'): Preset[] {
+function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'pi_custom' | 'pi_ollama' | 'google'): Preset[] {
   if (providerType === 'google') return GOOGLE_PRESETS
-  if (providerType === 'pi') return PI_PRESETS
+  if (providerType === 'pi' || providerType === 'pi_custom' || providerType === 'pi_ollama') return PI_PRESETS
   return providerType === 'openai' ? OPENAI_PRESETS : ANTHROPIC_PRESETS
 }
 
@@ -121,8 +132,9 @@ export function ApiKeyInput({
   const [showValue, setShowValue] = useState(false)
   const [baseUrl, setBaseUrl] = useState(defaultPreset.url)
   const [activePreset, setActivePreset] = useState<PresetKey>(defaultPreset.key)
-  const [connectionDefaultModel, setConnectionDefaultModel] = useState('')
+  const [connectionDefaultModel, setConnectionDefaultModel] = useState(providerType === 'pi_ollama' ? 'qwen3-coder' : '')
   const [modelError, setModelError] = useState<string | null>(null)
+  const [selectedPiProvider, setSelectedPiProvider] = useState<typeof PI_CUSTOM_PROVIDERS[number]['key']>(PI_CUSTOM_PROVIDERS[0].key)
 
   const isDisabled = disabled || status === 'validating'
 
@@ -130,7 +142,9 @@ export function ApiKeyInput({
   const isDefaultProviderPreset = activePreset === 'anthropic' || activePreset === 'openai' || activePreset === 'pi' || activePreset === 'google'
 
   // Provider-specific placeholders
-  const apiKeyPlaceholder = providerType === 'google' ? 'AIza...' : providerType === 'pi' ? 'pi-...' : providerType === 'openai' ? 'sk-...' : 'sk-ant-...'
+  const apiKeyPlaceholder = providerType === 'pi_custom'
+    ? (PI_CUSTOM_PROVIDERS.find(p => p.key === selectedPiProvider)?.placeholder ?? 'API key...')
+    : providerType === 'google' ? 'AIza...' : providerType === 'pi' ? 'pi-...' : providerType === 'openai' ? 'sk-...' : 'sk-ant-...'
 
   const handlePresetSelect = (preset: Preset) => {
     setActivePreset(preset.key)
@@ -169,8 +183,29 @@ export function ApiKeyInput({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    // Always call onSubmit — the hook decides whether an empty key is valid
-    // (custom endpoints like Ollama don't require API keys)
+
+    // Pi + Ollama: no API key, just model name
+    if (providerType === 'pi_ollama') {
+      const parsedModels = parseModelList(connectionDefaultModel)
+      onSubmit({
+        apiKey: '',
+        baseUrl: 'http://localhost:11434',
+        connectionDefaultModel: parsedModels[0] || 'qwen3-coder',
+        models: parsedModels.length > 0 ? parsedModels : ['qwen3-coder'],
+      })
+      return
+    }
+
+    // Pi + Custom Provider: API key + provider selection, no endpoint/model
+    if (providerType === 'pi_custom') {
+      onSubmit({
+        apiKey: apiKey.trim(),
+        piAuthProvider: selectedPiProvider,
+      })
+      return
+    }
+
+    // Standard flow
     const effectiveBaseUrl = baseUrl.trim()
     const parsedModels = parseModelList(connectionDefaultModel)
     const requiresModel = !isDefaultProviderPreset && !!effectiveBaseUrl
@@ -188,6 +223,110 @@ export function ApiKeyInput({
     })
   }
 
+  // --- Pi + Ollama: no API key, just model name ---
+  if (providerType === 'pi_ollama') {
+    return (
+      <form id={formId} onSubmit={handleSubmit} className="space-y-6">
+        <div className="space-y-2">
+          <Label htmlFor="connection-default-model">Default Model</Label>
+          <div className={cn(
+            "rounded-md shadow-minimal transition-colors",
+            "bg-foreground-2 focus-within:bg-background"
+          )}>
+            <Input
+              id="connection-default-model"
+              type="text"
+              value={connectionDefaultModel}
+              onChange={(e) => setConnectionDefaultModel(e.target.value)}
+              placeholder="qwen3-coder"
+              className="border-0 bg-transparent shadow-none"
+              disabled={isDisabled}
+              autoFocus
+            />
+          </div>
+          <p className="text-xs text-foreground/30">
+            Use any model pulled via <code className="text-foreground/40">ollama pull</code>. No API key required.
+          </p>
+        </div>
+
+        {status === 'error' && errorMessage && (
+          <p className="text-sm text-destructive">{errorMessage}</p>
+        )}
+      </form>
+    )
+  }
+
+  // --- Pi + Custom Provider: provider dropdown + API key ---
+  if (providerType === 'pi_custom') {
+    return (
+      <form id={formId} onSubmit={handleSubmit} className="space-y-6">
+        {/* Provider Dropdown */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <Label>Provider</Label>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={isDisabled}
+                className="flex h-6 items-center gap-1 rounded-[6px] bg-background shadow-minimal pl-2.5 pr-2 text-[12px] font-medium text-foreground/50 hover:bg-foreground/5 hover:text-foreground focus:outline-none"
+              >
+                {PI_CUSTOM_PROVIDERS.find(p => p.key === selectedPiProvider)?.label}
+                <ChevronDown className="size-2.5 opacity-50" />
+              </DropdownMenuTrigger>
+              <StyledDropdownMenuContent align="end" className="z-floating-menu">
+                {PI_CUSTOM_PROVIDERS.map((provider) => (
+                  <StyledDropdownMenuItem
+                    key={provider.key}
+                    onClick={() => setSelectedPiProvider(provider.key)}
+                    className="justify-between"
+                  >
+                    {provider.label}
+                    <Check className={cn("size-3", selectedPiProvider === provider.key ? "opacity-100" : "opacity-0")} />
+                  </StyledDropdownMenuItem>
+                ))}
+              </StyledDropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        {/* API Key */}
+        <div className="space-y-2">
+          <Label htmlFor="api-key">API Key</Label>
+          <div className={cn(
+            "relative rounded-md shadow-minimal transition-colors",
+            "bg-foreground-2 focus-within:bg-background"
+          )}>
+            <Input
+              id="api-key"
+              type={showValue ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={apiKeyPlaceholder}
+              className={cn(
+                "pr-10 border-0 bg-transparent shadow-none",
+                status === 'error' && "focus-visible:ring-destructive"
+              )}
+              disabled={isDisabled}
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => setShowValue(!showValue)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              tabIndex={-1}
+            >
+              {showValue ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
+          </div>
+        </div>
+
+        {status === 'error' && errorMessage && (
+          <p className="text-sm text-destructive">{errorMessage}</p>
+        )}
+      </form>
+    )
+  }
+
+  // --- Standard flow (Anthropic, OpenAI, Pi, Google) ---
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-6">
       {/* API Key */}

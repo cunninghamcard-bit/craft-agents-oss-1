@@ -71,6 +71,7 @@ export interface LlmConnectionSetup {
   baseUrl?: string | null   // Custom API endpoint (null to clear)
   defaultModel?: string | null  // Custom model override (null to clear)
   models?: string[] | null  // Optional model list for compat providers
+  piAuthProvider?: string   // Pi SDK auth provider (e.g. 'openrouter', 'xai') — for pi_custom_provider
 }
 
 

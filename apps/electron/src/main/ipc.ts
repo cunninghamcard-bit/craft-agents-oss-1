@@ -119,6 +119,12 @@ const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
     authType: 'api_key',
     piAuthProvider: 'google',
   },
+  'pi-custom': {
+    name: 'Pi + Custom Provider',
+    providerType: 'pi',
+    authType: 'api_key',
+    piAuthProvider: 'openrouter',  // default, overridden by setup.piAuthProvider
+  },
 }
 
 /**
@@ -126,7 +132,7 @@ const BUILT_IN_CONNECTION_TEMPLATES: Record<string, {
  * Uses built-in templates for known slugs, throws for unknown slugs
  * (custom connections are created through the settings UI).
  */
-function createBuiltInConnection(slug: string, baseUrl?: string | null): LlmConnection {
+function createBuiltInConnection(slug: string, baseUrl?: string | null, piAuthProvider?: string): LlmConnection {
   // Try exact match first, then strip numeric suffix for derived slugs (e.g. 'anthropic-api-2' → 'anthropic-api')
   const baseSlug = slug.replace(/-\d+$/, '')
   const template = BUILT_IN_CONNECTION_TEMPLATES[slug] ?? BUILT_IN_CONNECTION_TEMPLATES[baseSlug]
@@ -151,14 +157,16 @@ function createBuiltInConnection(slug: string, baseUrl?: string | null): LlmConn
     name = `${name} ${suffixMatch[1]}`
   }
 
+  const effectivePiAuthProvider = piAuthProvider || template.piAuthProvider
+
   return {
     slug,
     name,
     providerType,
     authType,
-    models: getDefaultModelsForConnection(providerType, template.piAuthProvider),
-    defaultModel: getDefaultModelForConnection(providerType, template.piAuthProvider),
-    piAuthProvider: template.piAuthProvider,
+    models: getDefaultModelsForConnection(providerType, effectivePiAuthProvider),
+    defaultModel: getDefaultModelForConnection(providerType, effectivePiAuthProvider),
+    piAuthProvider: effectivePiAuthProvider,
     createdAt: Date.now(),
   }
 }
@@ -1618,11 +1626,19 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       let isNewConnection = false
       if (!connection) {
         // Create connection with appropriate defaults based on slug
-        connection = createBuiltInConnection(setup.slug, setup.baseUrl)
+        connection = createBuiltInConnection(setup.slug, setup.baseUrl, setup.piAuthProvider)
         isNewConnection = true
       }
 
       const updates: Partial<LlmConnection> = {}
+
+      // Apply dynamic piAuthProvider (from Pi + Custom Provider flow)
+      if (setup.piAuthProvider) {
+        updates.piAuthProvider = setup.piAuthProvider
+        updates.models = getDefaultModelsForConnection('pi', setup.piAuthProvider)
+        updates.defaultModel = getDefaultModelForConnection('pi', setup.piAuthProvider)
+      }
+
       if (setup.baseUrl !== undefined) {
         const hasCustomEndpoint = !!setup.baseUrl
         updates.baseUrl = setup.baseUrl ?? undefined
