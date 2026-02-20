@@ -41,10 +41,13 @@ export function createGoogleSearchTool(apiKey: string): AgentTool<typeof schema>
       const { query } = params;
 
       try {
-        const url = `${API_BASE}/${GROUNDING_MODEL}:generateContent?key=${apiKey}`;
+        const url = `${API_BASE}/${GROUNDING_MODEL}:generateContent`;
         const response = await fetch(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey,
+          },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: query }] }],
             tools: [{ googleSearch: {} }],

@@ -147,20 +147,8 @@ function apiSetupMethodToConnectionSetup(
         models: options.models,
       }
     case 'copilot_oauth':
-      return {
-        slug,
-        credential: options.credential,
-      }
     case 'pi_chatgpt_oauth':
-      return {
-        slug,
-        credential: options.credential,
-      }
     case 'pi_copilot_oauth':
-      return {
-        slug,
-        credential: options.credential,
-      }
     case 'pi_google_api_key':
       return {
         slug,

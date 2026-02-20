@@ -247,25 +247,35 @@ function resolvePiModel(
 }
 
 
+/**
+ * Create an in-memory auth storage pre-loaded with the user's credentials
+ * and a model registry backed by it. Used by both the main session and
+ * ephemeral queryLlm sessions.
+ */
+function createAuthenticatedRegistry(): {
+  authStorage: PiAuthStorage;
+  modelRegistry: PiModelRegistry;
+} {
+  const authStorage = PiAuthStorage.inMemory();
+  if (initConfig?.piAuth) {
+    const { provider, credential } = initConfig.piAuth;
+    authStorage.set(provider, credential);
+    debugLog(`Injected ${credential.type} credential for provider: ${provider}`);
+  } else if (initConfig?.apiKey) {
+    authStorage.set('anthropic', { type: 'api_key', key: initConfig.apiKey });
+    debugLog('Injected API key into auth storage (legacy fallback)');
+  }
+  return { authStorage, modelRegistry: new PiModelRegistry(authStorage) };
+}
+
 async function ensureSession(): Promise<AgentSession> {
   if (piSession) return piSession;
   if (!initConfig) throw new Error('Cannot create session: init not received');
 
   const cwd = resolvedCwd();
 
-  // Create in-memory auth storage and inject credentials
-  const authStorage = PiAuthStorage.inMemory();
-  if (initConfig.piAuth) {
-    const { provider, credential } = initConfig.piAuth;
-    authStorage.set(provider, credential);
-    debugLog(`Injected ${credential.type} credential for provider: ${provider}`);
-  } else if (initConfig.apiKey) {
-    authStorage.set('anthropic', { type: 'api_key', key: initConfig.apiKey });
-    debugLog('Injected API key into auth storage (legacy fallback)');
-  }
-
-  // Create model registry (stored at module scope for set_model handler)
-  const modelRegistry = new PiModelRegistry(authStorage);
+  const { authStorage, modelRegistry } = createAuthenticatedRegistry();
+  // Store at module scope for set_model handler
   piModelRegistry = modelRegistry;
 
   // Build tools: coding tools + web tools wrapped with permission hooks + proxy tools.
@@ -348,11 +358,26 @@ async function ensureSession(): Promise<AgentSession> {
 
 /**
  * Rebuild the session's tool registry in-place when proxy tools change.
- * Uses _buildRuntime to update tools without disposing the session,
- * preserving conversation history and session state.
+ *
+ * HACK: Pi SDK's createAgentSession() ignores custom tool wrappers — it
+ * extracts only tool names and creates its own internal tool instances.
+ * We inject our wrapped tools via the internal _baseToolsOverride property
+ * and trigger a runtime rebuild via _buildRuntime().
+ *
+ * This WILL break on SDK updates — pinned to @mariozechner/pi-coding-agent@0.53.x.
+ * TODO: Upstream a public API for custom tool injection.
  */
 function rebuildSessionTools(): void {
   if (!piSession) return;
+
+  // Guard: fail fast if internal API changed
+  const internal = piSession as Record<string, unknown>;
+  if (typeof internal._buildRuntime !== 'function') {
+    throw new Error(
+      'Pi SDK internal API changed: _buildRuntime not found. ' +
+      'Update rebuildSessionTools() for the new SDK version.',
+    );
+  }
 
   const isGoogleProvider = initConfig?.piAuth?.provider === 'google';
   const googleApiKey = initConfig?.piAuth?.credential?.type === 'api_key'
@@ -384,6 +409,67 @@ function rebuildSessionTools(): void {
 // ============================================================
 // Tool Wrapping (Permission Enforcement + Large Response Summarization)
 // ============================================================
+
+/**
+ * Shared permission enforcement for both coding tools and proxy tools.
+ * Checks mode-manager rules and, in Ask mode, prompts the user via the
+ * pending-permissions handshake. Throws on deny or block.
+ */
+async function enforcePermission(
+  toolName: string,
+  params: Record<string, unknown>,
+  opts?: { permissionType?: string },
+): Promise<void> {
+  const plansFolderPath = initConfig
+    ? getSessionPlansPath(initConfig.workspaceRootPath, initConfig.sessionId)
+    : undefined;
+
+  const check = shouldAllowToolInMode(toolName, params, permissionMode, {
+    plansFolderPath,
+    permissionsContext: {
+      workspaceRootPath: initConfig?.workspaceRootPath || resolvedCwd(),
+      activeSourceSlugs,
+    },
+  });
+
+  if (!check.allowed) {
+    debugLog(`Tool blocked by ${permissionMode} mode: ${toolName} — ${check.reason}`);
+    throw new Error(
+      `Tool "${toolName}" is not allowed in ${permissionMode} mode: ${check.reason}`,
+    );
+  }
+
+  if (check.requiresPermission) {
+    const requestId = `pi-perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const command = typeof params.command === 'string'
+      ? params.command
+      : typeof params.file_path === 'string'
+        ? params.file_path
+        : typeof params.path === 'string'
+          ? params.path
+          : undefined;
+
+    debugLog(`Prompting user for ${toolName} — ${check.description}`);
+
+    send({
+      type: 'permission_request',
+      requestId,
+      toolName,
+      command,
+      description: check.description,
+      permissionType: opts?.permissionType ?? getPermissionType(toolName),
+    });
+
+    const allowed = await new Promise<boolean>((resolve) => {
+      pendingPermissions.set(requestId, { resolve, toolName });
+    });
+
+    if (!allowed) {
+      debugLog(`Tool denied by user: ${toolName}`);
+      throw new Error(`Tool "${toolName}" was denied by the user.`);
+    }
+  }
+}
 
 function wrapToolsWithHooks(tools: AgentTool<any>[]): AgentTool<any>[] {
   return tools.map(tool => wrapSingleTool(tool));
@@ -461,58 +547,7 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
       ? { ...inputObj, file_path: inputObj.path }
       : inputObj;
 
-    const plansFolderPath = initConfig
-      ? getSessionPlansPath(initConfig.workspaceRootPath, initConfig.sessionId)
-      : undefined;
-
-    const check = shouldAllowToolInMode(sdkToolName, permissionInput, permissionMode, {
-      plansFolderPath,
-      permissionsContext: {
-        workspaceRootPath: initConfig?.workspaceRootPath || resolvedCwd(),
-        activeSourceSlugs,
-      },
-    });
-
-    if (!check.allowed) {
-      debugLog(`Tool blocked by ${permissionMode} mode: ${sdkToolName} — ${check.reason}`);
-      // Throw so Pi SDK's agent-loop sets isError: true on the tool_execution_end event
-      throw new Error(
-        `Tool "${sdkToolName}" is not allowed in ${permissionMode} mode: ${check.reason}`,
-      );
-    }
-
-    if (check.requiresPermission) {
-      // Ask mode: emit permission request and wait for user response
-      const requestId = `pi-perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      const command = typeof inputObj.command === 'string'
-        ? inputObj.command
-        : typeof inputObj.file_path === 'string'
-          ? inputObj.file_path
-          : typeof inputObj.path === 'string'
-            ? inputObj.path
-            : undefined;
-
-      debugLog(`Prompting user for ${sdkToolName} — ${check.description}`);
-
-      send({
-        type: 'permission_request',
-        requestId,
-        toolName: sdkToolName,
-        command,
-        description: check.description,
-        permissionType: getPermissionType(sdkToolName),
-      });
-
-      // Wait for user response via pending promise
-      const allowed = await new Promise<boolean>((resolve) => {
-        pendingPermissions.set(requestId, { resolve, toolName: sdkToolName });
-      });
-
-      if (!allowed) {
-        debugLog(`Tool denied by user: ${sdkToolName}`);
-        throw new Error(`Tool "${sdkToolName}" was denied by the user.`);
-      }
-    }
+    await enforcePermission(sdkToolName, permissionInput);
 
     // --- Execute original tool ---
 
@@ -591,46 +626,9 @@ function buildProxyTools(): AgentTool<any>[] {
       // Proxy tools (session tools, MCP sources) must respect Explore mode.
       // Use the full prefixed name (e.g., 'mcp__session__SubmitPlan') so
       // shouldAllowToolInMode() matches the mcp__session__ rules.
-      const plansFolderPath = initConfig
-        ? getSessionPlansPath(initConfig.workspaceRootPath, initConfig.sessionId)
-        : undefined;
-
-      const check = shouldAllowToolInMode(def.name, params, permissionMode, {
-        plansFolderPath,
-        permissionsContext: {
-          workspaceRootPath: initConfig?.workspaceRootPath || resolvedCwd(),
-          activeSourceSlugs,
-        },
+      await enforcePermission(def.name, params as Record<string, unknown>, {
+        permissionType: 'mcp_mutation',
       });
-
-      if (!check.allowed) {
-        debugLog(`Proxy tool blocked by ${permissionMode} mode: ${def.name} — ${check.reason}`);
-        throw new Error(
-          `Tool "${def.name}" is not allowed in ${permissionMode} mode: ${check.reason}`,
-        );
-      }
-
-      if (check.requiresPermission) {
-        const requestId = `pi-perm-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        debugLog(`Prompting user for proxy tool ${def.name} — ${check.description}`);
-
-        send({
-          type: 'permission_request',
-          requestId,
-          toolName: def.name,
-          description: check.description,
-          permissionType: 'mcp_mutation',
-        });
-
-        const allowed = await new Promise<boolean>((resolve) => {
-          pendingPermissions.set(requestId, { resolve, toolName: def.name });
-        });
-
-        if (!allowed) {
-          debugLog(`Proxy tool denied by user: ${def.name}`);
-          throw new Error(`Tool "${def.name}" was denied by the user.`);
-        }
-      }
 
       // --- Execute via main process ---
       const requestId = `proxy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -689,16 +687,7 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
 
   debugLog(`[queryLlm] Using model: ${model}`);
 
-  // Create in-memory auth storage and inject credentials
-  const authStorage = PiAuthStorage.inMemory();
-  if (initConfig.piAuth) {
-    const { provider, credential } = initConfig.piAuth;
-    authStorage.set(provider, credential);
-  } else if (initConfig.apiKey) {
-    authStorage.set('anthropic', { type: 'api_key', key: initConfig.apiKey });
-  }
-
-  const modelRegistry = new PiModelRegistry(authStorage);
+  const { authStorage, modelRegistry } = createAuthenticatedRegistry();
 
   // Create minimal ephemeral session
   const ephemeralOptions: CreateAgentSessionOptions = {
