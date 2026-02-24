@@ -1440,21 +1440,11 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
 
   ipcMain.handle(IPC_CHANNELS.PI_GET_PROVIDER_MODELS, async (_event, provider: string) => {
     const { getModels } = await import('@mariozechner/pi-ai')
-    const TIER_SIZE = 10
     try {
       const models = getModels(provider as Parameters<typeof getModels>[0])
       const sorted = [...models].sort((a, b) => b.cost.output - a.cost.output || b.cost.input - a.cost.input)
-      // Top 10 most expensive + bottom 10 cheapest, deduplicated — covers all tier dropdowns
-      const topExpensive = sorted.slice(0, TIER_SIZE)
-      const topCheap = sorted.slice(-TIER_SIZE)
-      const seen = new Set<string>()
-      const capped = [...topExpensive, ...topCheap].filter(m => {
-        if (seen.has(m.id)) return false
-        seen.add(m.id)
-        return true
-      })
       return {
-        models: capped.map(m => ({
+        models: sorted.map(m => ({
           id: m.id,
           name: m.name,
           costInput: m.cost.input,

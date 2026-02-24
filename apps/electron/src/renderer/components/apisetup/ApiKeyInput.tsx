@@ -10,7 +10,8 @@
  * Used in: Onboarding CredentialsStep, Settings API dialog
  */
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef } from "react"
+import { Command as CommandPrimitive } from "cmdk"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -179,6 +180,10 @@ export function ApiKeyInput({
   const [bestModel, setBestModel] = useState('')
   const [defaultModel, setDefaultModel] = useState('')
   const [cheapModel, setCheapModel] = useState('')
+  const [openTier, setOpenTier] = useState<string | null>(null)
+  const [tierFilter, setTierFilter] = useState('')
+  const [tierDropdownPosition, setTierDropdownPosition] = useState<{ top: number; left: number; width: number } | null>(null)
+  const tierFilterInputRef = useRef<HTMLInputElement>(null)
 
   const isDisabled = disabled || status === 'validating'
 
@@ -196,8 +201,7 @@ export function ApiKeyInput({
     : 'Paste your key here...')
 
   // Fetch Pi SDK models when a provider is selected in pi_api_key flow.
-  // Providers with many models (openrouter, vercel, etc.) return top-10 expensive + bottom-10 cheap.
-  // Providers with few models (groq, cerebras) return all of them.
+  // Returns all models sorted by cost (expensive-first) for the searchable tier dropdowns.
   const loadPiModels = useCallback(async (provider: string) => {
     if (!isPiApiKeyFlow || !provider || provider === 'custom' || DEFAULT_ENDPOINT_PROVIDERS.has(provider)) {
       setPiModels([])
@@ -306,6 +310,13 @@ export function ApiKeyInput({
     })
   }
 
+  const tierConfigs = [
+    { label: 'Best', desc: 'most capable', value: bestModel, onChange: setBestModel },
+    { label: 'Balanced', desc: 'good for everyday use', value: defaultModel, onChange: setDefaultModel },
+    { label: 'Fast', desc: 'summarization & utility', value: cheapModel, onChange: setCheapModel },
+  ]
+  const activeTierConfig = openTier ? tierConfigs.find(t => t.label === openTier) : null
+
   return (
     <form id={formId} onSubmit={handleSubmit} className="space-y-6">
       {/* API Key */}
@@ -400,51 +411,100 @@ export function ApiKeyInput({
             </div>
           ) : (
             <>
-              {[
-                { label: 'Best', desc: 'most capable', value: bestModel, onChange: setBestModel },
-                { label: 'Default', desc: 'balanced', value: defaultModel, onChange: setDefaultModel },
-                { label: 'Cheap', desc: 'summarization & utility', value: cheapModel, onChange: setCheapModel },
-              ].map(({ label, desc, value, onChange }) => (
+              {tierConfigs.map(({ label, desc, value }) => (
                 <div key={label} className="space-y-1.5">
                   <Label className="text-muted-foreground font-normal text-xs">
                     {label}{' '}
                     <span className="text-foreground/30">· {desc}</span>
                   </Label>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger
-                      disabled={isDisabled}
-                      className={cn(
-                        "flex h-9 w-full items-center justify-between rounded-md px-3 text-sm",
-                        "bg-foreground-2 shadow-minimal transition-colors",
-                        "hover:bg-background focus:outline-none focus:bg-background",
-                        isDisabled && "opacity-50 pointer-events-none"
-                      )}
-                    >
-                      <span className="truncate text-foreground">
-                        {piModels.find(m => m.id === value)?.name ?? 'Select model...'}
-                      </span>
-                      <ChevronDown className="size-3 opacity-50 shrink-0" />
-                    </DropdownMenuTrigger>
-                    <StyledDropdownMenuContent align="end" className="z-floating-menu w-[var(--radix-dropdown-menu-trigger-width)] max-h-[300px] overflow-y-auto">
-                      {piModels.map((model) => (
-                        <StyledDropdownMenuItem
-                          key={model.id}
-                          onClick={() => onChange(model.id)}
-                          className="justify-between"
-                        >
-                          <div className="flex items-center gap-2 min-w-0">
-                            <span className="truncate">{model.name}</span>
-                            {model.reasoning && (
-                              <span className="text-[10px] text-foreground/30 shrink-0">reasoning</span>
-                            )}
-                          </div>
-                          <Check className={cn("size-3 shrink-0", value === model.id ? "opacity-100" : "opacity-0")} />
-                        </StyledDropdownMenuItem>
-                      ))}
-                    </StyledDropdownMenuContent>
-                  </DropdownMenu>
+                  <button
+                    type="button"
+                    disabled={isDisabled}
+                    onClick={(e) => {
+                      if (openTier === label) {
+                        setOpenTier(null)
+                        setTierFilter('')
+                      } else {
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        setTierDropdownPosition({ top: rect.bottom + 4, left: rect.left, width: rect.width })
+                        setOpenTier(label)
+                        setTierFilter('')
+                        setTimeout(() => tierFilterInputRef.current?.focus(), 0)
+                      }
+                    }}
+                    className={cn(
+                      "flex h-9 w-full items-center justify-between rounded-md px-3 text-sm",
+                      "bg-foreground-2 shadow-minimal transition-colors",
+                      "hover:bg-background focus:outline-none focus:bg-background",
+                      isDisabled && "opacity-50 pointer-events-none"
+                    )}
+                  >
+                    <span className="truncate text-foreground">
+                      {piModels.find(m => m.id === value)?.name ?? 'Select model...'}
+                    </span>
+                    <ChevronDown className="size-3 opacity-50 shrink-0" />
+                  </button>
                 </div>
               ))}
+              {activeTierConfig && tierDropdownPosition && (
+                <>
+                  <div
+                    className="fixed inset-0 z-floating-backdrop"
+                    onClick={() => { setOpenTier(null); setTierFilter('') }}
+                  />
+                  <div
+                    className="fixed z-floating-menu min-w-[200px] overflow-hidden rounded-[8px] bg-background text-foreground shadow-modal-small"
+                    style={{
+                      top: tierDropdownPosition.top,
+                      left: tierDropdownPosition.left,
+                      width: tierDropdownPosition.width,
+                    }}
+                  >
+                    <CommandPrimitive
+                      className="min-w-[200px]"
+                      shouldFilter={false}
+                    >
+                      <div className="border-b border-border/50 px-3 py-2">
+                        <CommandPrimitive.Input
+                          ref={tierFilterInputRef}
+                          value={tierFilter}
+                          onValueChange={setTierFilter}
+                          placeholder="Search models..."
+                          autoFocus
+                          className="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground placeholder:select-none"
+                        />
+                      </div>
+                      <CommandPrimitive.List className="max-h-[240px] overflow-y-auto p-1">
+                        {piModels
+                          .filter(m => m.name.toLowerCase().includes(tierFilter.toLowerCase()))
+                          .map((model) => (
+                            <CommandPrimitive.Item
+                              key={model.id}
+                              value={model.id}
+                              onSelect={() => {
+                                activeTierConfig.onChange(model.id)
+                                setOpenTier(null)
+                                setTierFilter('')
+                              }}
+                              className={cn(
+                                "flex cursor-pointer select-none items-center justify-between gap-3 rounded-[6px] px-3 py-2 text-[13px]",
+                                "outline-none data-[selected=true]:bg-foreground/5"
+                              )}
+                            >
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="truncate">{model.name}</span>
+                                {model.reasoning && (
+                                  <span className="text-[10px] text-foreground/30 shrink-0">reasoning</span>
+                                )}
+                              </div>
+                              <Check className={cn("size-3 shrink-0", activeTierConfig.value === model.id ? "opacity-100" : "opacity-0")} />
+                            </CommandPrimitive.Item>
+                          ))}
+                      </CommandPrimitive.List>
+                    </CommandPrimitive>
+                  </div>
+                </>
+              )}
               {modelError && (
                 <p className="text-xs text-destructive">{modelError}</p>
               )}
