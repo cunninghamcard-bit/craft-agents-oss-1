@@ -55,15 +55,11 @@ export function CredentialsStep({
   editInitialValues,
 }: CredentialsStepProps) {
   const isClaudeOAuth = apiSetupMethod === 'claude_oauth'
-  const isChatGptOAuth = apiSetupMethod === 'chatgpt_oauth' || apiSetupMethod === 'pi_chatgpt_oauth'
-  const isCopilotOAuth = apiSetupMethod === 'copilot_oauth' || apiSetupMethod === 'pi_copilot_oauth'
+  const isChatGptOAuth = apiSetupMethod === 'pi_chatgpt_oauth'
+  const isCopilotOAuth = apiSetupMethod === 'pi_copilot_oauth'
   const isAnthropicApiKey = apiSetupMethod === 'anthropic_api_key'
-  const isOpenAiApiKey = apiSetupMethod === 'openai_api_key'
   const isPiApiKey = apiSetupMethod === 'pi_api_key'
-  const isApiKey = isAnthropicApiKey || isOpenAiApiKey || isPiApiKey
-
-  // Pi OAuth variants use the same UI with Pi-specific titles
-  const isPiOAuth = apiSetupMethod === 'pi_chatgpt_oauth' || apiSetupMethod === 'pi_copilot_oauth'
+  const isApiKey = isAnthropicApiKey || isPiApiKey
 
   // Copilot device code clipboard handling
   const [copiedCode, setCopiedCode] = useState(false)
@@ -93,8 +89,8 @@ export function CredentialsStep({
   if (isChatGptOAuth) {
     return (
       <StepFormLayout
-        title={isPiOAuth ? "Connect ChatGPT for Pi" : "Connect ChatGPT"}
-        description={isPiOAuth ? "Use your ChatGPT subscription to power Pi." : "Use your ChatGPT Plus or Pro subscription to power Codex."}
+        title="Connect ChatGPT"
+        description="Use your ChatGPT subscription to power Craft Agents."
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -133,8 +129,8 @@ export function CredentialsStep({
   if (isCopilotOAuth) {
     return (
       <StepFormLayout
-        title={isPiOAuth ? "Connect GitHub Copilot for Pi" : "Connect GitHub Copilot"}
-        description={isPiOAuth ? "Use your GitHub Copilot subscription to power Pi." : "Use your GitHub Copilot subscription to power AI agents."}
+        title="Connect GitHub Copilot"
+        description="Use your GitHub Copilot subscription to power Craft Agents."
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -228,8 +224,8 @@ export function CredentialsStep({
 
     return (
       <StepFormLayout
-        title={isPiOAuth ? "Connect Claude Max for Pi" : "Connect Claude Account"}
-        description={isPiOAuth ? "Use your Claude subscription to power Pi." : "Use your Claude subscription to power multi-agent workflows."}
+        title="Connect Claude Account"
+        description="Use your Claude subscription to power multi-agent workflows."
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -259,11 +255,9 @@ export function CredentialsStep({
 
   // --- API Key flow ---
   // Determine provider type and description based on selected method
-  const providerType = isPiApiKey ? 'pi_api_key' : isOpenAiApiKey ? 'openai' : 'anthropic'
+  const providerType = isPiApiKey ? 'pi_api_key' : 'anthropic'
   const apiKeyDescription = isPiApiKey
     ? "Select your LLM provider and enter the API key. Optionally configure a custom endpoint."
-    : isOpenAiApiKey
-    ? "Enter your OpenAI API key."
     : "Enter your API key. Optionally configure a custom endpoint for OpenRouter, Ollama, or compatible APIs."
 
   return (

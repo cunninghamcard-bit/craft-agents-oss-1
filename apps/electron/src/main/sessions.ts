@@ -13,7 +13,6 @@ import {
   cleanupSourceRuntimeArtifacts,
   type AgentBackend,
   type BackendHostRuntimeContext,
-  type BridgeUpdateContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
 import { getLlmConnection, getDefaultLlmConnection } from '@craft-agent/shared/config'

@@ -136,13 +136,10 @@ function getProviderLabelFromType(providerType?: LlmProviderType, baseUrl?: stri
     switch (providerType) {
       case 'anthropic': return 'Anthropic';
       case 'anthropic_compat': return baseUrl ? getProviderLabel(baseUrl) : 'API endpoint';
-      case 'openai':
-      case 'openai_compat': return 'OpenAI';
       case 'bedrock': return 'AWS Bedrock';
       case 'vertex': return 'Google Vertex AI';
-      case 'copilot': return 'GitHub Copilot';
       case 'pi':
-      case 'pi_compat': return 'Pi';
+      case 'pi_compat': return 'Craft Agents Backend';
     }
   }
   // Fallback: derive from base URL or default

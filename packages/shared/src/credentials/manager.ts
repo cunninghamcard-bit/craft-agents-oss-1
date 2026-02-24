@@ -511,12 +511,6 @@ export class CredentialManager {
     const oauth = await this.getLlmOAuth(connectionSlug);
     if (!oauth) return false;
 
-    // For OpenAI provider OAuth (Codex), we need both idToken and accessToken
-    // CodexAgent.tryInjectStoredChatGptTokens() requires both fields
-    if (providerType === 'openai' && (!oauth.idToken || !oauth.accessToken)) {
-      return false;
-    }
-
     // Check if expired
     if (oauth.expiresAt && this.isExpired({ value: oauth.accessToken, expiresAt: oauth.expiresAt })) {
       return !!oauth.refreshToken; // Can refresh

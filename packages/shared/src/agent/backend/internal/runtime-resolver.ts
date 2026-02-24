@@ -6,7 +6,6 @@ import {
   setInterceptorPath,
   setPathToClaudeCodeExecutable,
 } from '../../options.ts';
-import { setVendorRoot } from '../../../codex/binary-resolver.ts';
 
 export interface ResolvedBackendRuntimePaths {
   claudeCliPath?: string;
@@ -191,10 +190,3 @@ export function applyAnthropicRuntimeBootstrap(
   }
 }
 
-/**
- * Configure OpenAI/Codex runtime globals from host runtime context.
- * This mirrors the previous Electron startup bootstrap for Codex binary resolution.
- */
-export function applyOpenAiRuntimeBootstrap(hostRuntime: BackendHostRuntimeContext): void {
-  setVendorRoot(hostRuntime.appRootPath);
-}

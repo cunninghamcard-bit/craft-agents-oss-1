@@ -14,7 +14,6 @@
 import {
   type ModelDefinition,
   ANTHROPIC_MODELS,
-  OPENAI_MODELS,
 } from './models';
 import type { CredentialManager } from '../credentials/manager.ts';
 
@@ -44,22 +43,16 @@ export function registerPiModelResolver(resolver: PiModelResolver): void {
  *
  * - 'anthropic': Direct Anthropic API (api.anthropic.com)
  * - 'anthropic_compat': Anthropic-format compatible endpoints (OpenRouter, etc.)
- * - 'openai': Direct OpenAI API (Codex via app-server)
- * - 'openai_compat': OpenAI-format compatible endpoints (Ollama, OpenRouter, etc.)
  * - 'bedrock': AWS Bedrock (Claude models via AWS)
  * - 'vertex': Google Vertex AI (Claude models via GCP)
- * - 'copilot': GitHub Copilot (via @github/copilot-sdk)
- * - 'pi': Pi unified LLM API (20+ providers via @mariozechner/pi-coding-agent)
+ * - 'pi': Pi unified LLM API (20+ providers via @mariozechner/pi-ai)
  * - 'pi_compat': Pi with custom endpoint (Ollama, self-hosted models)
  */
 export type LlmProviderType =
   | 'anthropic'
   | 'anthropic_compat'
-  | 'openai'
-  | 'openai_compat'
   | 'bedrock'
   | 'vertex'
-  | 'copilot'
   | 'pi'
   | 'pi_compat';
 
@@ -129,15 +122,6 @@ export interface LlmConnection {
 
   /** Default model for this connection */
   defaultModel?: string;
-
-  /**
-   * Path to the Codex binary (for 'openai' provider connections).
-   * If not set, defaults to 'codex' in PATH.
-   *
-   * For Craft Agents fork with PreToolUse support, download from:
-   * https://github.com/lukilabs/craft-agents-codex/releases
-   */
-  codexPath?: string;
 
   /**
    * Pi auth provider name (e.g., 'anthropic', 'openai', 'github-copilot').
@@ -220,31 +204,48 @@ export function getSummarizationModel(connection: Pick<LlmConnection, 'models' |
  * Shared implementation for getMiniModel() and getSummarizationModel().
  *
  *   - Anthropic (incl. bedrock/vertex/compat): find "haiku"
- *   - OpenAI (incl. compat): find "mini"
- *   - Copilot: find "mini" (matches gpt-5-mini, etc.)
+ *   - Pi: find "mini" or "flash"
  *   - Otherwise: last model in the list
  */
 function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType'>): string | undefined {
   if (!connection.models || connection.models.length === 0) return undefined;
 
   const toId = (m: ModelDefinition | string) => typeof m === 'string' ? m : m.id;
+
+  // DEBUG LOG
+  // eslint-disable-next-line no-console
+  console.log(`[findSmallModel] Searching for small model. Provider: ${connection.providerType}`, connection.models.map(toId));
+
   const toSearchStr = (m: ModelDefinition | string) =>
     typeof m === 'string' ? m.toLowerCase() : `${m.id} ${m.name} ${m.shortName}`.toLowerCase();
 
   // Provider-aware keyword search
-  const keyword = isAnthropicProvider(connection.providerType) ? 'haiku'
-    : isOpenAIProvider(connection.providerType) ? 'mini'
-    : isCopilotProvider(connection.providerType) ? 'mini'
-    : isPiProvider(connection.providerType) ? 'mini'
-    : undefined;
+  const keywords: string[] = [];
 
-  if (keyword) {
-    const match = connection.models.find(m => toSearchStr(m).includes(keyword));
-    if (match) return toId(match);
+  if (isAnthropicProvider(connection.providerType)) {
+    keywords.push('haiku');
+  } else if (isPiProvider(connection.providerType)) {
+    keywords.push('mini', 'flash');
+  }
+
+  if (keywords.length > 0) {
+    const match = connection.models.find(m => {
+      const searchStr = toSearchStr(m);
+      return keywords.some(k => searchStr.includes(k));
+    });
+    if (match) {
+      const id = toId(match);
+      // eslint-disable-next-line no-console
+      console.log(`[findSmallModel] Found match: ${id} using keywords: ${keywords.join(', ')}`);
+      return id;
+    }
   }
 
   // Fallback: last model in the list
-  return toId(connection.models[connection.models.length - 1]!);
+  const fallback = toId(connection.models[connection.models.length - 1]!);
+  // eslint-disable-next-line no-console
+  console.log(`[findSmallModel] No keyword match found. Fallback to last model: ${fallback}`);
+  return fallback;
 }
 
 /**
@@ -340,10 +341,10 @@ export function authTypeRequiresEndpoint(authType: LlmAuthType): boolean {
  * Check if a provider type is a "compat" provider.
  * Compat providers use custom endpoints and require explicit model lists.
  * @param providerType - Provider type to check
- * @returns true if this is a compat provider (anthropic_compat or openai_compat)
+ * @returns true if this is a compat provider (anthropic_compat or pi_compat)
  */
 export function isCompatProvider(providerType: LlmProviderType): boolean {
-  return providerType === 'anthropic_compat' || providerType === 'openai_compat' || providerType === 'pi_compat';
+  return providerType === 'anthropic_compat' || providerType === 'pi_compat';
 }
 
 /**
@@ -361,23 +362,6 @@ export function isAnthropicProvider(providerType: LlmProviderType): boolean {
   );
 }
 
-/**
- * Check if a provider type uses OpenAI models (Codex).
- * @param providerType - Provider type to check
- * @returns true if this provider uses OpenAI/Codex models
- */
-export function isOpenAIProvider(providerType: LlmProviderType): boolean {
-  return providerType === 'openai' || providerType === 'openai_compat';
-}
-
-/**
- * Check if a provider type uses GitHub Copilot.
- * @param providerType - Provider type to check
- * @returns true if this provider uses the Copilot SDK
- */
-export function isCopilotProvider(providerType: LlmProviderType): boolean {
-  return providerType === 'copilot';
-}
 
 /**
  * Check if a provider type uses Pi unified API.
@@ -400,15 +384,6 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
   // Compat providers require explicit model lists from the connection
   if (isCompatProvider(providerType)) {
     return [];
-  }
-
-  // OpenAI: registry models as fallback; dynamic models fetched via model/list at runtime
-  if (providerType === 'openai') {
-    return OPENAI_MODELS;
-  }
-
-  if (providerType === 'copilot') {
-    return []; // Copilot models are dynamic — fetched via listModels(), no hardcoded fallbacks
   }
 
   // Pi: fetch models via registered resolver (avoids Pi SDK import in renderer)
@@ -446,12 +421,6 @@ export const PI_PREFERRED_DEFAULTS: Record<string, string[]> = {
 };
 
 export function getDefaultModelsForConnection(providerType: LlmProviderType, piAuthProvider?: string): Array<ModelDefinition | string> {
-  if (providerType === 'openai_compat') return [
-    'openai/gpt-5.2-codex',
-    'openai/gpt-5.1-codex-mini',
-  ];
-  if (providerType === 'openai') return OPENAI_MODELS;
-  if (providerType === 'copilot') return []; // Dynamic — fetched via listModels()
   if (providerType === 'pi') {
     const models = _piModelResolver(piAuthProvider);
     // Sort preferred defaults first so getDefaultModelForConnection picks a modern model
@@ -559,54 +528,13 @@ export function isValidProviderAuthCombination(
   const validCombinations: Record<LlmProviderType, LlmAuthType[]> = {
     anthropic: ['api_key', 'oauth'],
     anthropic_compat: ['api_key_with_endpoint'],
-    openai: ['api_key', 'oauth'],
-    openai_compat: ['api_key_with_endpoint', 'none'],
     bedrock: ['bearer_token', 'iam_credentials', 'environment'],
     vertex: ['oauth', 'service_account_file', 'environment'],
-    copilot: ['oauth'],
     pi: ['api_key', 'oauth', 'none'],
     pi_compat: ['api_key_with_endpoint', 'none'],
   };
 
   return validCombinations[providerType]?.includes(authType) ?? false;
-}
-
-/**
- * Validate that codexPath exists for OpenAI/Codex connections.
- * Only checks path existence - does not verify executability (that happens at runtime).
- *
- * @param connection - LLM connection to validate
- * @returns Object with isValid boolean and optional error message
- */
-export function validateCodexPath(connection: LlmConnection): { isValid: boolean; error?: string } {
-  // Only validate for OpenAI provider type (Codex)
-  if (connection.providerType !== 'openai') {
-    return { isValid: true };
-  }
-
-  // If no custom codexPath, it will use 'codex' from PATH - that's valid
-  if (!connection.codexPath) {
-    return { isValid: true };
-  }
-
-  // Check if the custom path exists
-  // Dynamic import to avoid bundling fs in browser contexts
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const { existsSync } = require('fs');
-    if (!existsSync(connection.codexPath)) {
-      return {
-        isValid: false,
-        error: `Codex binary not found at path: ${connection.codexPath}. ` +
-               `Please verify the path or remove it to use 'codex' from PATH.`,
-      };
-    }
-  } catch {
-    // If fs is not available (browser), skip validation
-    return { isValid: true };
-  }
-
-  return { isValid: true };
 }
 
 // ============================================================
@@ -625,9 +553,9 @@ export function migrateConnectionType(legacyType: LlmConnectionType): LlmProvide
     case 'anthropic':
       return 'anthropic';
     case 'openai':
-      return 'openai';
+      return 'pi';
     case 'openai-compat':
-      return 'openai_compat';
+      return 'pi_compat';
   }
 }
 
@@ -759,7 +687,6 @@ export function migrateLlmConnection(legacy: {
   authType: 'api_key' | 'oauth' | 'none';
   models?: ModelDefinition[];
   defaultModel?: string;
-  codexPath?: string;
   createdAt: number;
   lastUsedAt?: number;
 }): LlmConnection {
@@ -776,7 +703,6 @@ export function migrateLlmConnection(legacy: {
     authType,
     models: legacy.models,
     defaultModel: legacy.defaultModel,
-    codexPath: legacy.codexPath,
     createdAt: legacy.createdAt,
     lastUsedAt: legacy.lastUsedAt,
   };

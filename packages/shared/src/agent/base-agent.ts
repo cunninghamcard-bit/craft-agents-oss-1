@@ -13,7 +13,7 @@
  * Provider-specific behavior (chat, abort, capabilities) is implemented in subclasses.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { AgentEvent } from '@craft-agent/core/types';
@@ -820,59 +820,51 @@ Please continue the conversation naturally from where we left off.
   }
 
   // ============================================================
-  // Skill Content (shared across backends)
+  // Skill Path Resolution (shared across backends)
   // ============================================================
 
   /**
-   * SKILL INJECTION STRATEGY
-   * ClaudeAgent: Uses the SDK's built-in Skill tool for native discovery.
-   * CodexAgent: Reads SKILL.md and injects content as <skill> XML blocks,
-   *   because Codex app-server only discovers skills from its own paths.
-   */
-  protected getSkillContent(skillPath: string): string | null {
-    const filePath = join(skillPath, 'SKILL.md')
-    return existsSync(filePath) ? readFileSync(filePath, 'utf-8') : null
-  }
-
-  /**
-   * Extract skill mentions from a message and return formatted skill contents.
+   * Extract skill mentions from a message and resolve their SKILL.md paths.
    *
-   * Parses [skill:slug] or [skill:workspaceId:slug] mentions, loads the
-   * corresponding SKILL.md files, and wraps them in XML tags.
-   *
-   * Used by CodexAgent and CopilotAgent to inject skill content into messages.
-   * (ClaudeAgent uses the SDK's native Skill tool instead.)
+   * Parses [skill:slug] or [skill:workspaceId:slug] mentions, resolves the
+   * corresponding SKILL.md file paths. Does NOT read the files — the model
+   * must read them itself (enforced by PrerequisiteManager).
    *
    * @param message - The user message containing potential skill mentions
    * @returns Object with:
-   *   - skillContents: Array of formatted skill XML blocks
+   *   - skillPaths: Map of slug → resolved SKILL.md absolute path
    *   - cleanMessage: Message with mentions stripped, or default directive
+   *   - missingSkills: Array of skill slugs that were mentioned but not found
    */
-  protected extractSkillContent(message: string): {
-    skillContents: string[];
+  protected extractSkillPaths(message: string): {
+    skillPaths: Map<string, string>;
     cleanMessage: string;
+    missingSkills: string[];
   } {
     const workspaceRoot = this.config.workspace?.rootPath ?? this.workingDirectory;
     const projectRoot = this.config.session?.workingDirectory;
     const skills = loadAllSkills(workspaceRoot, projectRoot);
     const skillSlugs = skills.map(s => s.slug);
 
-    this.debug(`[extractSkillContent] Available skills: ${skillSlugs.join(', ')}`);
+    this.debug(`[extractSkillPaths] Available skills: ${skillSlugs.join(', ')}`);
 
     const parsed = parseMentions(message, skillSlugs, []);
-    this.debug(`[extractSkillContent] Parsed skills: ${JSON.stringify(parsed.skills)}`);
+    this.debug(`[extractSkillPaths] Parsed skills: ${JSON.stringify(parsed.skills)}`);
+    if (parsed.invalidSkills && parsed.invalidSkills.length > 0) {
+      this.debug(`[extractSkillPaths] Invalid skills: ${JSON.stringify(parsed.invalidSkills)}`);
+    }
 
-    // Read matched SKILL.md files and wrap in XML tags
-    const skillContents: string[] = [];
+    // Resolve SKILL.md paths for matched skills
+    const skillPaths = new Map<string, string>();
     for (const slug of parsed.skills) {
       const skill = skills.find(s => s.slug === slug);
       if (skill) {
-        const content = this.getSkillContent(skill.path);
-        if (content) {
-          this.debug(`[extractSkillContent] Loaded skill ${skill.slug} (${content.length} chars)`);
-          skillContents.push(`<skill name="${skill.slug}">\n${content}\n</skill>`);
+        const skillMdPath = join(skill.path, 'SKILL.md');
+        if (existsSync(skillMdPath)) {
+          skillPaths.set(slug, skillMdPath);
+          this.debug(`[extractSkillPaths] Resolved skill ${slug} → ${skillMdPath}`);
         } else {
-          this.debug(`[extractSkillContent] SKILL.md not found: ${skill.path}`);
+          this.debug(`[extractSkillPaths] SKILL.md not found: ${skillMdPath}`);
         }
       }
     }
@@ -881,13 +873,65 @@ Please continue the conversation naturally from where we left off.
     const stripped = stripAllMentions(message).trim();
 
     // If user sent only skill mentions with no other text, add a directive
-    const cleanMessage = (!stripped && skillContents.length > 0)
-      ? 'Follow the skill instructions above.'
+    const cleanMessage = (!stripped && skillPaths.size > 0)
+      ? 'Follow the skill instructions from the files listed above.'
       : stripped;
 
-    this.debug(`[extractSkillContent] Clean message: "${cleanMessage.slice(0, 100)}...", skills: ${skillContents.length}`);
+    this.debug(`[extractSkillPaths] Clean message: "${cleanMessage.slice(0, 100)}...", skills: ${skillPaths.size}`);
 
-    return { skillContents, cleanMessage };
+    return {
+      skillPaths,
+      cleanMessage,
+      missingSkills: parsed.invalidSkills || []
+    };
+  }
+
+  /**
+   * Format a directive telling the model to read skill SKILL.md files before proceeding.
+   * Called from chat() — all agents get the same directive prepended to their message.
+   */
+  protected formatSkillDirective(skillPaths: Map<string, string>): string {
+    if (skillPaths.size === 0) return '';
+    const pathList = [...skillPaths.entries()]
+      .map(([slug, path]) => `- ${path} (skill: ${slug})`)
+      .join('\n');
+    return `Before proceeding with the user's request, you MUST read the following skill instruction files using the Read tool or \`cat\` via Bash:\n${pathList}\n\nDo not take any other action until you have read these files.`;
+  }
+
+  // ============================================================
+  // Chat entry point (template method)
+  // ============================================================
+
+  /**
+   * Send a message and stream back events.
+   * Validates skill mentions, registers prerequisites, prepends read directive,
+   * then delegates to chatImpl. All skill logic is handled here — chatImpl
+   * never sees skill paths.
+   */
+  async *chat(
+    message: string,
+    attachments?: FileAttachment[],
+    options?: ChatOptions
+  ): AsyncGenerator<AgentEvent> {
+    const { skillPaths, cleanMessage, missingSkills } = this.extractSkillPaths(message);
+    if (missingSkills.length > 0) {
+      yield { type: 'error', message: `Skill(s) not found: ${missingSkills.join(', ')}` };
+      yield { type: 'complete' };
+      return;
+    }
+
+    // Register skill prerequisites — blocks all tools until SKILL.md files are read.
+    if (skillPaths.size > 0) {
+      this.prerequisiteManager.registerSkillPrerequisites([...skillPaths.values()]);
+    }
+
+    // Prepend read directive to the message so the model reads SKILL.md first.
+    const directive = this.formatSkillDirective(skillPaths);
+    const effectiveMessage = directive
+      ? `${directive}\n\n${cleanMessage}`
+      : cleanMessage;
+
+    yield* this.chatImpl(effectiveMessage, attachments, options);
   }
 
   // ============================================================
@@ -895,10 +939,16 @@ Please continue the conversation naturally from where we left off.
   // ============================================================
 
   /**
-   * Send a message and stream back events.
-   * This is the core agentic loop - handles tool execution, permission checks, etc.
+   * Provider-specific chat implementation.
+   * Called by chat() after skill validation, prerequisite registration,
+   * and directive injection. The message already contains any skill
+   * read directives — subclasses don't handle skills at all.
+   *
+   * @param message - User message (may have skill read directive prepended)
+   * @param attachments - File attachments
+   * @param options - Chat options (resume, retry, etc.)
    */
-  abstract chat(
+  protected abstract chatImpl(
     message: string,
     attachments?: FileAttachment[],
     options?: ChatOptions

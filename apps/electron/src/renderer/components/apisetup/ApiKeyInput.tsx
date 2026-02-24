@@ -10,7 +10,7 @@
  * Used in: Onboarding CredentialsStep, Settings API dialog
  */
 
-import { useState, useMemo, useEffect } from "react"
+import { useState } from "react"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -61,15 +61,26 @@ interface Preset {
   key: PresetKey
   label: string
   url: string
+  placeholder?: string
 }
 
 // Anthropic provider presets - for Claude Code backend
+// Also used by Pi API key flow (same providers, routed via Pi SDK)
 const ANTHROPIC_PRESETS: Preset[] = [
-  { key: 'anthropic', label: 'Anthropic', url: 'https://api.anthropic.com' },
-  { key: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api' },
-  { key: 'vercel', label: 'Vercel AI Gateway', url: 'https://ai-gateway.vercel.sh' },
-  { key: 'ollama', label: 'Ollama', url: 'http://localhost:11434' },
-  { key: 'custom', label: 'Custom', url: '' },
+  { key: 'anthropic', label: 'Anthropic', url: 'https://api.anthropic.com', placeholder: 'sk-ant-...' },
+  { key: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', placeholder: 'sk-...' },
+  { key: 'google', label: 'Google AI Studio', url: 'https://generativelanguage.googleapis.com/v1beta', placeholder: 'AIza...' },
+  { key: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api/v1', placeholder: 'sk-or-...' },
+  { key: 'azure-openai-responses', label: 'Azure OpenAI', url: '', placeholder: 'Paste your key here...' },
+  { key: 'amazon-bedrock', label: 'Amazon Bedrock', url: 'https://bedrock-runtime.us-east-1.amazonaws.com', placeholder: 'AKIA...' },
+  { key: 'groq', label: 'Groq', url: 'https://api.groq.com/openai/v1', placeholder: 'gsk_...' },
+  { key: 'mistral', label: 'Mistral', url: 'https://api.mistral.ai/v1', placeholder: 'Paste your key here...' },
+  { key: 'xai', label: 'xAI (Grok)', url: 'https://api.x.ai/v1', placeholder: 'xai-...' },
+  { key: 'cerebras', label: 'Cerebras', url: 'https://api.cerebras.ai/v1', placeholder: 'csk-...' },
+  { key: 'zai', label: 'z.ai (GLM)', url: 'https://api.z.ai/api/coding/paas/v4', placeholder: 'Paste your key here...' },
+  { key: 'huggingface', label: 'Hugging Face', url: 'https://router.huggingface.co/v1', placeholder: 'hf_...' },
+  { key: 'vercel-ai-gateway', label: 'Vercel AI Gateway', url: 'https://ai-gateway.vercel.sh', placeholder: 'Paste your key here...' },
+  { key: 'custom', label: 'Custom', url: '', placeholder: 'Paste your key here...' },
 ]
 
 // OpenAI provider presets - for Codex backend
@@ -81,9 +92,8 @@ const OPENAI_PRESETS: Preset[] = [
 
 // Pi provider presets - unified API for 20+ LLM providers
 const PI_PRESETS: Preset[] = [
-  { key: 'pi', label: 'Pi (Direct)', url: '' },
+  { key: 'pi', label: 'Craft Agents Backend (Direct)', url: '' },
   { key: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api' },
-  { key: 'ollama', label: 'Ollama', url: 'http://localhost:11434' },
   { key: 'custom', label: 'Custom', url: '' },
 ]
 
@@ -92,15 +102,11 @@ const GOOGLE_PRESETS: Preset[] = [
   { key: 'google', label: 'Google AI Studio', url: '' },
 ]
 
-// Pi API Key provider presets — loaded async via IPC from main process
-// (Pi SDK can't run in renderer due to @aws-sdk/client-bedrock-runtime → Node.js stream)
-const PI_API_KEY_FALLBACK: Preset[] = [{ key: 'custom', label: 'Custom', url: '' }]
-
 const COMPAT_ANTHROPIC_DEFAULTS = 'anthropic/claude-opus-4.6, anthropic/claude-sonnet-4.5, anthropic/claude-haiku-4.5'
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
 
-function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key', piApiKeyPresets?: Preset[]): Preset[] {
-  if (providerType === 'pi_api_key') return piApiKeyPresets ?? PI_API_KEY_FALLBACK
+function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
+  if (providerType === 'pi_api_key') return ANTHROPIC_PRESETS
   if (providerType === 'google') return GOOGLE_PRESETS
   if (providerType === 'pi') return PI_PRESETS
   return providerType === 'openai' ? OPENAI_PRESETS : ANTHROPIC_PRESETS
@@ -127,33 +133,8 @@ export function ApiKeyInput({
   providerType = 'anthropic',
   initialValues,
 }: ApiKeyInputProps) {
-  // Pi API key providers loaded async from main process via IPC
-  const [piApiKeyPresets, setPiApiKeyPresets] = useState<Preset[] | undefined>(undefined)
-  const [piProviderInfoMap, setPiProviderInfoMap] = useState<Map<string, { placeholder: string }>>(new Map())
-
-  useEffect(() => {
-    if (providerType !== 'pi_api_key') return
-    let cancelled = false
-    ;(async () => {
-      const providers = await window.electronAPI.getPiApiKeyProviders()
-      if (cancelled) return
-      // Build presets with base URLs
-      const presetPromises = providers.map(async (p) => ({
-        key: p.key,
-        label: p.label,
-        url: (await window.electronAPI.getPiProviderBaseUrl(p.key)) ?? '',
-      }))
-      const presets = await Promise.all(presetPromises)
-      if (cancelled) return
-      presets.push({ key: 'custom', label: 'Custom', url: '' })
-      setPiApiKeyPresets(presets)
-      setPiProviderInfoMap(new Map(providers.map(p => [p.key, { placeholder: p.placeholder }])))
-    })()
-    return () => { cancelled = true }
-  }, [providerType])
-
   // Get presets based on provider type
-  const presets = getPresetsForProvider(providerType, piApiKeyPresets)
+  const presets = getPresetsForProvider(providerType)
   const defaultPreset = presets[0]
 
   // Compute initial preset: explicit (Pi piAuthProvider), derived from URL, or default
@@ -169,24 +150,18 @@ export function ApiKeyInput({
 
   const isDisabled = disabled || status === 'validating'
 
-  // Determine if we're using the default provider preset (hide base URL field)
   const isPiApiKeyFlow = providerType === 'pi_api_key'
-  // For Pi API key flow, always show baseUrl field; model field only for Custom
-  const isDefaultProviderPreset = !isPiApiKeyFlow
-    && (activePreset === 'anthropic' || activePreset === 'openai' || activePreset === 'pi' || activePreset === 'google')
-  // Known Pi SDK providers have models in the registry — no need for manual model input
-  const isPiKnownProvider = isPiApiKeyFlow && activePreset !== 'custom'
+  // Hide endpoint/model fields for providers with well-known endpoints handled by the SDK
+  const DEFAULT_ENDPOINT_PROVIDERS = new Set(['anthropic', 'openai', 'pi', 'google'])
+  const isDefaultProviderPreset = DEFAULT_ENDPOINT_PROVIDERS.has(activePreset)
 
-  // Provider-specific placeholders — from IPC-loaded data for Pi, static for others
-  const piProviderInfo = useMemo(
-    () => isPiApiKeyFlow ? piProviderInfoMap.get(activePreset) : undefined,
-    [isPiApiKeyFlow, activePreset, piProviderInfoMap],
-  )
-  const apiKeyPlaceholder = piProviderInfo?.placeholder
+  // Provider-specific placeholders from the active preset
+  const activePresetObj = presets.find(p => p.key === activePreset)
+  const apiKeyPlaceholder = activePresetObj?.placeholder
     ?? (providerType === 'google' ? 'AIza...'
     : providerType === 'pi' ? 'pi-...'
     : providerType === 'openai' ? 'sk-...'
-    : 'sk-ant-...')
+    : 'Paste your key here...')
 
   const handlePresetSelect = (preset: Preset) => {
     setActivePreset(preset.key)
@@ -200,11 +175,10 @@ export function ApiKeyInput({
     // (Default provider presets hide the field entirely, others default to provider model IDs when empty)
     if (preset.key === 'ollama') {
       setConnectionDefaultModel('qwen3-coder')
-    } else if (preset.key === 'openrouter' || preset.key === 'vercel') {
+    } else if (preset.key === 'openrouter' || preset.key === 'vercel-ai-gateway') {
       setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
     } else if (preset.key === 'custom') {
-      // Pi API key "Custom" — user must specify model; non-Pi flows pre-fill defaults
-      setConnectionDefaultModel(isPiApiKeyFlow ? '' : (providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS))
+      setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
     } else {
       setConnectionDefaultModel('')
     }
@@ -215,10 +189,10 @@ export function ApiKeyInput({
     const presetKey = getPresetForUrl(value, presets)
     setActivePreset(presetKey)
     setModelError(null)
-    if (!connectionDefaultModel.trim() && !isPiApiKeyFlow) {
+    if (!connectionDefaultModel.trim()) {
       if (presetKey === 'ollama') {
         setConnectionDefaultModel('qwen3-coder')
-      } else if (presetKey === 'openrouter' || presetKey === 'vercel' || presetKey === 'custom') {
+      } else if (presetKey === 'openrouter' || presetKey === 'vercel-ai-gateway' || presetKey === 'custom') {
         setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
       }
     }
@@ -226,15 +200,12 @@ export function ApiKeyInput({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    // Always call onSubmit — the hook decides whether an empty key is valid
-    // (custom endpoints like Ollama don't require API keys)
     const effectiveBaseUrl = baseUrl.trim()
+
     const parsedModels = parseModelList(connectionDefaultModel)
 
-    // For Pi API key: known providers use Pi SDK routing (baseUrl is display-only),
-    // only "Custom" passes a baseUrl and requires a model
-    const isUsingDefaultEndpoint = isDefaultProviderPreset || isPiKnownProvider || !effectiveBaseUrl
-    const requiresModel = !isDefaultProviderPreset && !isPiKnownProvider && !!effectiveBaseUrl
+    const isUsingDefaultEndpoint = isDefaultProviderPreset || !effectiveBaseUrl
+    const requiresModel = !isDefaultProviderPreset && !!effectiveBaseUrl
     if (requiresModel && parsedModels.length === 0) {
       setModelError('Default model is required for custom endpoints.')
       return
@@ -333,13 +304,13 @@ export function ApiKeyInput({
       </div>
       )}
 
-      {/* Default Model — hidden for providers with built-in model routing (standard presets + known Pi SDK providers) */}
-      {!isDefaultProviderPreset && !isPiKnownProvider && (
+      {/* Model Selection — hidden for providers with built-in model routing (standard presets) */}
+      {!isDefaultProviderPreset && (
         <div className="space-y-2">
           <Label htmlFor="connection-default-model" className="text-muted-foreground font-normal">
             Default Model{' '}
             <span className="text-foreground/30">
-              · {(!isDefaultProviderPreset && !(isPiApiKeyFlow && activePreset !== 'custom') && baseUrl.trim()) ? 'required' : 'optional'}
+              · {baseUrl.trim() ? 'required' : 'optional'}
             </span>
           </Label>
           <div className={cn(
@@ -355,7 +326,7 @@ export function ApiKeyInput({
                 setConnectionDefaultModel(e.target.value)
                 setModelError(null)
               }}
-              placeholder={isPiApiKeyFlow ? "e.g. claude-sonnet-4-5, gpt-4o" : providerType === 'openai' ? "e.g. openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini" : "e.g. anthropic/claude-opus-4.6, anthropic/claude-haiku-4.5"}
+              placeholder="e.g. anthropic/claude-opus-4.6, anthropic/claude-haiku-4.5"
               className="border-0 bg-transparent shadow-none"
               disabled={isDisabled}
             />
@@ -366,43 +337,7 @@ export function ApiKeyInput({
           <p className="text-xs text-foreground/30">
             Comma-separated list. The first model is the default. The last is used for summarization.
           </p>
-          {/* Contextual help links for providers that need model format guidance */}
-          {activePreset === 'openrouter' && (
-            <p className="text-xs text-foreground/30">
-              Required for OpenRouter-compatible endpoints.
-              <br />
-              Format: <code className="text-foreground/40">provider/model-name</code>.{' '}
-              <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-foreground/50 underline hover:text-foreground/70">
-                Browse models
-              </a>
-            </p>
-          )}
-          {activePreset === 'vercel' && (
-            <p className="text-xs text-foreground/30">
-              Required for Vercel AI Gateway endpoints.
-              <br />
-              Format: <code className="text-foreground/40">provider/model-name</code>.{' '}
-              <a href="https://vercel.com/docs/ai-gateway" target="_blank" rel="noopener noreferrer" className="text-foreground/50 underline hover:text-foreground/70">
-                View supported models
-              </a>
-            </p>
-          )}
-          {activePreset === 'ollama' && (
-            <p className="text-xs text-foreground/30">
-              Use any model pulled via <code className="text-foreground/40">ollama pull</code>. No API key required.
-            </p>
-          )}
-          {isPiApiKeyFlow && activePreset === 'custom' && (
-            <p className="text-xs text-foreground/30">
-              Required for custom endpoints. Use the model ID supported by your endpoint.
-            </p>
-          )}
-          {isPiApiKeyFlow && activePreset !== 'custom' && (
-            <p className="text-xs text-foreground/30">
-              Optional. Leave empty to use the provider's default model.
-            </p>
-          )}
-          {!isPiApiKeyFlow && (activePreset === 'custom' || !activePreset) && (
+          {(activePreset === 'custom' || !activePreset) && (
             <p className="text-xs text-foreground/30">
               Required for custom endpoints. Use the provider-specific model ID.
             </p>

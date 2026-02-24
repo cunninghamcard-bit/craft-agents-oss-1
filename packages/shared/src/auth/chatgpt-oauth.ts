@@ -142,7 +142,11 @@ function startCallbackServer(
       }
     });
 
-    server.listen(CALLBACK_PORT, '127.0.0.1', () => {
+    // Listen without specifying a host so Node binds to both IPv4 (127.0.0.1)
+    // and IPv6 (::1) loopback. Browsers on macOS may resolve `localhost` to
+    // either address; binding only to 127.0.0.1 causes the callback to hang
+    // when the browser tries ::1 first.
+    server.listen(CALLBACK_PORT, () => {
       resolve(server);
     });
   });

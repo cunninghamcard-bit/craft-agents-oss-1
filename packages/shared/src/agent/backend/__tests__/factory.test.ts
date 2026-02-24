@@ -29,8 +29,8 @@ import type { BackendConfig } from '../types.ts';
 import type { Workspace, LlmConnection } from '../../../config/storage.ts';
 import type { SessionConfig as Session } from '../../../sessions/storage.ts';
 import { ClaudeAgent } from '../../claude-agent.ts';
-import { CodexAgent } from '../../codex-agent.ts';
-import { isValidProviderAuthCombination, validateCodexPath } from '../../../config/llm-connections.ts';
+import { PiAgent } from '../../pi-agent.ts';
+import { isValidProviderAuthCombination } from '../../../config/llm-connections.ts';
 
 // Test helpers
 function createTestWorkspace(): Workspace {
@@ -92,12 +92,12 @@ describe('createBackend / createAgent', () => {
     });
   });
 
-  describe('OpenAI provider', () => {
-    it('should create CodexAgent for openai provider', () => {
-      const config = createTestConfig({ provider: 'openai' });
+  describe('Pi provider', () => {
+    it('should create PiAgent for pi provider', () => {
+      const config = createTestConfig({ provider: 'pi' });
       const agent = createBackend(config);
 
-      expect(agent).toBeInstanceOf(CodexAgent);
+      expect(agent).toBeInstanceOf(PiAgent);
     });
   });
 
@@ -117,14 +117,12 @@ describe('createBackend / createAgent', () => {
 });
 
 describe('getAvailableProviders', () => {
-  it('should return anthropic, openai, copilot, and pi', () => {
+  it('should return anthropic and pi', () => {
     const providers = getAvailableProviders();
 
     expect(providers).toContain('anthropic');
-    expect(providers).toContain('openai');
-    expect(providers).toContain('copilot');
     expect(providers).toContain('pi');
-    expect(providers).toHaveLength(4);
+    expect(providers).toHaveLength(2);
   });
 });
 
@@ -133,8 +131,8 @@ describe('isProviderAvailable', () => {
     expect(isProviderAvailable('anthropic')).toBe(true);
   });
 
-  it('should return true for openai', () => {
-    expect(isProviderAvailable('openai')).toBe(true);
+  it('should return true for pi', () => {
+    expect(isProviderAvailable('pi')).toBe(true);
   });
 
   it('should return false for unknown provider', () => {
@@ -147,12 +145,12 @@ describe('connectionTypeToProvider', () => {
     expect(connectionTypeToProvider('anthropic')).toBe('anthropic');
   });
 
-  it('should map openai type to openai provider', () => {
-    expect(connectionTypeToProvider('openai')).toBe('openai');
+  it('should map openai type to pi provider (legacy routing)', () => {
+    expect(connectionTypeToProvider('openai')).toBe('pi');
   });
 
-  it('should map openai-compat type to openai provider', () => {
-    expect(connectionTypeToProvider('openai-compat')).toBe('openai');
+  it('should map openai-compat type to pi provider (legacy routing)', () => {
+    expect(connectionTypeToProvider('openai-compat')).toBe('pi');
   });
 
   it('should default to anthropic for unknown types', () => {
@@ -193,13 +191,13 @@ describe('providerTypeToAgentProvider', () => {
     });
   });
 
-  describe('OpenAI SDK providers', () => {
-    it('should map openai to openai', () => {
-      expect(providerTypeToAgentProvider('openai')).toBe('openai');
+  describe('Pi SDK providers', () => {
+    it('should map pi to pi', () => {
+      expect(providerTypeToAgentProvider('pi')).toBe('pi');
     });
 
-    it('should map openai_compat to openai', () => {
-      expect(providerTypeToAgentProvider('openai_compat')).toBe('openai');
+    it('should map pi_compat to pi', () => {
+      expect(providerTypeToAgentProvider('pi_compat')).toBe('pi');
     });
   });
 });
@@ -237,27 +235,27 @@ describe('isValidProviderAuthCombination', () => {
     });
   });
 
-  describe('OpenAI provider', () => {
+  describe('Pi provider', () => {
     it('should accept api_key auth', () => {
-      expect(isValidProviderAuthCombination('openai', 'api_key')).toBe(true);
+      expect(isValidProviderAuthCombination('pi', 'api_key')).toBe(true);
     });
 
     it('should accept oauth auth', () => {
-      expect(isValidProviderAuthCombination('openai', 'oauth')).toBe(true);
+      expect(isValidProviderAuthCombination('pi', 'oauth')).toBe(true);
     });
 
-    it('should reject none auth', () => {
-      expect(isValidProviderAuthCombination('openai', 'none')).toBe(false);
+    it('should accept none auth', () => {
+      expect(isValidProviderAuthCombination('pi', 'none')).toBe(true);
     });
   });
 
-  describe('OpenAI compat provider', () => {
+  describe('Pi compat provider', () => {
     it('should accept api_key_with_endpoint auth', () => {
-      expect(isValidProviderAuthCombination('openai_compat', 'api_key_with_endpoint')).toBe(true);
+      expect(isValidProviderAuthCombination('pi_compat', 'api_key_with_endpoint')).toBe(true);
     });
 
     it('should accept none auth (for local models like Ollama)', () => {
-      expect(isValidProviderAuthCombination('openai_compat', 'none')).toBe(true);
+      expect(isValidProviderAuthCombination('pi_compat', 'none')).toBe(true);
     });
   });
 
@@ -290,51 +288,6 @@ describe('isValidProviderAuthCombination', () => {
   });
 });
 
-describe('validateCodexPath', () => {
-  // Helper to create a test connection
-  function createTestConnection(overrides: Partial<LlmConnection> = {}): LlmConnection {
-    return {
-      slug: 'test-connection',
-      name: 'Test Connection',
-      providerType: 'openai',
-      authType: 'oauth',
-      createdAt: Date.now(),
-      ...overrides,
-    };
-  }
-
-  describe('Non-OpenAI providers', () => {
-    it('should always return valid for non-OpenAI providers', () => {
-      const connection = createTestConnection({ providerType: 'anthropic' });
-      const result = validateCodexPath(connection);
-      expect(result.isValid).toBe(true);
-      expect(result.error).toBeUndefined();
-    });
-  });
-
-  describe('OpenAI provider without custom path', () => {
-    it('should return valid when no codexPath is set (uses PATH)', () => {
-      const connection = createTestConnection({ providerType: 'openai', codexPath: undefined });
-      const result = validateCodexPath(connection);
-      expect(result.isValid).toBe(true);
-      expect(result.error).toBeUndefined();
-    });
-  });
-
-  describe('OpenAI provider with non-existent custom path', () => {
-    it('should return invalid when codexPath does not exist', () => {
-      const connection = createTestConnection({
-        providerType: 'openai',
-        codexPath: '/non/existent/path/to/codex',
-      });
-      const result = validateCodexPath(connection);
-      expect(result.isValid).toBe(false);
-      expect(result.error).toContain('Codex binary not found');
-      expect(result.error).toContain('/non/existent/path/to/codex');
-    });
-  });
-});
-
 describe('phase4 backend abstraction APIs', () => {
   it('initializeBackendHostRuntime bootstraps without throwing in dev runtime', () => {
     expect(() => initializeBackendHostRuntime({
@@ -356,9 +309,9 @@ describe('phase4 backend abstraction APIs', () => {
 
   it('resolveSetupTestConnectionHint maps provider/baseUrl/piAuthProvider correctly', () => {
     expect(resolveSetupTestConnectionHint({
-      provider: 'openai',
+      provider: 'anthropic',
       baseUrl: 'https://api.example.com',
-    })).toEqual({ providerType: 'openai_compat' });
+    })).toEqual({ providerType: 'anthropic_compat' });
 
     expect(resolveSetupTestConnectionHint({
       provider: 'anthropic',

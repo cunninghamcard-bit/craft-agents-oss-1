@@ -26,20 +26,34 @@ import type { ModelDefinition } from './models.ts';
  */
 function piModelToDefinition(m: Model<Api>): ModelDefinition {
   const lastPart = m.name.split(/[\s-]/).pop() ?? m.name;
-  const shortName = m.name.length > 20
-    ? lastPart + ' (Pi)'
-    : m.name + ' (Pi)';
+  const shortName = m.name.length > 20 ? lastPart : m.name;
 
   return {
     id: `pi/${m.id}`,
-    name: `${m.name} (Pi)`,
+    name: m.name,
     shortName,
-    description: `${m.provider} model via Pi unified API`,
+    description: `${m.provider} model via Craft Agents Backend`,
     provider: 'pi',
     contextWindow: m.contextWindow,
     supportsThinking: m.reasoning,
   };
 }
+
+/**
+ * Models to EXCLUDE from the Pi model list.
+ * Temporary workaround for models that are broken in the current Pi SDK version.
+ * e.g., gemini-1.5-flash fails with "not found for API version v1beta"
+ */
+const PI_EXCLUDED_MODELS: Set<string> = new Set([
+  // Unsupported 1.5 models
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-8b',
+  'gemini-1.5-pro',
+
+  // Unsupported 2.0 models
+  'gemini-2.0-flash',
+  'gemini-2.0-flash-lite',
+]);
 
 /**
  * Get Pi models for a specific auth provider directly from the Pi SDK.
@@ -48,7 +62,9 @@ export function getPiModelsForAuthProvider(piAuthProvider: string): ModelDefinit
   try {
     const models = getModels(piAuthProvider as KnownProvider);
     if (models.length > 0) {
-      return models.map(piModelToDefinition);
+      return models
+        .filter(m => !PI_EXCLUDED_MODELS.has(m.id))
+        .map(piModelToDefinition);
     }
   } catch {
     // Provider not recognized by SDK — fall through
@@ -64,7 +80,10 @@ export function getAllPiModels(): ModelDefinition[] {
   for (const provider of getProviders()) {
     try {
       const models = getModels(provider);
-      allModels.push(...models.map(piModelToDefinition));
+      allModels.push(...models
+        .filter(m => !PI_EXCLUDED_MODELS.has(m.id))
+        .map(piModelToDefinition)
+      );
     } catch {
       // Skip providers that fail
     }
@@ -85,13 +104,14 @@ const PI_PROVIDER_DISPLAY: Partial<Record<KnownProvider, { label: string; placeh
   'openai':                 { label: 'OpenAI',             placeholder: 'sk-...' },
   'openrouter':             { label: 'OpenRouter',         placeholder: 'sk-or-...' },
   'groq':                   { label: 'Groq',               placeholder: 'gsk_...' },
-  'mistral':                { label: 'Mistral',            placeholder: 'sk-...' },
+  'mistral':                { label: 'Mistral',            placeholder: 'Paste your key here...' },
   'xai':                    { label: 'xAI (Grok)',         placeholder: 'xai-...' },
   'cerebras':               { label: 'Cerebras',           placeholder: 'csk-...' },
   'amazon-bedrock':         { label: 'Amazon Bedrock',     placeholder: 'AKIA...' },
-  'azure-openai-responses': { label: 'Azure OpenAI',       placeholder: 'sk-...' },
-  'vercel-ai-gateway':      { label: 'Vercel AI Gateway',  placeholder: 'sk-...' },
+  'azure-openai-responses': { label: 'Azure OpenAI',       placeholder: 'Paste your key here...' },
+  'vercel-ai-gateway':      { label: 'Vercel AI Gateway',  placeholder: 'Paste your key here...' },
   'huggingface':            { label: 'Hugging Face',       placeholder: 'hf_...' },
+  'zai':                    { label: 'z.ai (GLM)',         placeholder: 'Paste your key here...' },
 };
 
 /**

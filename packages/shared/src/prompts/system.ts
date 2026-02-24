@@ -450,7 +450,19 @@ Sources are external data connections. Each source has:
 - Skills: \`${workspacePath}/skills/{slug}/\`
 - Theme: \`${workspacePath}/theme.json\`
 
-**SDK Plugin:** This workspace is mounted as a Claude Code SDK plugin. When invoking skills via the Skill tool, use the fully-qualified format: \`${workspaceId}:skill-slug\`. For example, to invoke a skill named "commit", use \`${workspaceId}:commit\`.
+## Skills
+
+Skills are reusable instruction sets that teach you specialized behaviors. Each skill has:
+- \`SKILL.md\` - Instructions and behavior definition (read before execution!)
+
+**Using a skill** (user mentions it with \`[skill:slug]\`):
+1. Read its \`SKILL.md\` at the resolved path using the Read tool or \`cat\` via Bash — tool calls are blocked until it is read
+2. Follow the instructions in the file to complete the user's request
+
+Skills are stored at three levels (checked in order):
+- Global: \`~/.agents/skills/{slug}/SKILL.md\`
+- Workspace: \`${workspacePath}/skills/{slug}/SKILL.md\`
+- Project: \`{projectRoot}/.agents/skills/{slug}/SKILL.md\`
 
 ## Project Context
 

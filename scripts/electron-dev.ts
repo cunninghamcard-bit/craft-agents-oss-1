@@ -12,11 +12,9 @@ const ROOT_DIR = join(import.meta.dir, "..");
 const ELECTRON_DIR = join(ROOT_DIR, "apps/electron");
 const DIST_DIR = join(ELECTRON_DIR, "dist");
 
-// MCP server paths (for Codex sessions)
+// MCP server paths
 const SESSION_SERVER_DIR = join(ROOT_DIR, "packages/session-mcp-server");
 const SESSION_SERVER_OUTPUT = join(SESSION_SERVER_DIR, "dist/index.js");
-const BRIDGE_SERVER_DIR = join(ROOT_DIR, "packages/bridge-mcp-server");
-const BRIDGE_SERVER_OUTPUT = join(BRIDGE_SERVER_DIR, "dist/index.js");
 // Pi agent server path (subprocess for Pi SDK sessions)
 const PI_AGENT_SERVER_DIR = join(ROOT_DIR, "packages/pi-agent-server");
 const PI_AGENT_SERVER_OUTPUT = join(PI_AGENT_SERVER_DIR, "dist/index.js");
@@ -156,39 +154,23 @@ async function buildMcpServers(): Promise<void> {
 
   // Ensure dist directories exist
   const sessionDistDir = join(SESSION_SERVER_DIR, "dist");
-  const bridgeDistDir = join(BRIDGE_SERVER_DIR, "dist");
   const piDistDir = join(PI_AGENT_SERVER_DIR, "dist");
   if (!existsSync(sessionDistDir)) mkdirSync(sessionDistDir, { recursive: true });
-  if (!existsSync(bridgeDistDir)) mkdirSync(bridgeDistDir, { recursive: true });
   if (!existsSync(piDistDir)) mkdirSync(piDistDir, { recursive: true });
 
-  // Build MCP servers (esbuild, packages external — deps resolve from root node_modules)
-  const [sessionResult, bridgeResult] = await Promise.all([
-    runEsbuild(
-      "packages/session-mcp-server/src/index.ts",
-      "packages/session-mcp-server/dist/index.js",
-      {},
-      { packagesExternal: true }
-    ),
-    runEsbuild(
-      "packages/bridge-mcp-server/src/index.ts",
-      "packages/bridge-mcp-server/dist/index.js",
-      {},
-      { packagesExternal: true }
-    ),
-  ]);
+  // Build session MCP server (esbuild, packages external — deps resolve from root node_modules)
+  const sessionResult = await runEsbuild(
+    "packages/session-mcp-server/src/index.ts",
+    "packages/session-mcp-server/dist/index.js",
+    {},
+    { packagesExternal: true }
+  );
 
   if (!sessionResult.success) {
     console.error("❌ Session MCP server build failed:", sessionResult.error);
     process.exit(1);
   }
   console.log("✅ Session MCP server built");
-
-  if (!bridgeResult.success) {
-    console.error("❌ Bridge MCP server build failed:", bridgeResult.error);
-    process.exit(1);
-  }
-  console.log("✅ Bridge MCP server built");
 
   // Build Pi agent server with bun (not esbuild) because its Pi SDK deps are ESM-only.
   // esbuild with packages:external leaves them as require() calls which fail at runtime.

@@ -564,16 +564,16 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   // the same provider family.
   let model = request.model ?? initConfig.miniModel ?? getDefaultSummarizationModel();
 
+  // Create authenticated registry upfront — used by both the provider guard and the ephemeral session.
+  const { authStorage, modelRegistry } = createAuthenticatedRegistry();
+
   // If piAuth is set, ensure the mini model uses the same provider.
   // Pi SDK will fail with "No API key found" if the model requires a different provider.
   if (initConfig.piAuth) {
     const authProvider = initConfig.piAuth.provider;
     const bareModel = model.startsWith('pi/') ? model.slice(3) : model;
-    // Check if the model belongs to the authenticated provider
-    const modelRegistry = new PiModelRegistry(PiAuthStorage.inMemory());
     const resolved = resolvePiModel(modelRegistry, bareModel, authProvider);
     if (!resolved || (resolved as any).provider !== authProvider) {
-      // Model doesn't exist in registry or belongs to a different provider — use miniModel
       const fallback = initConfig.miniModel ?? getDefaultSummarizationModel();
       debugLog(`[queryLlm] Model ${bareModel} incompatible with ${authProvider}, falling back to ${fallback}`);
       model = fallback;
@@ -581,8 +581,6 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   }
 
   debugLog(`[queryLlm] Using model: ${model}`);
-
-  const { authStorage, modelRegistry } = createAuthenticatedRegistry();
 
   // Create minimal ephemeral session
   const ephemeralOptions: CreateAgentSessionOptions = {
@@ -594,8 +592,9 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   };
 
   // Resolve model
+  let piModel: ReturnType<typeof resolvePiModel>;
   try {
-    const piModel = resolvePiModel(modelRegistry, model, initConfig.piAuth?.provider);
+    piModel = resolvePiModel(modelRegistry, model, initConfig.piAuth?.provider);
     if (piModel) {
       ephemeralOptions.model = piModel;
     }
@@ -604,6 +603,17 @@ async function queryLlm(request: LLMQueryRequest): Promise<LLMQueryResult> {
   }
 
   const { session: ephemeralSession } = await createAgentSession(ephemeralOptions);
+
+  // Pi SDK ignores options.model for ephemeral sessions (same issue as options.tools).
+  // Explicitly set the model after creation to ensure the mini model is used.
+  if (piModel) {
+    try {
+      await ephemeralSession.setModel(piModel);
+    } catch {
+      debugLog(`[queryLlm] Failed to set model on ephemeral session, proceeding with default`);
+    }
+  }
+
   debugLog(`[queryLlm] Created ephemeral session: ${ephemeralSession.sessionId}`);
 
   // Set system prompt

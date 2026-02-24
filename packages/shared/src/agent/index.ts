@@ -1,12 +1,6 @@
 // Export ClaudeAgent (renamed from CraftAgent) and backward-compatible aliases
 export * from './claude-agent.ts';
 
-// Export CodexAgent for direct use
-export { CodexAgent, CodexBackend } from './codex-agent.ts';
-
-// Export CopilotAgent for direct use
-export { CopilotAgent, CopilotBackend, resolveCopilotModelId } from './copilot-agent.ts';
-
 // Export PiAgent for direct use
 export { PiAgent, PiBackend } from './pi-agent.ts';
 export * from './errors.ts';
@@ -121,7 +115,7 @@ export {
 } from './base-agent.ts';
 
 // Export backend abstraction - unified interface for AI agents
-// This module enables switching between Claude (Anthropic) and Codex (OpenAI) agents
+// This module enables switching between Claude (Anthropic) and Pi agents
 export {
   // Factory (createAgent is the preferred name, createBackend is kept for backward compat)
   createBackend,

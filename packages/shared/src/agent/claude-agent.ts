@@ -47,9 +47,6 @@ import {
   SAFE_MODE_CONFIG,
 } from './mode-manager.ts';
 import { getSessionPlansPath, getSessionPath } from '../sessions/storage.ts';
-import { existsSync, readFileSync } from 'fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { extractWorkspaceSlug } from '../utils/workspace.ts';
 import {
   ConfigWatcher,
@@ -600,7 +597,7 @@ export class ClaudeAgent extends BaseAgent {
     return this.config.mcpToken ?? null;
   }
 
-  async *chat(
+  protected async *chatImpl(
     userMessage: string,
     attachments?: FileAttachment[],
     options?: ChatOptions
@@ -654,7 +651,7 @@ export class ClaudeAgent extends BaseAgent {
       // - EnterPlanMode/ExitPlanMode: We use safe mode instead (user-controlled via UI)
       // - AskUserQuestion: Requires interactive UI to show question options to user
       // Note: Mini agents use a minimal tool list directly, so no additional blocking needed
-      const disallowedTools: string[] = ['EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion'];
+      const disallowedTools: string[] = ['EnterPlanMode', 'ExitPlanMode', 'AskUserQuestion', 'Skill'];
 
       // Build MCP servers config
       // Mini agents: only session tools (config_validate) to minimize token usage
@@ -1021,26 +1018,15 @@ export class ClaudeAgent extends BaseAgent {
         mcpServers,
         // NOTE: This callback is NOT called by the SDK because we set `permissionMode: 'bypassPermissions'` above.
         // All permission logic is handled via the PreToolUse hook instead (see hooks.PreToolUse above).
-        // Skill qualification and Bash permission logic are in PreToolUse where they actually execute.
+        // Bash permission logic is in PreToolUse where it actually executes.
         canUseTool: async (_toolName, input) => {
           return { behavior: 'allow' as const, updatedInput: input as Record<string, unknown> };
         },
         // Selectively disable tools - file tools are disabled (use MCP), web/code controlled by settings
         disallowedTools,
-        // Load skill directories as SDK plugins (enables skills from all 3 tiers)
-        // Only register directories that exist to avoid SDK warnings/errors
-        plugins: [
-          { type: 'local' as const, path: this.workspaceRootPath },
-          // Project-level skills: {workingDir}/.agents/
-          ...(this.config.session?.workingDirectory &&
-              existsSync(join(this.config.session.workingDirectory, '.agents'))
-            ? [{ type: 'local' as const, path: join(this.config.session.workingDirectory, '.agents') }]
-            : []),
-          // Global skills: ~/.agents/
-          ...(existsSync(join(homedir(), '.agents'))
-            ? [{ type: 'local' as const, path: join(homedir(), '.agents') }]
-            : []),
-        ],
+        // No plugins — skills are handled by BaseAgent.chat() via read-before-execute
+        // (the model reads SKILL.md files directly, enforced by PrerequisiteManager)
+        plugins: [],
       };
 
       // Track whether we're trying to resume a session (for error handling)

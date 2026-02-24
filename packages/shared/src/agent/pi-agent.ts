@@ -101,7 +101,7 @@ import { LLM_QUERY_TIMEOUT_MS, type LLMQueryRequest, type LLMQueryResult } from 
  * planning heuristics, config watching, usage tracking).
  */
 export class PiAgent extends BaseAgent {
-  protected backendName = 'Pi';
+  protected backendName = 'Craft Agents Backend';
 
   // ============================================================
   // Subprocess State
@@ -1065,7 +1065,7 @@ export class PiAgent extends BaseAgent {
   // Chat (AsyncGenerator with event queue -- mirrors CopilotAgent)
   // ============================================================
 
-  async *chat(
+  protected async *chatImpl(
     messageParam: string,
     attachments?: FileAttachment[],
     options?: ChatOptions
@@ -1127,14 +1127,11 @@ export class PiAgent extends BaseAgent {
         this.config.workspace.rootPath,
         this.config.session?.workingDirectory,
         this.config.systemPromptPreset,
-        'Pi' // backendName
+        'Craft Agents Backend' // backendName
       );
 
       // Build context from sources
       const sourceContext = this.sourceManager.formatSourceState();
-
-      // Extract skills from message
-      const { skillContents, cleanMessage: effectiveMessage } = this.extractSkillContent(message);
 
       // Build context parts using centralized PromptBuilder
       const contextParts = this.promptBuilder.buildContextParts(
@@ -1170,14 +1167,14 @@ export class PiAgent extends BaseAgent {
       // blocks and will echo <session_state>, <sources>, etc. back in their response.
       const fullSystemPrompt = [
         systemPrompt,
-        ...skillContents,
         ...contextParts,
       ].filter(Boolean).join('\n\n');
 
-      // User message: only attachments + the actual message
+      // User message: attachments + the actual message
+      // (skill read directive is already prepended to message by BaseAgent.chat())
       const userParts = [
         ...attachmentParts,
-        effectiveMessage,
+        message,
       ].filter(Boolean);
       const userMessage = userParts.join('\n\n');
 

@@ -4,11 +4,9 @@ import {
   getDefaultModelForConnection,
   isCompatProvider,
   isAnthropicProvider,
-  isOpenAIProvider,
-  isCopilotProvider,
   isPiProvider,
 } from '../llm-connections'
-import { ANTHROPIC_MODELS, OPENAI_MODELS } from '../models'
+import { ANTHROPIC_MODELS } from '../models'
 
 // ============================================================
 // getDefaultModelsForConnection
@@ -33,15 +31,6 @@ describe('getDefaultModelsForConnection', () => {
     expect(getDefaultModelsForConnection('vertex')).toEqual(ANTHROPIC_MODELS)
   })
 
-  it('openai returns OPENAI_MODELS', () => {
-    const models = getDefaultModelsForConnection('openai')
-    expect(models).toEqual(OPENAI_MODELS)
-  })
-
-  it('copilot returns empty array (dynamic models)', () => {
-    expect(getDefaultModelsForConnection('copilot')).toEqual([])
-  })
-
   it('pi with piAuthProvider returns filtered models', () => {
     const models = getDefaultModelsForConnection('pi', 'anthropic')
     expect(models.length).toBeGreaterThan(0)
@@ -64,14 +53,6 @@ describe('getDefaultModelsForConnection', () => {
       expect(typeof m).toBe('string')
     }
   })
-
-  it('openai_compat returns string model IDs', () => {
-    const models = getDefaultModelsForConnection('openai_compat')
-    expect(models.length).toBeGreaterThan(0)
-    for (const m of models) {
-      expect(typeof m).toBe('string')
-    }
-  })
 })
 
 // ============================================================
@@ -85,12 +66,6 @@ describe('getDefaultModelForConnection', () => {
     expect(modelId.length).toBeGreaterThan(0)
     // Should match the first ANTHROPIC_MODELS entry
     expect(modelId).toBe(ANTHROPIC_MODELS[0]!.id)
-  })
-
-  it('returns a string for openai', () => {
-    const modelId = getDefaultModelForConnection('openai')
-    expect(typeof modelId).toBe('string')
-    expect(modelId.length).toBeGreaterThan(0)
   })
 
   // Regression: Pi 'anthropic' default must be present in its own model list
@@ -107,12 +82,6 @@ describe('getDefaultModelForConnection', () => {
     const modelIds = models.map(m => typeof m === 'string' ? m : m.id)
     expect(modelIds).toContain(defaultModel)
   })
-
-  it('returns a valid string for copilot (falls back to anthropic default)', () => {
-    const modelId = getDefaultModelForConnection('copilot')
-    expect(typeof modelId).toBe('string')
-    expect(modelId.length).toBeGreaterThan(0)
-  })
 })
 
 // ============================================================
@@ -124,10 +93,6 @@ describe('isCompatProvider', () => {
     expect(isCompatProvider('anthropic_compat')).toBe(true)
   })
 
-  it('returns true for openai_compat', () => {
-    expect(isCompatProvider('openai_compat')).toBe(true)
-  })
-
   it('returns true for pi_compat', () => {
     expect(isCompatProvider('pi_compat')).toBe(true)
   })
@@ -136,8 +101,8 @@ describe('isCompatProvider', () => {
     expect(isCompatProvider('anthropic')).toBe(false)
   })
 
-  it('returns false for openai', () => {
-    expect(isCompatProvider('openai')).toBe(false)
+  it('returns false for pi', () => {
+    expect(isCompatProvider('pi')).toBe(false)
   })
 })
 
@@ -158,44 +123,8 @@ describe('isAnthropicProvider', () => {
     expect(isAnthropicProvider('vertex')).toBe(true)
   })
 
-  it('returns false for openai', () => {
-    expect(isAnthropicProvider('openai')).toBe(false)
-  })
-
-  it('returns false for copilot', () => {
-    expect(isAnthropicProvider('copilot')).toBe(false)
-  })
-
   it('returns false for pi', () => {
     expect(isAnthropicProvider('pi')).toBe(false)
-  })
-})
-
-describe('isOpenAIProvider', () => {
-  it('returns true for openai', () => {
-    expect(isOpenAIProvider('openai')).toBe(true)
-  })
-
-  it('returns true for openai_compat', () => {
-    expect(isOpenAIProvider('openai_compat')).toBe(true)
-  })
-
-  it('returns false for anthropic', () => {
-    expect(isOpenAIProvider('anthropic')).toBe(false)
-  })
-
-  it('returns false for copilot', () => {
-    expect(isOpenAIProvider('copilot')).toBe(false)
-  })
-})
-
-describe('isCopilotProvider', () => {
-  it('returns true for copilot', () => {
-    expect(isCopilotProvider('copilot')).toBe(true)
-  })
-
-  it('returns false for openai', () => {
-    expect(isCopilotProvider('openai')).toBe(false)
   })
 })
 

@@ -111,10 +111,6 @@ export function getDefaultProviderType(provider: AgentProvider): LlmProviderType
   switch (provider) {
     case 'anthropic':
       return 'anthropic';
-    case 'openai':
-      return 'openai';
-    case 'copilot':
-      return 'copilot';
     case 'pi':
       return 'pi';
   }

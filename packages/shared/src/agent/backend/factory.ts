@@ -2,11 +2,9 @@
  * Agent Factory
  *
  * Creates the appropriate AI agent based on configuration.
- * Supports four agents:
+ * Supports two agents:
  * - ClaudeAgent (Anthropic) - Default, using @anthropic-ai/claude-agent-sdk
- * - CodexAgent (OpenAI) - Using app-server mode with JSON-RPC
- * - CopilotAgent (GitHub) - Using @github/copilot-sdk
- * - PiAgent (Pi) - Using @mariozechner/pi-coding-agent SDK
+ * - PiAgent (Pi) - Using @mariozechner/pi-ai SDK
  *
  * All agents implement AgentBackend directly.
  *
@@ -26,8 +24,6 @@ import type {
   BackendHostRuntimeContext,
 } from './types.ts';
 import { ClaudeAgent } from '../claude-agent.ts';
-import { CodexAgent } from '../codex-agent.ts';
-import { CopilotAgent } from '../copilot-agent.ts';
 import { PiAgent } from '../pi-agent.ts';
 import {
   getLlmConnection,
@@ -36,15 +32,14 @@ import {
 } from '../../config/storage.ts';
 // Import deprecated type for legacy migration function only
 import type { LlmConnectionType } from '../../config/llm-connections.ts';
-// Import validation helpers for provider-auth combinations and codexPath
+// Import validation helpers for provider-auth combinations
 import {
   isValidProviderAuthCombination,
-  validateCodexPath,
 } from '../../config/llm-connections.ts';
 import { parseValidationError, type LlmValidationResult } from '../../config/llm-validation.ts';
 import type { ModelFetchResult } from '../../config/model-fetcher.ts';
 // Model resolution utilities
-import { isCodexModel, getModelProvider, DEFAULT_MODEL, DEFAULT_CODEX_MODEL, type ModelDefinition } from '../../config/models.ts';
+import { getModelProvider, DEFAULT_MODEL } from '../../config/models.ts';
 import { homedir } from 'node:os';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -63,14 +58,10 @@ import {
   resolveBackendRuntimePaths,
 } from './internal/runtime-resolver.ts';
 import { anthropicDriver } from './internal/drivers/anthropic.ts';
-import { openaiDriver } from './internal/drivers/openai.ts';
-import { copilotDriver } from './internal/drivers/copilot.ts';
 import { piDriver } from './internal/drivers/pi.ts';
 
 const DRIVER_REGISTRY: Record<AgentProvider, ProviderDriver> = {
   anthropic: anthropicDriver,
-  openai: openaiDriver,
-  copilot: copilotDriver,
   pi: piDriver,
 };
 
@@ -143,16 +134,6 @@ export function createBackend(config: BackendConfig): AgentBackend {
     case 'anthropic':
       // ClaudeAgent implements AgentBackend directly
       return new ClaudeAgent(config);
-
-    case 'openai':
-      // CodexAgent implements AgentBackend directly
-      // Auth is handled via ChatGPT Plus OAuth (native flow)
-      return new CodexAgent(config);
-
-    case 'copilot':
-      // CopilotAgent implements AgentBackend directly
-      // Auth is handled via GitHub OAuth
-      return new CopilotAgent(config);
 
     case 'pi':
       // PiAgent implements AgentBackend directly
@@ -240,7 +221,7 @@ export function resolveBackendHostTooling(args: {
  * @returns Array of provider identifiers that have working implementations
  */
 export function getAvailableProviders(): AgentProvider[] {
-  return ['anthropic', 'openai', 'copilot', 'pi'];
+  return ['anthropic', 'pi'];
 }
 
 /**
@@ -276,15 +257,6 @@ export function providerTypeToAgentProvider(providerType: LlmProviderType): Agen
     case 'vertex':     // Vertex uses Anthropic SDK with different auth
       return 'anthropic';
 
-    // OpenAI/Codex backends
-    case 'openai':
-    case 'openai_compat':
-      return 'openai';
-
-    // GitHub Copilot backend
-    case 'copilot':
-      return 'copilot';
-
     // Pi backends
     case 'pi':
     case 'pi_compat':
@@ -310,7 +282,7 @@ export function connectionTypeToProvider(connectionType: LlmConnectionType): Age
       return 'anthropic';
     case 'openai':
     case 'openai-compat':
-      return 'openai';
+      return 'pi'; // Legacy OpenAI connections are now routed through Pi
     default:
       return 'anthropic';
   }
@@ -427,9 +399,7 @@ export function resolveSetupTestConnectionHint(args: {
   }
 
   return {
-    providerType: args.provider === 'openai'
-      ? (args.baseUrl ? 'openai_compat' : 'openai')
-      : (args.baseUrl ? 'anthropic_compat' : 'anthropic'),
+    providerType: args.baseUrl ? 'anthropic_compat' : 'anthropic',
   };
 }
 
@@ -570,12 +540,6 @@ export function createBackendFromConnection(
     );
   }
 
-  // Validate codexPath exists for OpenAI/Codex connections
-  const codexValidation = validateCodexPath(connection);
-  if (!codexValidation.isValid) {
-    throw new Error(codexValidation.error);
-  }
-
   const context: ResolvedBackendContext = {
     connection,
     provider: providerTypeToAgentProvider(connection.providerType || 'anthropic'),
@@ -617,8 +581,6 @@ export const BACKEND_CAPABILITIES: Record<AgentProvider, {
   needsHttpPoolServer: boolean;
 }> = {
   anthropic: { needsHttpPoolServer: false },
-  openai: { needsHttpPoolServer: true },
-  copilot: { needsHttpPoolServer: true },
   pi: { needsHttpPoolServer: false },
 };
 
@@ -631,13 +593,12 @@ export const BACKEND_CAPABILITIES: Record<AgentProvider, {
  *
  * - anthropic: undefined (Claude uses env vars, not explicit authType)
  * - pi: 'api_key'
- * - openai/copilot: 'oauth'
  */
 export function getDefaultAuthType(provider: AgentProvider): LlmAuthType | undefined {
   switch (provider) {
     case 'anthropic': return undefined;
     case 'pi':        return 'api_key';
-    default:          return 'oauth';
+    default:          return undefined;
   }
 }
 
@@ -650,8 +611,6 @@ export function getDefaultAuthType(provider: AgentProvider): LlmAuthType | undef
  *
  * Each provider has different defaults and validation:
  * - Anthropic: falls back to DEFAULT_MODEL (Opus)
- * - OpenAI/Codex: validates against connection's model list, falls back to DEFAULT_CODEX_MODEL
- * - Copilot: falls back to 'gpt-5'
  * - Pi: falls back to empty string (Pi selects model internally)
  *
  * @param provider - The agent provider
@@ -665,7 +624,7 @@ export function resolveModelForProvider(
   connection: LlmConnection | null
 ): string {
   // Cross-provider guard: if the model belongs to a different provider, fall back
-  // to the connection's default. This prevents e.g. sending a Claude model to Codex.
+  // to the connection's default. This prevents e.g. sending a Claude model to Pi.
   if (managedModel) {
     const modelProvider = getModelProvider(managedModel);
     if (modelProvider && modelProvider !== provider) {
@@ -674,15 +633,6 @@ export function resolveModelForProvider(
   }
 
   switch (provider) {
-    case 'openai': {
-      const rawModel = managedModel || connection?.defaultModel;
-      const codexModels = connection?.models as ModelDefinition[] | undefined;
-      return (rawModel && isCodexModel(rawModel, codexModels))
-        ? rawModel
-        : (connection?.defaultModel || DEFAULT_CODEX_MODEL);
-    }
-    case 'copilot':
-      return managedModel || connection?.defaultModel || 'gpt-5';
     case 'pi':
       return managedModel || connection?.defaultModel || '';
     default:
@@ -735,7 +685,7 @@ export async function testBackendConnection(args: {
     const providerType = args.connection?.providerType ?? getDefaultProviderType(args.provider);
     const now = Date.now();
     const authType: LlmAuthType = (
-      providerType === 'anthropic_compat' || providerType === 'openai_compat'
+      providerType === 'anthropic_compat' || providerType === 'pi_compat'
     )
       ? 'api_key_with_endpoint'
       : 'api_key';
@@ -851,14 +801,6 @@ export async function validateConnection(
         baseUrl: connection.baseUrl,
       });
     }
-
-    case 'openai':
-      // Codex validates on app-server startup — no pre-flight check available
-      return { success: true };
-
-    case 'copilot':
-      // GitHub Copilot validates via SDK OAuth flow — no pre-flight check available
-      return { success: true };
 
     case 'pi':
       // Pi validates on connect via its auth storage — no pre-flight check available

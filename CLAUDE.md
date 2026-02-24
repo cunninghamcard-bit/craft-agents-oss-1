@@ -20,7 +20,7 @@ craft-agent/
 
 **Imports:**
 ```typescript
-import { createAgent, ClaudeAgent, CodexAgent } from '@craft-agent/shared/agent'
+import { createAgent, ClaudeAgent, PiAgent } from '@craft-agent/shared/agent'
 import type { AgentBackend, BackendConfig } from '@craft-agent/shared/agent'
 ```
 
@@ -96,17 +96,15 @@ git tag v0.2.25 && git push --tags
 ### Manual Build
 
 ```bash
-# Unified build script - Codex version is REQUIRED
-bun run build --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64
-bun run build --codex-version=craft-v0.1.0 --platform=darwin --arch=x64
-bun run build --codex-version=craft-v0.1.0 --platform=win32 --arch=x64
-bun run build --codex-version=craft-v0.1.0 --platform=linux --arch=x64
+# Unified build script
+bun run build --platform=darwin --arch=arm64
+bun run build --platform=darwin --arch=x64
+bun run build --platform=win32 --arch=x64
+bun run build --platform=linux --arch=x64
 
 # With upload
-bun run build --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64 --upload --latest
+bun run build --platform=darwin --arch=arm64 --upload --latest
 ```
-
-**Note:** `--codex-version` is mandatory. The build script downloads the Codex fork binary from GitHub releases, verifies the version, and bundles it with the app. See [Codex releases](https://github.com/lukilabs/craft-agents-codex/releases) for available versions.
 
 ### Via GitHub Actions
 
@@ -214,12 +212,12 @@ The agent layer supports **multiple AI backends** through an abstract base class
 ```
 BaseAgent (abstract)           # Shared logic: permissions, sources, planning, config watching
     ├── ClaudeAgent            # Anthropic Claude via @anthropic-ai/claude-agent-sdk
-    └── CodexAgent             # OpenAI Codex via app-server JSON-RPC over stdio
+    └── PiAgent                # Pi SDK (ChatGPT Plus OAuth, GitHub Copilot OAuth, OpenAI API keys)
 ```
 
 **Factory:** `createAgent(config)` returns the appropriate backend based on `config.provider`:
 - `'anthropic'` → ClaudeAgent (default)
-- `'openai'` → CodexAgent
+- `'pi'` → PiAgent
 
 ### BaseAgent (`packages/shared/src/agent/base-agent.ts`)
 
@@ -245,50 +243,15 @@ Anthropic Claude implementation wrapping `@anthropic-ai/claude-agent-sdk`:
 
 **Auth types:** `api_key` (Anthropic API key), `oauth_token` (Claude Max OAuth)
 
-### CodexAgent (`packages/shared/src/agent/codex-agent.ts`)
+### PiAgent (`packages/shared/src/agent/pi-agent.ts`)
 
-OpenAI Codex implementation using the **app-server protocol**:
-- Spawns `codex app-server` and communicates via JSON-RPC over stdio
-- Pre-tool approval via `item/toolCall/preExecute` hook (requires Craft Agents fork)
-- Thread persistence for session resume across restarts
-- ChatGPT Plus OAuth authentication via `chatgptAuthTokens` mode
+Pi SDK implementation for non-Anthropic providers:
+- Spawns a Pi agent server subprocess (`packages/pi-agent-server`)
+- Supports ChatGPT Plus OAuth, GitHub Copilot OAuth, and OpenAI API key auth
+- `piAuthProvider` field on the connection determines which credential to use
+- Session resume via conversation ID persistence
 
-**Key methods:**
-- `handleToolCallPreExecute()` - unified permission checking (same logic as ClaudeAgent)
-- `injectChatGptTokens()` - inject OAuth tokens from UI flow
-- `tryInjectStoredChatGptTokens()` - auto-inject stored credentials on startup
-- Token refresh via `account/chatgptAuthTokens/refresh` server request
-
-**Auth:** ChatGPT Plus OAuth. Tokens stored at `llm_oauth::codex` credential key.
-
-**Craft Agents Codex Fork:**
-
-We maintain a fork of OpenAI Codex with additional hooks for Craft Agent integration:
-- **Repo:** [github.com/lukilabs/craft-agents-codex](https://github.com/lukilabs/craft-agents-codex)
-- **Releases:** [github.com/lukilabs/craft-agents-codex/releases](https://github.com/lukilabs/craft-agents-codex/releases)
-
-**Fork additions:**
-- `item/toolCall/preExecute` - Pre-tool approval hook (intercept ALL tools before execution)
-- Unified permission checking matching ClaudeAgent behavior
-- Source blocking for inactive MCP sources with auto-activation support
-
-**Binary bundling:** The Codex fork binary is bundled with the app during build. The build script:
-1. Downloads the specified version from GitHub releases (`--codex-version=craft-vX.Y.Z`)
-2. Verifies the downloaded binary reports the expected version
-3. Bundles it at `vendor/codex/{platform}-{arch}/codex`
-
-**Runtime resolution:** The binary resolver (`packages/shared/src/codex/binary-resolver.ts`) finds the Codex binary at runtime in this priority order:
-1. `CODEX_PATH` environment variable (explicit override)
-2. Bundled binary in app resources (`vendor/codex/{platform}-{arch}/codex`)
-3. Local dev fork at `~/Documents/GitHub/craft-agents-codex/codex-rs/target/release/codex`
-4. System `codex` command in PATH (fallback)
-
-**Updating Codex version:**
-1. Publish a new release on the fork: `git tag craft-vX.Y.Z && git push origin craft-vX.Y.Z`
-2. Update the `--codex-version` in CI workflow (`.github/workflows/build-and-upload.yml`)
-3. Run a new build
-
-**Dev mode:** In development, the binary resolver automatically finds the local fork if you've built it at the expected path. No configuration needed.
+**Auth:** OAuth tokens or API keys, routed via `piAuthProvider` (`'openai-codex'`, `'github-copilot'`, etc.).
 
 **AgentEvent types:** `status`, `text_delta`, `text_complete`, `tool_start`, `tool_result`, `permission_request`, `error`, `complete`, `task_backgrounded`, `shell_backgrounded`, `task_progress`, `typed_error`, `source_activated`
 
@@ -330,13 +293,17 @@ Named provider configurations for AI backends. Sessions lock to a connection aft
 | Type | Backend | Auth Types |
 |------|---------|------------|
 | `anthropic` | ClaudeAgent | `api_key`, `oauth` |
-| `openai` | CodexAgent | `oauth` |
-| `openai-compat` | (future) | `api_key`, `none` |
+| `pi` | PiAgent | `api_key`, `oauth` |
+| `anthropic_compat` | ClaudeAgent | `api_key`, `none` |
+| `pi_compat` | PiAgent | `api_key`, `none` |
+| `bedrock` | ClaudeAgent | (AWS credentials) |
+| `vertex` | ClaudeAgent | (GCP credentials) |
 
 **Built-in connections:**
 - `anthropic-api` - Anthropic API Key
 - `claude-max` - Claude Max OAuth
-- `codex` - Codex (ChatGPT Plus)
+- `chatgpt-plus` - ChatGPT Plus OAuth (via Pi)
+- `github-copilot` - GitHub Copilot OAuth (via Pi)
 
 ### Credential Storage (`packages/shared/src/credentials/`)
 
@@ -346,7 +313,7 @@ AES-256-GCM encrypted file at `~/.craft-agent/credentials.enc`. Cross-platform, 
 ```
 anthropic_api_key::global             # Anthropic API key
 claude_oauth::global                  # Claude Max OAuth
-llm_oauth::codex                      # Codex (ChatGPT Plus) OAuth
+llm_oauth::chatgpt-plus               # ChatGPT Plus OAuth (Pi)
 craft_oauth::global                   # Craft API OAuth
 workspace_oauth::{workspaceId}        # Workspace MCP OAuth
 source_oauth::{workspaceId}::{sourceSlug}    # OAuth for MCP/API sources
@@ -432,11 +399,10 @@ App-level only. **6-color system:** background, foreground, accent, info, succes
 
 | Directory | Purpose |
 |-----------|---------|
-| `agent/` | Multi-backend agent system (BaseAgent, ClaudeAgent, CodexAgent) |
+| `agent/` | Multi-backend agent system (BaseAgent, ClaudeAgent, PiAgent) |
 | `agent/core/` | Shared modules: PermissionManager, SourceManager, PromptBuilder, etc. |
 | `agent/backend/` | Backend-specific adapters (event adapters, factory) |
 | `auth/` | oauth, craft-token, claude-token, google-oauth, chatgpt-oauth, state |
-| `codex/` | Codex app-server client, binary resolver, config generator |
 | `config/` | storage, preferences, models, theme, watcher |
 | `credentials/` | manager, backends (secure-storage, env) |
 | `mcp/` | client, validation |
@@ -477,6 +443,6 @@ bun run sync-secrets   # Syncs op:// refs from .env.1password → .env
 |-------|------|
 | Runtime | Bun |
 | AI (Anthropic) | @anthropic-ai/claude-agent-sdk |
-| AI (OpenAI) | Codex app-server (JSON-RPC over stdio) |
+| AI (Pi) | Pi SDK agent server (subprocess) |
 | Credentials | AES-256-GCM encrypted file |
 | Electron | Electron + React, shadcn/ui + Tailwind v4, esbuild + Vite |

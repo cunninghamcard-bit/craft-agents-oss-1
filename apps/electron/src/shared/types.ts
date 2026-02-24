@@ -79,7 +79,7 @@ export interface LlmConnectionSetup {
  * Works for all agent types that use simple API key auth.
  */
 export interface TestLlmConnectionParams {
-  provider: 'anthropic' | 'openai' | 'pi'
+  provider: 'anthropic' | 'pi'
   apiKey: string
   baseUrl?: string           // Custom endpoint (anthropic/openai compat)
   model?: string             // Model to test (uses provider default if omitted)
@@ -733,6 +733,7 @@ export const IPC_CHANNELS = {
   // Pi provider discovery (main process only — Pi SDK can't run in renderer)
   PI_GET_API_KEY_PROVIDERS: 'pi:getApiKeyProviders',
   PI_GET_PROVIDER_BASE_URL: 'pi:getProviderBaseUrl',
+  PI_GET_PROVIDER_MODELS: 'pi:getProviderModels',
 
   // Settings - Model
   SESSION_GET_MODEL: 'session:getModel',
@@ -1033,6 +1034,7 @@ export interface ElectronAPI {
   // Pi provider discovery (main process only — Pi SDK can't run in renderer)
   getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
   getPiProviderBaseUrl(provider: string): Promise<string | undefined>
+  getPiProviderModels(provider: string): Promise<{ models: Array<{ id: string; name: string; costInput: number; costOutput: number; contextWindow: number; reasoning: boolean }>; totalCount: number }>
 
   // Session-specific model (overrides global)
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>

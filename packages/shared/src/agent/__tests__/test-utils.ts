@@ -114,7 +114,7 @@ export class TestAgent extends BaseAgent {
     super(config, 'test-model', 100_000);
   }
 
-  async *chat(
+  protected async *chatImpl(
     message: string,
     attachments?: unknown[],
     options?: ChatOptions

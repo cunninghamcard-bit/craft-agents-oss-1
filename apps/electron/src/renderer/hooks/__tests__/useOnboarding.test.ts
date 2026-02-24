@@ -33,8 +33,8 @@ describe('resolveSlugForMethod', () => {
 
   it('works for all setup methods', () => {
     const methods: ApiSetupMethod[] = [
-      'anthropic_api_key', 'claude_oauth', 'chatgpt_oauth', 'openai_api_key',
-      'copilot_oauth', 'pi_chatgpt_oauth', 'pi_copilot_oauth', 'pi_api_key',
+      'anthropic_api_key', 'claude_oauth',
+      'pi_chatgpt_oauth', 'pi_copilot_oauth', 'pi_api_key',
     ]
     for (const method of methods) {
       const slug = resolveSlugForMethod(method, null, new Set())
@@ -74,38 +74,14 @@ describe('apiSetupMethodToConnectionSetup', () => {
     expect(setup.baseUrl).toBeUndefined()
   })
 
-  it('chatgpt_oauth maps to codex slug', () => {
-    const setup = apiSetupMethodToConnectionSetup('chatgpt_oauth', {}, null, new Set())
-    expect(setup.slug).toBe('codex')
-  })
-
-  it('openai_api_key includes credential, baseUrl, defaultModel, models', () => {
-    const setup = apiSetupMethodToConnectionSetup(
-      'openai_api_key',
-      { credential: 'sk-openai', baseUrl: 'https://api.openai.com', connectionDefaultModel: 'gpt-5', models: ['gpt-5'] },
-      null,
-      new Set(),
-    )
-    expect(setup.slug).toBe('codex-api')
-    expect(setup.credential).toBe('sk-openai')
-    expect(setup.baseUrl).toBe('https://api.openai.com')
-    expect(setup.defaultModel).toBe('gpt-5')
-    expect(setup.models).toEqual(['gpt-5'])
-  })
-
-  it('copilot_oauth maps to copilot slug', () => {
-    const setup = apiSetupMethodToConnectionSetup('copilot_oauth', {}, null, new Set())
-    expect(setup.slug).toBe('copilot')
-  })
-
-  it('pi_chatgpt_oauth maps to pi-codex slug', () => {
+  it('pi_chatgpt_oauth maps to chatgpt-plus slug', () => {
     const setup = apiSetupMethodToConnectionSetup('pi_chatgpt_oauth', {}, null, new Set())
-    expect(setup.slug).toBe('pi-codex')
+    expect(setup.slug).toBe('chatgpt-plus')
   })
 
-  it('pi_copilot_oauth maps to pi-copilot slug', () => {
+  it('pi_copilot_oauth maps to github-copilot slug', () => {
     const setup = apiSetupMethodToConnectionSetup('pi_copilot_oauth', {}, null, new Set())
-    expect(setup.slug).toBe('pi-copilot')
+    expect(setup.slug).toBe('github-copilot')
   })
 
   it('pi_api_key includes piAuthProvider', () => {

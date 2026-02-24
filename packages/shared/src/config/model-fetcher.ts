@@ -2,12 +2,12 @@
  * Model Fetcher — Centralized Model Discovery
  *
  * Type-safe plugin interface for fetching available models from providers.
- * Each provider (Anthropic, Codex, Copilot, Pi) implements ModelFetcher.
+ * Each provider (Anthropic, Pi) implements ModelFetcher.
  * The ModelFetcherMap enforces at compile time that every fetchable provider
  * has a registered fetcher — adding a new LlmProviderType without a fetcher
  * causes a type error.
  *
- * Compat providers (anthropic_compat, openai_compat, pi_compat) are excluded —
+ * Compat providers (anthropic_compat, pi_compat) are excluded —
  * they point to arbitrary endpoints where users configure models manually.
  */
 
@@ -28,7 +28,6 @@ import type { LlmProviderType, LlmConnection } from './llm-connections';
  */
 export type FetchableProvider = Exclude<LlmProviderType,
   | 'anthropic_compat'
-  | 'openai_compat'
   | 'pi_compat'
 >;
 

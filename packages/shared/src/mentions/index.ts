@@ -26,6 +26,8 @@ export const WS_ID_CHARS = '[\\w .-]'
 export interface ParsedMentions {
   /** Skill slugs mentioned via [skill:slug] */
   skills: string[]
+  /** Invalid skill slugs mentioned but not found in availableSkillSlugs */
+  invalidSkills: string[]
   /** Source slugs mentioned via [source:slug] */
   sources: string[]
   /** File paths mentioned via [file:path] */
@@ -57,6 +59,7 @@ export function parseMentions(
 ): ParsedMentions {
   const result: ParsedMentions = {
     skills: [],
+    invalidSkills: [],
     sources: [],
     files: [],
     folders: [],
@@ -78,8 +81,14 @@ export function parseMentions(
   const skillPattern = new RegExp(`\\[skill:(?:${WS_ID_CHARS}+:)?([\\w-]+)\\]`, 'g')
   while ((match = skillPattern.exec(text)) !== null) {
     const slug = match[1]!
-    if (availableSkillSlugs.includes(slug) && !result.skills.includes(slug)) {
-      result.skills.push(slug)
+    if (availableSkillSlugs.includes(slug)) {
+      if (!result.skills.includes(slug)) {
+        result.skills.push(slug)
+      }
+    } else {
+      if (!result.invalidSkills.includes(slug)) {
+        result.invalidSkills.push(slug)
+      }
     }
   }
 

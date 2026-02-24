@@ -17,7 +17,8 @@
 import type { AgentEvent } from '@craft-agent/core/types';
 import { parseReadCommand, type ReadCommandInfo } from './read-patterns.ts';
 import { createLogger } from '../../utils/debug.ts';
-import { POOL_SERVER_MCP_NAME } from '../../codex/config-generator.ts';
+/** MCP server name used by the pool server (previously in codex/config-generator) */
+const POOL_SERVER_MCP_NAME = 'sources';
 
 export { type ReadCommandInfo } from './read-patterns.ts';
 

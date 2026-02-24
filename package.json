@@ -38,6 +38,7 @@
     "electron:dist:mac": "bun run electron:build && electron-builder --config electron-builder.yml --project apps/electron --mac",
     "electron:dist:win": "bun run electron:build && electron-builder --config electron-builder.yml --project apps/electron --win",
     "electron:dist:linux": "bun run electron:build && electron-builder --config electron-builder.yml --project apps/electron --linux",
+    "playground:dev": "lsof -ti:5173 | xargs kill -9 2>/dev/null; vite dev --config apps/electron/vite.config.ts --open /playground.html",
     "viewer:dev": "lsof -ti:5174 | xargs kill -9 2>/dev/null; vite dev --config apps/viewer/vite.config.ts --open /s/tz5-13I84pwK_he",
     "viewer:build": "vite build --config apps/viewer/vite.config.ts",
     "viewer:preview": "vite preview --config apps/viewer/vite.config.ts",
@@ -88,7 +89,6 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.37",
-    "@github/copilot-sdk": "^0.1.23",
     "@mariozechner/pi-coding-agent": "^0.53.0",
     "@modelcontextprotocol/sdk": "^1.24.3",
     "@radix-ui/react-avatar": "^1.1.11",

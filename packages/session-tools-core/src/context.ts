@@ -167,6 +167,9 @@ export interface SessionToolContext {
   /** Path to session's plans folder */
   plansFolderPath: string;
 
+  /** Working directory (project root) for the session, if set */
+  workingDirectory?: string;
+
   // ============================================================
   // Callbacks (transport-agnostic)
   // ============================================================

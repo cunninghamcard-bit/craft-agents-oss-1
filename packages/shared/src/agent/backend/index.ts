@@ -1,12 +1,12 @@
 /**
  * Agent Backend Abstraction Layer
  *
- * This module provides a unified interface for AI agents (Claude, Codex, etc.)
+ * This module provides a unified interface for AI agents (Claude, Pi)
  * allowing seamless provider switching.
  *
  * Naming convention:
  * - ClaudeAgent: Claude SDK implementation (implements AgentBackend directly)
- * - CodexAgent: OpenAI Codex app-server implementation
+ * - PiAgent: Pi unified API implementation
  * - AgentBackend: Interface that all agents implement
  * - createAgent: Factory function to create agents
  *
@@ -44,7 +44,6 @@ export type {
   LlmAuthType,
   LlmProviderType,
   PostInitResult,
-  BridgeUpdateContext,
 } from './types.ts';
 
 // Enums need to be exported as values, not just types
@@ -87,8 +86,6 @@ export { EventQueue } from './event-queue.ts';
 
 // Provider-specific event adapters
 export { ClaudeEventAdapter } from './claude/event-adapter.ts';
-export { CodexEventAdapter } from './codex/event-adapter.ts';
-export { CopilotEventAdapter } from './copilot/event-adapter.ts';
 export { PiEventAdapter } from './pi/event-adapter.ts';
 
 // Agent implementations are imported directly by factory.ts

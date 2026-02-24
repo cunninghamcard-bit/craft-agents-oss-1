@@ -3,16 +3,11 @@
  * Unified build script for Craft Agent
  *
  * Usage:
- *   bun run scripts/build.ts --platform=darwin --arch=arm64 --codex-version=craft-v0.1.0
- *   bun run scripts/build.ts --platform=win32 --arch=x64 --codex-version=craft-v0.1.0
- *   bun run scripts/build.ts --platform=linux --arch=x64 --codex-version=craft-v0.1.0 --upload --latest
- *   bun run scripts/build.ts --platform=darwin --arch=arm64 --local-codex
+ *   bun run scripts/build.ts --platform=darwin --arch=arm64
+ *   bun run scripts/build.ts --platform=win32 --arch=x64
+ *   bun run scripts/build.ts --platform=linux --arch=x64 --upload --latest
  *
  * Options:
- *   --codex-version  Codex fork version to bundle (e.g., craft-v0.1.0)
- *                    Required unless --local-codex is specified
- *   --local-codex    Use local Codex binary from vendor/codex/{platform}-{arch}/
- *                    instead of downloading from GitHub
  *   --platform       Target platform: darwin, win32, linux (default: current platform)
  *   --arch           Target architecture: x64, arm64 (default: current arch)
  *   --upload         Upload to S3 after building
@@ -44,21 +39,16 @@ import {
   cleanBuildArtifacts,
   installDependencies,
   downloadBun,
-  downloadCodex,
-  verifyLocalCodex,
   copySDK,
   copyInterceptor,
   copyInterceptorBundle,
-  copyCopilotCli,
   buildMcpServers,
-  copyBridgeServer,
   copySessionServer,
   copyPiAgentServer,
   verifyMcpServersExist,
   buildElectronApp,
   createManifest,
   uploadToS3,
-  CODEX_REPO,
 } from './build/common';
 import { packageDarwin } from './build/darwin';
 import { packageLinux } from './build/linux';
@@ -69,14 +59,7 @@ function showHelp(): void {
 Unified build script for Craft Agent
 
 Usage:
-  bun run scripts/build.ts --codex-version=<version> [options]
-  bun run scripts/build.ts --local-codex [options]
-
-Codex binary (one required):
-  --codex-version=<version>  Download Codex fork version (e.g., craft-v0.1.0)
-                             Releases: https://github.com/${CODEX_REPO}/releases
-  --local-codex              Use local Codex binary from vendor/codex/{platform}-{arch}/
-                             Pre-copy your binary before running the build.
+  bun run scripts/build.ts [options]
 
 Options:
   --platform=<platform>  Target platform: darwin, win32, linux
@@ -101,17 +84,14 @@ Environment variables (from .env or environment):
   S3_VERSIONS_BUCKET_*            S3 credentials (for --upload)
 
 Examples:
-  # Build macOS arm64 with downloaded Codex
-  bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64
-
-  # Build macOS arm64 with local Codex binary
-  bun run scripts/build.ts --local-codex --platform=darwin --arch=arm64
+  # Build macOS arm64
+  bun run scripts/build.ts --platform=darwin --arch=arm64
 
   # Build Windows x64 and upload
-  bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=win32 --arch=x64 --upload --latest
+  bun run scripts/build.ts --platform=win32 --arch=x64 --upload --latest
 
   # Build Linux x64
-  bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=linux --arch=x64
+  bun run scripts/build.ts --platform=linux --arch=x64
 `);
 }
 
@@ -120,8 +100,6 @@ async function main(): Promise<void> {
   const { values } = parseArgs({
     args: process.argv.slice(2),
     options: {
-      'codex-version': { type: 'string' },
-      'local-codex': { type: 'boolean', default: false },
       platform: { type: 'string', default: process.platform },
       arch: { type: 'string', default: process.arch === 'arm64' ? 'arm64' : 'x64' },
       upload: { type: 'boolean', default: false },
@@ -135,33 +113,6 @@ async function main(): Promise<void> {
   if (values.help) {
     showHelp();
     process.exit(0);
-  }
-
-  // Validate codex source (either --codex-version or --local-codex required)
-  const codexVersion = values['codex-version'];
-  const localCodex = values['local-codex'] ?? false;
-
-  if (!codexVersion && !localCodex) {
-    console.error('ERROR: Either --codex-version or --local-codex is required.\n');
-    console.error('The Codex fork binary is bundled with the app and must be explicitly specified.');
-    console.error(`Available releases: https://github.com/${CODEX_REPO}/releases\n`);
-    console.error('Examples:');
-    console.error('  bun run scripts/build.ts --codex-version=craft-v0.1.0 --platform=darwin --arch=arm64');
-    console.error('  bun run scripts/build.ts --local-codex --platform=darwin --arch=arm64');
-    process.exit(1);
-  }
-
-  if (codexVersion && localCodex) {
-    console.error('ERROR: Cannot use both --codex-version and --local-codex.\n');
-    console.error('Use --codex-version to download from GitHub, or --local-codex to use a pre-placed binary.');
-    process.exit(1);
-  }
-
-  // Validate codex-version format (should be craft-vX.Y.Z) if provided
-  if (codexVersion && !codexVersion.match(/^craft-v\d+\.\d+\.\d+/)) {
-    console.error(`ERROR: Invalid --codex-version format: ${codexVersion}\n`);
-    console.error('Expected format: craft-vX.Y.Z (e.g., craft-v0.1.0)');
-    process.exit(1);
   }
 
   // Validate platform
@@ -199,78 +150,52 @@ async function main(): Promise<void> {
     uploadScript: values.script ?? false,
     rootDir,
     electronDir,
-    codexVersion: codexVersion ?? 'local',
-    localCodex,
   };
 
   console.log(`=== Building Craft Agents for ${platform}-${arch} ===`);
-  console.log(`Codex: ${localCodex ? 'local binary' : codexVersion}`);
   if (config.upload) {
     console.log('Will upload to S3 after build');
   }
 
   try {
     // Load environment variables
-    console.log('\n[1/10] Loading environment...');
+    console.log('\n[1/8] Loading environment...');
     await loadEnvFile(config);
 
     // Common build steps
-    console.log('\n[2/10] Cleaning previous builds...');
+    console.log('\n[2/8] Cleaning previous builds...');
     cleanBuildArtifacts(config);
 
-    console.log('\n[3/10] Installing dependencies...');
+    console.log('\n[3/8] Installing dependencies...');
     await installDependencies(config);
 
-    console.log('\n[4/10] Downloading Bun runtime...');
+    console.log('\n[4/8] Downloading Bun runtime...');
     await downloadBun(config);
 
-    if (localCodex) {
-      console.log('\n[5/10] Verifying local Codex binary...');
-      verifyLocalCodex(config);
-    } else {
-      console.log('\n[5/10] Downloading Codex binary...');
-      await downloadCodex(config);
-    }
-
-    console.log('\n[6/10] Copying SDK...');
+    console.log('\n[5/8] Copying SDK and interceptors...');
     copySDK(config);
-
-    console.log('\n[7/10] Copying interceptors...');
     copyInterceptor(config);
     copyInterceptorBundle(config);
 
-    console.log('\n[7/10] Copying Copilot CLI...');
-    copyCopilotCli(config);
-
-    // Build MCP helper servers (bridge + session)
-    console.log('\n[8/11] Building MCP helper servers...');
+    // Build MCP servers (session + Pi agent)
+    console.log('\n[6/8] Building MCP servers...');
     buildMcpServers(config);
 
     // Build Electron app (Windows has special OAuth injection)
-    console.log('\n[9/11] Building Electron app...');
+    console.log('\n[7/8] Building Electron app...');
     if (platform === 'win32') {
       await buildElectronAppWindows(config);
     } else {
       await buildElectronApp(config);
     }
 
-    // Copy Bridge MCP Server to packaged app resources (after build creates it)
-    console.log('\n[10/11] Copying Bridge MCP Server...');
-    copyBridgeServer(config);
-
-    // Copy Session MCP Server to packaged app resources (provides SubmitPlan, etc. for Codex)
-    console.log('\n[10/11] Copying Session MCP Server...');
+    // Copy MCP servers to packaged app resources
     copySessionServer(config);
-
-    // Copy Pi Agent Server to packaged app resources (subprocess for Pi SDK sessions)
-    console.log('\n[10/11] Copying Pi Agent Server...');
     copyPiAgentServer(config);
-
-    console.log('\n[10/11] Verifying MCP helper servers...');
     verifyMcpServersExist(config);
 
     // Package for the target platform
-    console.log('\n[11/11] Packaging for platform...');
+    console.log('\n[8/8] Packaging for platform...');
     let artifactPath: string;
     switch (platform) {
       case 'darwin':

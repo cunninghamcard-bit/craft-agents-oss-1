@@ -92,18 +92,6 @@ describe('createBuiltInConnection', () => {
     expect(conn.authType).toBe('oauth')
   })
 
-  it('creates codex with openai/oauth', () => {
-    const conn = createBuiltInConnection('codex')
-    expect(conn.providerType).toBe('openai')
-    expect(conn.authType).toBe('oauth')
-  })
-
-  it('creates copilot with oauth', () => {
-    const conn = createBuiltInConnection('copilot')
-    expect(conn.providerType).toBe('copilot')
-    expect(conn.authType).toBe('oauth')
-  })
-
   it('creates pi-api-key with pi provider', () => {
     const conn = createBuiltInConnection('pi-api-key')
     expect(conn.providerType).toBe('pi')
@@ -117,9 +105,9 @@ describe('createBuiltInConnection', () => {
     expect(conn.name).toBe('Anthropic (API Key) 2')
   })
 
-  it('handles numeric suffix slugs (codex-api-3)', () => {
-    const conn = createBuiltInConnection('codex-api-3')
-    expect(conn.slug).toBe('codex-api-3')
+  it('handles numeric suffix slugs (pi-api-key-3)', () => {
+    const conn = createBuiltInConnection('pi-api-key-3')
+    expect(conn.slug).toBe('pi-api-key-3')
     expect(conn.name).toContain('3')
   })
 
@@ -132,13 +120,13 @@ describe('createBuiltInConnection', () => {
     expect(conn.createdAt).toBeGreaterThan(0)
   })
 
-  it('sets piAuthProvider for pi-codex', () => {
-    const conn = createBuiltInConnection('pi-codex')
+  it('sets piAuthProvider for chatgpt-plus', () => {
+    const conn = createBuiltInConnection('chatgpt-plus')
     expect(conn.piAuthProvider).toBe('openai-codex')
   })
 
-  it('sets piAuthProvider for pi-copilot', () => {
-    const conn = createBuiltInConnection('pi-copilot')
+  it('sets piAuthProvider for github-copilot', () => {
+    const conn = createBuiltInConnection('github-copilot')
     expect(conn.piAuthProvider).toBe('github-copilot')
   })
 })

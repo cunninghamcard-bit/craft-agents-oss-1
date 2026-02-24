@@ -206,6 +206,8 @@ const api: ElectronAPI = {
     ipcRenderer.invoke(IPC_CHANNELS.PI_GET_API_KEY_PROVIDERS),
   getPiProviderBaseUrl: (provider: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.PI_GET_PROVIDER_BASE_URL, provider),
+  getPiProviderModels: (provider: string) =>
+    ipcRenderer.invoke(IPC_CHANNELS.PI_GET_PROVIDER_MODELS, provider),
 
   // Session-specific model (overrides global)
   getSessionModel: (sessionId: string, workspaceId: string) =>
