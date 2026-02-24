@@ -316,10 +316,14 @@ function koffiPlatformDir(platform: Platform, arch: Arch): string {
 /**
  * Copy Pi Agent Server to packaged app resources.
  *
- * The bundled index.js has `import koffi from "koffi"` as a bare import
- * (bun can't inline native modules). We copy the koffi npm package into
- * node_modules next to index.js so the import resolves at runtime, but
- * only include the target platform's native binary (~4MB instead of ~80MB).
+ * Bun inlines koffi's JS into the bundle, so the inlined code does
+ * require("./build/koffi/win32_x64/koffi.node") relative to the bundle dir.
+ * We copy the native binary to TWO locations to handle both cases:
+ *
+ * 1. pi-agent-server/build/koffi/{platform}_{arch}/  — for bun-inlined koffi
+ *    (require resolves relative to bundle __dirname)
+ * 2. pi-agent-server/node_modules/koffi/             — for external import fallback
+ *    (if bun leaves koffi as an external bare import on some platforms)
  */
 export function copyPiAgentServer(config: BuildConfig): void {
   const { rootDir, electronDir, platform, arch } = config;
@@ -335,44 +339,44 @@ export function copyPiAgentServer(config: BuildConfig): void {
   console.log('Copying Pi Agent Server...');
   mkdirSync(piDestDir, { recursive: true });
 
-  // 1. Copy index.js (skip .node asset files — they're not used by the bare import)
+  // 1. Copy index.js (skip .node asset files — they're bun artifacts, not used at runtime)
   copyFileSync(join(piSourceDir, 'index.js'), join(piDestDir, 'index.js'));
 
-  // 2. Copy koffi npm package with only the target platform's native binary
   const koffiSource = join(rootDir, 'node_modules', 'koffi');
-  const koffiDest = join(piDestDir, 'node_modules', 'koffi');
-
   if (!existsSync(koffiSource)) {
     console.warn('  Warning: koffi not found in node_modules. Pi SDK sessions may not work.');
     return;
   }
 
-  mkdirSync(koffiDest, { recursive: true });
+  const targetDir = koffiPlatformDir(platform, arch);
+  const nativeSrc = join(koffiSource, 'build', 'koffi', targetDir);
 
-  // Copy koffi JS files (package.json, index.js, lib/)
+  if (!existsSync(nativeSrc)) {
+    console.warn(`  Warning: koffi native binary not found for ${targetDir}`);
+    return;
+  }
+
+  // 2. Copy native binary to build/ inside pi-agent-server dir
+  //    This is where bun's inlined require("./build/koffi/...") looks
+  const buildDest = join(piDestDir, 'build', 'koffi', targetDir);
+  mkdirSync(buildDest, { recursive: true });
+  cpSync(nativeSrc, buildDest, { recursive: true });
+
+  // 3. Copy koffi npm package for external import fallback
+  const koffiDest = join(piDestDir, 'node_modules', 'koffi');
+  mkdirSync(koffiDest, { recursive: true });
   for (const entry of ['package.json', 'index.js', 'indirect.js', 'index.d.ts', 'lib']) {
     const src = join(koffiSource, entry);
     if (existsSync(src)) {
       cpSync(src, join(koffiDest, entry), { recursive: true });
     }
   }
+  const nmBuildDest = join(koffiDest, 'build', 'koffi', targetDir);
+  mkdirSync(nmBuildDest, { recursive: true });
+  cpSync(nativeSrc, nmBuildDest, { recursive: true });
 
-  // Copy only the target platform's native binary
-  const targetDir = koffiPlatformDir(platform, arch);
-  const nativeSrc = join(koffiSource, 'build', 'koffi', targetDir);
-  const nativeDest = join(koffiDest, 'build', 'koffi', targetDir);
-
-  if (existsSync(nativeSrc)) {
-    mkdirSync(nativeDest, { recursive: true });
-    cpSync(nativeSrc, nativeDest, { recursive: true });
-    const size = lstatSync(join(nativeSrc, readdirSync(nativeSrc)[0])).size;
-    console.log(`  Copied index.js + koffi/${targetDir} (${(size / 1024 / 1024).toFixed(1)}MB)`);
-  } else {
-    console.warn(`  Warning: koffi native binary not found for ${targetDir}`);
-    // Copy all as fallback
-    cpSync(join(koffiSource, 'build'), join(koffiDest, 'build'), { recursive: true });
-    console.log('  Copied index.js + koffi (all platforms as fallback)');
-  }
+  const size = lstatSync(join(nativeSrc, readdirSync(nativeSrc)[0])).size;
+  console.log(`  Copied index.js + koffi/${targetDir} (${(size / 1024 / 1024).toFixed(1)}MB)`);
 }
 
 /**
