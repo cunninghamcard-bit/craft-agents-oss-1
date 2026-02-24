@@ -32,7 +32,7 @@ async function fetchCopilotModels(
     }
   };
 
-  let models: Array<{ id: string; name: string; supportedReasoningEfforts?: string[] }>;
+  let models: Array<{ id: string; name: string; supportedReasoningEfforts?: string[]; policy?: { state: string } }>;
   try {
     await Promise.race([
       client.start(),
@@ -60,7 +60,15 @@ async function fetchCopilotModels(
     throw new Error('No models returned from Copilot API.');
   }
 
-  return models.map(m => ({
+  // Only include models the user has enabled in their Copilot settings.
+  // Models without policy info are kept (API may not always report policy).
+  const enabledModels = models.filter(m => !m.policy || m.policy.state === 'enabled');
+
+  if (enabledModels.length === 0) {
+    throw new Error('No enabled models found. Enable models in your GitHub Copilot settings.');
+  }
+
+  return enabledModels.map(m => ({
     id: m.id,
     name: m.name,
     shortName: m.name,

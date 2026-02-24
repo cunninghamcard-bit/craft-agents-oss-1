@@ -11,6 +11,7 @@ import {
   copyFileSync,
   cpSync,
   lstatSync,
+  readdirSync,
 } from 'fs';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
@@ -305,23 +306,73 @@ export function copySessionServer(config: BuildConfig): void {
 }
 
 /**
+ * Map our Platform type to koffi's directory naming convention.
+ * koffi uses: darwin_arm64, darwin_x64, linux_x64, win32_x64, etc.
+ */
+function koffiPlatformDir(platform: Platform, arch: Arch): string {
+  return `${platform}_${arch}`;
+}
+
+/**
  * Copy Pi Agent Server to packaged app resources.
- * The Pi agent server is the subprocess for Pi SDK sessions.
+ *
+ * The bundled index.js has `import koffi from "koffi"` as a bare import
+ * (bun can't inline native modules). We copy the koffi npm package into
+ * node_modules next to index.js so the import resolves at runtime, but
+ * only include the target platform's native binary (~4MB instead of ~80MB).
  */
 export function copyPiAgentServer(config: BuildConfig): void {
-  const { rootDir, electronDir } = config;
+  const { rootDir, electronDir, platform, arch } = config;
 
-  const piSource = join(rootDir, 'packages', 'pi-agent-server', 'dist', 'index.js');
-  const piDest = join(electronDir, 'resources', 'pi-agent-server', 'index.js');
+  const piSourceDir = join(rootDir, 'packages', 'pi-agent-server', 'dist');
+  const piDestDir = join(electronDir, 'resources', 'pi-agent-server');
 
-  if (!existsSync(piSource)) {
-    console.warn(`Warning: Pi agent server not found at ${piSource}. Pi SDK sessions will not work.`);
+  if (!existsSync(join(piSourceDir, 'index.js'))) {
+    console.warn(`Warning: Pi agent server not found at ${piSourceDir}/index.js. Pi SDK sessions will not work.`);
     return;
   }
 
   console.log('Copying Pi Agent Server...');
-  mkdirSync(dirname(piDest), { recursive: true });
-  copyFileSync(piSource, piDest);
+  mkdirSync(piDestDir, { recursive: true });
+
+  // 1. Copy index.js (skip .node asset files — they're not used by the bare import)
+  copyFileSync(join(piSourceDir, 'index.js'), join(piDestDir, 'index.js'));
+
+  // 2. Copy koffi npm package with only the target platform's native binary
+  const koffiSource = join(rootDir, 'node_modules', 'koffi');
+  const koffiDest = join(piDestDir, 'node_modules', 'koffi');
+
+  if (!existsSync(koffiSource)) {
+    console.warn('  Warning: koffi not found in node_modules. Pi SDK sessions may not work.');
+    return;
+  }
+
+  mkdirSync(koffiDest, { recursive: true });
+
+  // Copy koffi JS files (package.json, index.js, lib/)
+  for (const entry of ['package.json', 'index.js', 'indirect.js', 'index.d.ts', 'lib']) {
+    const src = join(koffiSource, entry);
+    if (existsSync(src)) {
+      cpSync(src, join(koffiDest, entry), { recursive: true });
+    }
+  }
+
+  // Copy only the target platform's native binary
+  const targetDir = koffiPlatformDir(platform, arch);
+  const nativeSrc = join(koffiSource, 'build', 'koffi', targetDir);
+  const nativeDest = join(koffiDest, 'build', 'koffi', targetDir);
+
+  if (existsSync(nativeSrc)) {
+    mkdirSync(nativeDest, { recursive: true });
+    cpSync(nativeSrc, nativeDest, { recursive: true });
+    const size = lstatSync(join(nativeSrc, readdirSync(nativeSrc)[0])).size;
+    console.log(`  Copied index.js + koffi/${targetDir} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+  } else {
+    console.warn(`  Warning: koffi native binary not found for ${targetDir}`);
+    // Copy all as fallback
+    cpSync(join(koffiSource, 'build'), join(koffiDest, 'build'), { recursive: true });
+    console.log('  Copied index.js + koffi (all platforms as fallback)');
+  }
 }
 
 /**
@@ -349,7 +400,7 @@ export function buildMcpServers(config: BuildConfig): void {
   // Pi agent server uses --target=bun --format=esm because its Pi SDK deps are ESM-only.
   // --target=node --format=cjs leaves ESM deps as external require() calls that fail at runtime.
   execSync(
-    `bun build ${join(piDir, 'src', 'index.ts')} --outfile ${piOut} --target bun --format esm`,
+    `bun build ${join(piDir, 'src', 'index.ts')} --outdir ${join(piDir, 'dist')} --target bun --format esm`,
     { cwd: rootDir, stdio: 'inherit', shell: true }
   );
 
