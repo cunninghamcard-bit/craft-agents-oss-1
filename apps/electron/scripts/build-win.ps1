@@ -8,7 +8,7 @@ $ElectronDir = Split-Path -Parent $ScriptDir
 $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
 
 # Configuration
-$BunVersion = "bun-v1.3.5"  # Pinned version for reproducible builds
+$BunVersion = "bun-v1.3.9"  # Pinned version for reproducible builds
 
 Write-Host "=== Building Craft Agents Windows Installer using electron-builder ===" -ForegroundColor Cyan
 
