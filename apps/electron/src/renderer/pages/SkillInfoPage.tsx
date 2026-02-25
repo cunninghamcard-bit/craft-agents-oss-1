@@ -182,6 +182,11 @@ export default function SkillInfoPage({ skillSlug, workspaceId }: SkillInfoPageP
                   {formatPath(skill.path)}
                 </button>
               </Info_Table.Row>
+              {skill.metadata.requiredSources && skill.metadata.requiredSources.length > 0 && (
+                <Info_Table.Row label="Required Sources">
+                  {skill.metadata.requiredSources.join(', ')}
+                </Info_Table.Row>
+              )}
             </Info_Table>
           </Info_Section>
 
