@@ -119,8 +119,8 @@ describe('BaseAgent', () => {
       expect(agent.getActiveSourceSlugs()).toEqual([]);
     });
 
-    it('should track source servers', () => {
-      agent.setSourceServers(
+    it('should track source servers', async () => {
+      await agent.setSourceServers(
         { 'source-1': { type: 'http', url: 'http://test' } },
         { 'source-2': {} },
         ['source-1', 'source-2']
@@ -130,8 +130,8 @@ describe('BaseAgent', () => {
       expect(agent.getActiveSourceSlugs()).toContain('source-2');
     });
 
-    it('should check if source is active', () => {
-      agent.setSourceServers(
+    it('should check if source is active', async () => {
+      await agent.setSourceServers(
         { 'active-source': { type: 'http', url: 'http://test' } },
         {},
         ['active-source']

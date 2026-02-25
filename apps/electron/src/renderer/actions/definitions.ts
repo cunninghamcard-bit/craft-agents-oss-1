@@ -63,9 +63,9 @@ export const actions = {
     defaultHotkey: 'mod+1',
     category: 'Navigation',
   },
-  'nav.focusSessionList': {
-    id: 'nav.focusSessionList',
-    label: 'Focus Session List',
+  'nav.focusNavigator': {
+    id: 'nav.focusNavigator',
+    label: 'Focus Navigator',
     defaultHotkey: 'mod+2',
     category: 'Navigation',
   },
@@ -128,21 +128,21 @@ export const actions = {
   },
 
   // ═══════════════════════════════════════════
-  // Session List (scoped)
+  // Navigator (scoped — active entity list in middle panel)
   // ═══════════════════════════════════════════
-  'sessionList.selectAll': {
-    id: 'sessionList.selectAll',
-    label: 'Select All Sessions',
+  'navigator.selectAll': {
+    id: 'navigator.selectAll',
+    label: 'Select All',
     defaultHotkey: 'mod+a',
-    category: 'Session List',
-    scope: 'session-list',
+    category: 'Navigator',
+    scope: 'navigator',
   },
-  'sessionList.clearSelection': {
-    id: 'sessionList.clearSelection',
+  'navigator.clearSelection': {
+    id: 'navigator.clearSelection',
     label: 'Clear Selection',
     defaultHotkey: 'escape',
-    category: 'Session List',
-    scope: 'session-list',
+    category: 'Navigator',
+    scope: 'navigator',
     inputSafe: true,  // Works even when typing in search/chat input
   },
 

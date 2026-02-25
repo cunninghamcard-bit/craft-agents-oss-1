@@ -15,7 +15,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import { HeaderMenu } from '@/components/ui/HeaderMenu'
 import { routes } from '@/lib/navigate'
-import { X, MoreHorizontal, Pencil, Trash2, Star, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle, RefreshCcw } from 'lucide-react'
+import { X, MoreHorizontal, Pencil, Trash2, Star, ChevronDown, ChevronRight, CheckCircle2, AlertTriangle, RefreshCcw, Settings2 } from 'lucide-react'
 import type { CredentialHealthStatus, CredentialHealthIssue } from '../../../shared/types'
 import { Spinner, FullscreenOverlayBase } from '@craft-agent/ui'
 import { useSetAtom } from 'jotai'
@@ -44,7 +44,7 @@ import {
 } from '@/components/settings'
 import { useOnboarding } from '@/hooks/useOnboarding'
 import { useWorkspaceIcon } from '@/hooks/useWorkspaceIcon'
-import { OnboardingWizard } from '@/components/onboarding'
+import { OnboardingWizard, type ApiSetupMethod } from '@/components/onboarding'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { getModelShortName, type ModelDefinition } from '@config/models'
@@ -72,7 +72,7 @@ function getModelOptionsForConnection(
   }
 
   // Fall back to registry models for this provider type
-  const registryModels = getModelsForProviderType(connection.providerType)
+  const registryModels = getModelsForProviderType(connection.providerType, connection.piAuthProvider)
   return registryModels.map((m) => ({
     value: m.id,
     label: m.name,
@@ -137,6 +137,28 @@ function CredentialHealthBanner({ issues, onReauthenticate }: CredentialHealthBa
 }
 
 // ============================================
+// Pi Auth Provider Display Names
+// ============================================
+
+const PI_AUTH_PROVIDER_LABELS: Record<string, string> = {
+  anthropic: 'Anthropic API',
+  openai: 'OpenAI API',
+  'openai-codex': 'OpenAI API',
+  google: 'Google AI Studio',
+  openrouter: 'OpenRouter',
+  'azure-openai-responses': 'Azure OpenAI',
+  'amazon-bedrock': 'Amazon Bedrock',
+  groq: 'Groq',
+  mistral: 'Mistral',
+  xai: 'xAI',
+  cerebras: 'Cerebras',
+  zai: 'z.ai',
+  huggingface: 'Hugging Face',
+  'vercel-ai-gateway': 'Vercel AI Gateway',
+  'github-copilot': 'GitHub Copilot',
+}
+
+// ============================================
 // Connection Row Component
 // ============================================
 
@@ -150,12 +172,22 @@ interface ConnectionRowProps {
   onSetDefault: () => void
   onValidate: () => void
   onReauthenticate: () => void
+  onEdit: () => void
   validationState: ValidationState
   validationError?: string
 }
 
-function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, onSetDefault, onValidate, onReauthenticate, validationState, validationError }: ConnectionRowProps) {
+function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, onSetDefault, onValidate, onReauthenticate, onEdit, validationState, validationError }: ConnectionRowProps) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [piBaseUrl, setPiBaseUrl] = useState<string | undefined>(undefined)
+
+  // Load Pi provider base URL via IPC (Pi SDK can't run in renderer)
+  useEffect(() => {
+    const provider = connection.providerType || connection.type
+    if (provider === 'pi' && connection.piAuthProvider && !connection.baseUrl) {
+      window.electronAPI.getPiProviderBaseUrl(connection.piAuthProvider).then(url => setPiBaseUrl(url))
+    }
+  }, [connection.providerType, connection.type, connection.piAuthProvider, connection.baseUrl])
 
   // Build description with provider, default indicator, auth status, and validation state
   const getDescription = () => {
@@ -173,11 +205,17 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
     switch (provider) {
       case 'anthropic': parts.push(isSubscription ? 'Anthropic Subscription' : 'Anthropic API'); break
       case 'anthropic_compat': parts.push('Anthropic Compatible'); break
-      case 'openai': parts.push(isSubscription ? 'OpenAI Subscription' : 'OpenAI API'); break
-      case 'copilot': parts.push('GitHub Copilot'); break
-      case 'openai_compat': parts.push('OpenAI Compatible'); break
       case 'bedrock': parts.push('AWS Bedrock'); break
       case 'vertex': parts.push('Google Vertex'); break
+      case 'pi': {
+        // Show upstream provider name for API key connections (e.g. "Google AI Studio")
+        const piLabel = !isSubscription && connection.piAuthProvider
+          ? PI_AUTH_PROVIDER_LABELS[connection.piAuthProvider]
+          : null
+        parts.push(piLabel ?? 'Craft Agents Backend')
+        break
+      }
+      case 'pi_compat': parts.push('Craft Agents Backend Compatible'); break
       default: parts.push(provider || 'Unknown')
     }
 
@@ -187,7 +225,9 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
       // Use default endpoints for standard providers if no custom baseUrl
       if (!endpoint) {
         if (provider === 'anthropic') endpoint = 'https://api.anthropic.com'
-        else if (provider === 'openai') endpoint = 'https://api.openai.com'
+        else if (provider === 'pi' && connection.piAuthProvider) {
+          endpoint = piBaseUrl
+        }
       }
       if (endpoint) {
         // Extract hostname from URL for cleaner display
@@ -241,12 +281,17 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
               <span>Set as default</span>
             </StyledDropdownMenuItem>
           )}
-          <StyledDropdownMenuItem
-            onClick={onReauthenticate}
-          >
-            <RefreshCcw className="h-3.5 w-3.5" />
-            <span>Re-authenticate</span>
-          </StyledDropdownMenuItem>
+          {connection.authType === 'oauth' ? (
+            <StyledDropdownMenuItem onClick={onReauthenticate}>
+              <RefreshCcw className="h-3.5 w-3.5" />
+              <span>Re-authenticate</span>
+            </StyledDropdownMenuItem>
+          ) : (
+            <StyledDropdownMenuItem onClick={onEdit}>
+              <Settings2 className="h-3.5 w-3.5" />
+              <span>Edit</span>
+            </StyledDropdownMenuItem>
+          )}
           <StyledDropdownMenuItem
             onClick={onValidate}
             disabled={validationState === 'validating'}
@@ -424,8 +469,7 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
                     value: conn.slug,
                     label: conn.name,
                     description: conn.providerType === 'anthropic' ? 'Anthropic' :
-                                 conn.providerType === 'openai' ? 'OpenAI' :
-                                 conn.providerType === 'copilot' ? 'GitHub Copilot' :
+                                 conn.providerType === 'pi' ? 'Craft Agents Backend' :
                                  conn.providerType || 'Unknown',
                   })),
                 ]}
@@ -463,6 +507,17 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
 }
 
 // ============================================
+// Helpers
+// ============================================
+
+/** Map a connection's provider type to the corresponding API key setup method. */
+function getApiKeyMethodForConnection(conn: LlmConnectionWithStatus): ApiSetupMethod {
+  const provider = conn.providerType || conn.type
+  if (provider === 'pi' || provider === 'pi_compat') return 'pi_api_key'
+  return 'anthropic_api_key'
+}
+
+// ============================================
 // Main Component
 // ============================================
 
@@ -472,6 +527,13 @@ export default function AiSettingsPage() {
   // API Setup overlay state
   const [showApiSetup, setShowApiSetup] = useState(false)
   const [editingConnectionSlug, setEditingConnectionSlug] = useState<string | null>(null)
+  const [isDirectEdit, setIsDirectEdit] = useState(false)
+  const [editInitialValues, setEditInitialValues] = useState<{
+    apiKey?: string
+    baseUrl?: string
+    connectionDefaultModel?: string
+    activePreset?: string
+  } | undefined>(undefined)
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
 
   // Workspaces for override cards
@@ -535,7 +597,7 @@ export default function AiSettingsPage() {
 
   // OnboardingWizard hook for editing API connection
   const apiSetupOnboarding = useOnboarding({
-    initialStep: 'api-setup',
+    initialStep: 'provider-select',
     onConfigSaved: refreshLlmConnections,
     onComplete: () => {
       closeApiSetup()
@@ -556,12 +618,16 @@ export default function AiSettingsPage() {
     apiSetupOnboarding.reset()
     // Clear any credential health issues after successful re-authentication
     setCredentialHealthIssues([])
+    setIsDirectEdit(false)
+    setEditInitialValues(undefined)
   }, [closeApiSetup, refreshLlmConnections, apiSetupOnboarding])
 
   // Handler for closing the modal via X button or Escape - resets state and cancels OAuth
   const handleCloseApiSetup = useCallback(() => {
     closeApiSetup()
     apiSetupOnboarding.reset()
+    setIsDirectEdit(false)
+    setEditInitialValues(undefined)
   }, [closeApiSetup, apiSetupOnboarding])
 
   // Handler for re-authenticate button in credential health banner
@@ -616,11 +682,40 @@ export default function AiSettingsPage() {
     apiSetupOnboarding.reset()
 
     if (connection.authType === 'oauth') {
-      const method = connection.providerType === 'openai' ? 'chatgpt_oauth'
-                   : connection.providerType === 'copilot' ? 'copilot_oauth'
+      const method = connection.providerType === 'pi'
+                   ? (connection.piAuthProvider === 'github-copilot' ? 'pi_copilot_oauth' : 'pi_chatgpt_oauth')
                    : 'claude_oauth'
       apiSetupOnboarding.handleStartOAuth(method)
     }
+  }, [apiSetupOnboarding, openApiSetup])
+
+  const handleEditConnection = useCallback(async (connection: LlmConnectionWithStatus) => {
+    // Fetch stored API key (best-effort — if IPC not available yet, skip pre-fill)
+    let apiKey: string | undefined
+    try {
+      apiKey = (await window.electronAPI.getLlmConnectionApiKey(connection.slug)) ?? undefined
+    } catch {
+      // IPC method may not exist if app wasn't restarted after code change
+    }
+
+    // Build model string from connection's models array
+    const modelStr = connection.models
+      ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
+      .join(', ') || connection.defaultModel || ''
+
+    // Set initial values before opening overlay so ApiKeyInput mounts with them
+    setEditInitialValues({
+      apiKey,
+      baseUrl: connection.baseUrl,
+      connectionDefaultModel: modelStr,
+      activePreset: connection.piAuthProvider || undefined,
+    })
+
+    // Open overlay and jump directly to credentials step (no reset — jumpToCredentials sets state)
+    openApiSetup(connection.slug)
+    setIsDirectEdit(true)
+    const method = getApiKeyMethodForConnection(connection)
+    apiSetupOnboarding.jumpToCredentials(method)
   }, [apiSetupOnboarding, openApiSetup])
 
   const handleDeleteConnection = useCallback(async (slug: string) => {
@@ -742,11 +837,10 @@ export default function AiSettingsPage() {
                       value: conn.slug,
                       label: conn.name,
                       description: conn.providerType === 'anthropic' ? 'Anthropic API' :
-                                   conn.providerType === 'openai' ? 'OpenAI API' :
-                                   conn.providerType === 'copilot' ? 'GitHub Copilot' :
-                                   conn.providerType === 'openai_compat' ? 'OpenAI Compatible' :
                                    conn.providerType === 'bedrock' ? 'AWS Bedrock' :
                                    conn.providerType === 'vertex' ? 'Google Vertex' :
+                                   conn.providerType === 'pi' ? 'Craft Agents Backend' :
+                                   conn.providerType === 'pi_compat' ? 'Craft Agents Backend Compatible' :
                                    conn.providerType || 'Unknown',
                     }))}
                   />
@@ -812,6 +906,7 @@ export default function AiSettingsPage() {
                         onSetDefault={() => handleSetDefaultConnection(conn.slug)}
                         onValidate={() => handleValidateConnection(conn.slug)}
                         onReauthenticate={() => handleReauthenticateConnection(conn)}
+                        onEdit={() => handleEditConnection(conn)}
                         validationState={validationStates[conn.slug]?.state || 'idle'}
                         validationError={validationStates[conn.slug]?.error}
                       />
@@ -837,15 +932,18 @@ export default function AiSettingsPage() {
                 <OnboardingWizard
                   state={apiSetupOnboarding.state}
                   onContinue={apiSetupOnboarding.handleContinue}
-                  onBack={apiSetupOnboarding.handleBack}
+                  onBack={isDirectEdit ? handleCloseApiSetup : apiSetupOnboarding.handleBack}
+                  onSelectProvider={apiSetupOnboarding.handleSelectProvider}
                   onSelectApiSetupMethod={apiSetupOnboarding.handleSelectApiSetupMethod}
                   onSubmitCredential={apiSetupOnboarding.handleSubmitCredential}
+                  onSubmitLocalModel={apiSetupOnboarding.handleSubmitLocalModel}
                   onStartOAuth={apiSetupOnboarding.handleStartOAuth}
                   onFinish={handleApiSetupFinish}
                   isWaitingForCode={apiSetupOnboarding.isWaitingForCode}
                   onSubmitAuthCode={apiSetupOnboarding.handleSubmitAuthCode}
                   onCancelOAuth={apiSetupOnboarding.handleCancelOAuth}
                   copilotDeviceCode={apiSetupOnboarding.copilotDeviceCode}
+                  editInitialValues={editInitialValues}
                   className="h-full"
                 />
                 <div

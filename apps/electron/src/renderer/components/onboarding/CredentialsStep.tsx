@@ -32,6 +32,13 @@ interface CredentialsStepProps {
   onCancelOAuth?: () => void
   // Device flow (Copilot)
   copilotDeviceCode?: { userCode: string; verificationUri: string }
+  // Edit mode (pre-fill existing connection values)
+  editInitialValues?: {
+    apiKey?: string
+    baseUrl?: string
+    connectionDefaultModel?: string
+    activePreset?: string
+  }
 }
 
 export function CredentialsStep({
@@ -45,13 +52,14 @@ export function CredentialsStep({
   onSubmitAuthCode,
   onCancelOAuth,
   copilotDeviceCode,
+  editInitialValues,
 }: CredentialsStepProps) {
   const isClaudeOAuth = apiSetupMethod === 'claude_oauth'
-  const isChatGptOAuth = apiSetupMethod === 'chatgpt_oauth'
-  const isCopilotOAuth = apiSetupMethod === 'copilot_oauth'
+  const isChatGptOAuth = apiSetupMethod === 'pi_chatgpt_oauth'
+  const isCopilotOAuth = apiSetupMethod === 'pi_copilot_oauth'
   const isAnthropicApiKey = apiSetupMethod === 'anthropic_api_key'
-  const isOpenAiApiKey = apiSetupMethod === 'openai_api_key'
-  const isApiKey = isAnthropicApiKey || isOpenAiApiKey
+  const isPiApiKey = apiSetupMethod === 'pi_api_key'
+  const isApiKey = isAnthropicApiKey || isPiApiKey
 
   // Copilot device code clipboard handling
   const [copiedCode, setCopiedCode] = useState(false)
@@ -82,7 +90,7 @@ export function CredentialsStep({
     return (
       <StepFormLayout
         title="Connect ChatGPT"
-        description="Use your ChatGPT Plus or Pro subscription to power Codex."
+        description="Use your ChatGPT subscription to power Craft Agents."
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -122,7 +130,7 @@ export function CredentialsStep({
     return (
       <StepFormLayout
         title="Connect GitHub Copilot"
-        description="Use your GitHub Copilot subscription to power AI agents."
+        description="Use your GitHub Copilot subscription to power Craft Agents."
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -247,9 +255,9 @@ export function CredentialsStep({
 
   // --- API Key flow ---
   // Determine provider type and description based on selected method
-  const providerType = isOpenAiApiKey ? 'openai' : 'anthropic'
-  const apiKeyDescription = isOpenAiApiKey
-    ? "Enter your OpenAI API key."
+  const providerType = isPiApiKey ? 'pi_api_key' : 'anthropic'
+  const apiKeyDescription = isPiApiKey
+    ? "Select your LLM provider and enter the API key. Optionally configure a custom endpoint."
     : "Enter your API key. Optionally configure a custom endpoint for OpenRouter, Ollama, or compatible APIs."
 
   return (
@@ -274,6 +282,7 @@ export function CredentialsStep({
         errorMessage={errorMessage}
         onSubmit={onSubmit}
         providerType={providerType}
+        initialValues={editInitialValues}
       />
     </StepFormLayout>
   )

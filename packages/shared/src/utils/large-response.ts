@@ -228,6 +228,41 @@ export interface HandleLargeResponseResult {
  *
  * @returns Formatted result, or null if the text is not large enough to handle
  */
+/**
+ * Thin guard wrapper: returns the replacement text if the result is too large,
+ * or null if the result should be passed through as-is.
+ *
+ * Shared by McpClientPool.callTool() and api-tools.ts.
+ */
+export async function guardLargeResult(
+  text: string,
+  opts: {
+    sessionPath: string;
+    toolName: string;
+    input?: Record<string, unknown>;
+    intent?: string;
+    summarize?: (prompt: string) => Promise<string | null>;
+  }
+): Promise<string | null> {
+  if (estimateTokens(text) <= TOKEN_LIMIT) return null;
+  const result = await handleLargeResponse({
+    text,
+    sessionPath: opts.sessionPath,
+    context: { toolName: opts.toolName, input: opts.input, intent: opts.intent },
+    summarize: opts.summarize,
+  });
+  return result?.message ?? null;
+}
+
+/**
+ * Full pipeline: save to disk, optionally summarize, format result message.
+ *
+ * Call this when a tool result exceeds TOKEN_LIMIT.
+ * If `summarize` callback is provided and tokens are within MAX_SUMMARIZATION_INPUT,
+ * it will be called with the built prompt. Otherwise falls back to preview.
+ *
+ * @returns Formatted result, or null if the text is not large enough to handle
+ */
 export async function handleLargeResponse(
   opts: HandleLargeResponseOptions
 ): Promise<HandleLargeResponseResult | null> {

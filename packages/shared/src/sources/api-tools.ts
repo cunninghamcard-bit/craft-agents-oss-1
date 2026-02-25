@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import type { ApiConfig } from './types.ts';
 import { debug } from '../utils/debug.ts';
-import { handleLargeResponse, estimateTokens, TOKEN_LIMIT } from '../utils/large-response.ts';
+import { guardLargeResult } from '../utils/large-response.ts';
 import type { ApiCredential, BasicAuthCredential } from './credential-manager.ts';
 import { isMultiHeaderCredential } from './credential-manager.ts';
 
@@ -715,23 +715,16 @@ export function createApiTool(
         // ============================================================
 
         // Handle large responses: save to disk + summarize + format
-        if (sessionPath && estimateTokens(text) > TOKEN_LIMIT) {
-          const result = await handleLargeResponse({
-            text,
+        if (sessionPath) {
+          const guarded = await guardLargeResult(text, {
             sessionPath,
-            context: {
-              toolName: `api_${config.name}`,
-              path,
-              input: params,
-              intent: _intent,
-            },
+            toolName: `api_${config.name}`,
+            input: params,
+            intent: _intent,
             summarize,
           });
-
-          if (result) {
-            return {
-              content: [{ type: 'text' as const, text: result.message }],
-            };
+          if (guarded) {
+            return { content: [{ type: 'text' as const, text: guarded }] };
           }
         }
 

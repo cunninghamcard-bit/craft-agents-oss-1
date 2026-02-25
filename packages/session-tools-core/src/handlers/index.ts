@@ -42,3 +42,15 @@ export type {
 // Credential Prompt
 export { handleCredentialPrompt } from './credential-prompt.ts';
 export type { CredentialPromptArgs } from './credential-prompt.ts';
+
+// Update Preferences
+export { handleUpdatePreferences } from './update-preferences.ts';
+export type { UpdatePreferencesArgs } from './update-preferences.ts';
+
+// Transform Data
+export { handleTransformData } from './transform-data.ts';
+export type { TransformDataArgs } from './transform-data.ts';
+
+// Render Template
+export { handleRenderTemplate } from './render-template.ts';
+export type { RenderTemplateArgs } from './render-template.ts';

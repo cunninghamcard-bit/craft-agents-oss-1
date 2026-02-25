@@ -15,6 +15,7 @@ import { sessionListComponents } from './session-list'
 import { editPopoverComponents } from './edit-popover'
 import { actionCardsComponents } from './action-cards'
 import { automationComponents } from './automations'
+import { entityListComponents } from './entity-lists'
 
 export * from './types'
 
@@ -36,10 +37,11 @@ export const componentRegistry: ComponentEntry[] = [
   ...sessionListComponents,
   ...editPopoverComponents,
   ...automationComponents,
+  ...entityListComponents,
 ]
 
 export function getCategories(): CategoryGroup[] {
-  const categoryOrder: Category[] = ['Automations', 'Onboarding', 'Agent Setup', 'Chat', 'Session List', 'Edit Popover', 'Turn Cards', 'TurnCard Modes', 'Fullscreen', 'Action Cards', 'Chat Messages', 'Chat Inputs', 'Toast Messages', 'Markdown', 'Icons', 'OAuth']
+  const categoryOrder: Category[] = ['Automations', 'Onboarding', 'Agent Setup', 'Chat', 'Session List', 'Entity Lists', 'Edit Popover', 'Turn Cards', 'TurnCard Modes', 'Fullscreen', 'Action Cards', 'Chat Messages', 'Chat Inputs', 'Toast Messages', 'Markdown', 'Icons', 'OAuth']
   const categoryMap = new Map<Category, ComponentEntry[]>()
 
   for (const entry of componentRegistry) {

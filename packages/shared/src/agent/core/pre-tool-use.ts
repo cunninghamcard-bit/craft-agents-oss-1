@@ -1,14 +1,18 @@
 /**
- * Shared PreToolUse utilities
+ * Shared PreToolUse utilities and centralized PreToolUse pipeline.
  *
- * These functions are used by both ClaudeAgent and CodexAgent to ensure
- * consistent behavior across backends. Each function handles a specific
- * aspect of the PreToolUse hook:
+ * Individual utility functions (path expansion, skill qualification, etc.)
+ * are used by the centralized `runPreToolUseChecks()` pipeline, which all
+ * four agent backends (Claude, Codex, Copilot, Pi) call with normalized input
+ * and then translate the result to their SDK-specific format.
  *
- * 1. Path expansion: Expand ~ to home directory in file paths
- * 2. Skill qualification: Add workspace prefix to skill names
- * 3. MCP metadata stripping: Remove UI-only fields from tool inputs
- * 4. Config validation: Validate workspace config files before writes
+ * Pipeline steps:
+ * 1. Permission mode check: Block tools disallowed by current mode
+ * 2. Source blocking: Block tools from inactive MCP sources
+ * 3. Prerequisite check: Block source tools until guide.md is read
+ * 4. call_llm detection: Intercept mcp__session__call_llm
+ * 5. Input transforms: Path expansion, config validation, skill qualification, metadata stripping
+ * 6. Ask-mode prompt decision: Determine if user approval is needed
  */
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -23,6 +27,14 @@ import {
 } from '../../config/validators.ts';
 import { AGENTS_PLUGIN_NAME } from '../../skills/types.ts';
 import { GLOBAL_AGENT_SKILLS_DIR, PROJECT_AGENT_SKILLS_DIR } from '../../skills/storage.ts';
+import {
+  shouldAllowToolInMode,
+  isApiEndpointAllowed,
+  isReadOnlyBashCommandWithConfig,
+  type PermissionMode,
+} from '../mode-manager.ts';
+import { permissionsConfigCache, type PermissionsContext } from '../permissions-config.ts';
+import type { PrerequisiteCheckResult } from './prerequisite-manager.ts';
 
 // ============================================================
 // TYPES
@@ -385,4 +397,392 @@ export function validateConfigWrite(
   }
 
   return { valid: true };
+}
+
+// ============================================================
+// CENTRALIZED PRETOOLUSE PIPELINE
+// ============================================================
+
+/**
+ * Discriminated union result from `runPreToolUseChecks()`.
+ * Each agent translates these into its SDK-specific format via a simple switch.
+ */
+export type PreToolUseCheckResult =
+  | { type: 'allow' }
+  | { type: 'modify'; input: Record<string, unknown> }
+  | { type: 'block'; reason: string; source?: 'prerequisite' }
+  | { type: 'prompt'; promptType: 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation';
+      description: string; command?: string; modifiedInput?: Record<string, unknown> }
+  | { type: 'source_activation_needed'; sourceSlug: string; sourceExists: boolean }
+  | { type: 'call_llm_intercept'; input: Record<string, unknown> }
+  | { type: 'spawn_session_intercept'; input: Record<string, unknown> };
+
+/**
+ * Input for `runPreToolUseChecks()`. Each agent builds this from its SDK-specific
+ * hook input. All fields needed for the pipeline are normalized here.
+ */
+export interface PreToolUseInput {
+  /** SDK-normalized tool name (PascalCase for built-in, mcp__server__tool for MCP) */
+  toolName: string;
+  /** Tool input object */
+  input: Record<string, unknown>;
+  /** Current permission mode */
+  permissionMode: PermissionMode;
+  /** Absolute path to workspace root */
+  workspaceRootPath: string;
+  /** Workspace ID or slug for skill qualification */
+  workspaceId: string;
+  /** Plans folder path for the session (writes allowed in explore mode) */
+  plansFolderPath?: string;
+  /** Data folder path (writes allowed in explore mode for transform_data output) */
+  dataFolderPath?: string;
+  /** Working directory override (for skill resolution) */
+  workingDirectory?: string;
+  /** Currently active source slugs */
+  activeSourceSlugs: string[];
+  /** All available sources (for source-exists check) */
+  allSourceSlugs: string[];
+  /** Whether the agent supports source activation (has onSourceActivationRequest callback) */
+  hasSourceActivation: boolean;
+  /** PermissionManager for session-scoped whitelists */
+  permissionManager: PermissionManagerLike;
+  /** PrerequisiteManager for guide.md checking */
+  prerequisiteManager?: PrerequisiteManagerLike;
+  /** Backend metadata (from Codex fork params.metadata or Copilot input.metadata) */
+  backendMetadata?: { intent?: string; displayName?: string };
+  /** Debug callback */
+  onDebug?: (message: string) => void;
+}
+
+/**
+ * Minimal interface for PermissionManager that runPreToolUseChecks() depends on.
+ * This keeps the pipeline testable without importing the full PermissionManager.
+ */
+export interface PermissionManagerLike {
+  isCommandWhitelisted(command: string): boolean;
+  isDangerousCommand(command: string): boolean;
+  getBaseCommand(command: string): string;
+  extractDomainFromNetworkCommand(command: string): string | null;
+  isDomainWhitelisted(domain: string): boolean;
+}
+
+/**
+ * Minimal interface for PrerequisiteManager.
+ */
+export interface PrerequisiteManagerLike {
+  checkPrerequisites(toolName: string): PrerequisiteCheckResult;
+  trackBashSkillRead(input: Record<string, unknown>): boolean;
+}
+
+/** Built-in MCP servers that are always available (not user sources) */
+const BUILT_IN_MCP_SERVERS = new Set(['session', 'craft-agents-docs']);
+
+/** File write tools that require permission in ask mode */
+const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+
+/**
+ * Centralized PreToolUse pipeline.
+ *
+ * Synchronous except for the final result — all async work (source activation,
+ * user prompting) is handled by the calling agent based on the result type.
+ *
+ * Pipeline:
+ * 1. Permission mode check (shouldAllowToolInMode)
+ * 2. Source blocking (inactive MCP sources)
+ * 3. Prerequisite check (guide.md before source tools)
+ * 4. call_llm interception
+ * 5. Input transforms (paths, config validation, skills, metadata)
+ * 6. Ask-mode prompt decision
+ *
+ * @returns A discriminated union that the agent translates to its SDK format
+ */
+export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult {
+  const {
+    toolName,
+    input,
+    permissionMode,
+    workspaceRootPath,
+    workspaceId,
+    plansFolderPath,
+    dataFolderPath,
+    workingDirectory,
+    activeSourceSlugs,
+    allSourceSlugs,
+    hasSourceActivation,
+    permissionManager,
+    prerequisiteManager,
+    backendMetadata,
+    onDebug,
+  } = ctx;
+
+  // Build permissions context for custom permissions.json rules
+  const permissionsContext: PermissionsContext = {
+    workspaceRootPath,
+    activeSourceSlugs,
+  };
+
+  // ============================================================
+  // 1. PERMISSION MODE CHECK
+  // ============================================================
+  const modeResult = shouldAllowToolInMode(
+    toolName,
+    input,
+    permissionMode,
+    { plansFolderPath, dataFolderPath, permissionsContext }
+  );
+
+  if (!modeResult.allowed) {
+    onDebug?.(`Permission mode ${permissionMode}: blocking ${toolName} — ${modeResult.reason}`);
+    return { type: 'block', reason: modeResult.reason };
+  }
+
+  // ============================================================
+  // 2. SOURCE BLOCKING (inactive MCP sources)
+  // ============================================================
+  if (toolName.startsWith('mcp__')) {
+    const parts = toolName.split('__');
+    const serverName = parts[1];
+    if (parts.length >= 3 && serverName && !BUILT_IN_MCP_SERVERS.has(serverName)) {
+      const isActive = activeSourceSlugs.includes(serverName);
+      if (!isActive) {
+        const sourceExists = allSourceSlugs.includes(serverName);
+        onDebug?.(`Source "${serverName}" not active (exists=${sourceExists}, hasActivation=${hasSourceActivation})`);
+        return {
+          type: 'source_activation_needed',
+          sourceSlug: serverName,
+          sourceExists,
+        };
+      }
+    }
+  }
+
+  // ============================================================
+  // 3. PREREQUISITE CHECK (guide.md before source tools)
+  // ============================================================
+  if (prerequisiteManager) {
+    // Allow Bash through if it's reading a pending skill file (clears the prerequisite)
+    if (toolName === 'Bash' && prerequisiteManager.trackBashSkillRead(input)) {
+      // Prerequisite cleared — fall through to remaining pipeline steps
+    } else {
+      const prereqResult = prerequisiteManager.checkPrerequisites(toolName);
+      if (!prereqResult.allowed) {
+        return { type: 'block', reason: prereqResult.blockReason!, source: 'prerequisite' };
+      }
+    }
+  }
+
+  // ============================================================
+  // 4. CALL_LLM / SPAWN_SESSION INTERCEPTION
+  // ============================================================
+  if (toolName === 'mcp__session__call_llm') {
+    return { type: 'call_llm_intercept', input };
+  }
+  if (toolName === 'mcp__session__spawn_session') {
+    return { type: 'spawn_session_intercept', input };
+  }
+
+  // ============================================================
+  // 5. INPUT TRANSFORMS
+  // ============================================================
+  let currentInput = input;
+  let wasModified = false;
+
+  // 5a. Path expansion
+  const pathResult = expandToolPaths(toolName, currentInput, onDebug);
+  if (pathResult.modified) {
+    currentInput = pathResult.input;
+    wasModified = true;
+  }
+
+  // 5b. Config file validation
+  const configResult = validateConfigWrite(toolName, currentInput, workspaceRootPath, onDebug);
+  if (!configResult.valid) {
+    return { type: 'block', reason: configResult.error! };
+  }
+
+  // 5c. Skill qualification
+  if (toolName === 'Skill') {
+    const skillResult = qualifySkillName(
+      currentInput,
+      workspaceId,
+      workspaceRootPath,
+      workingDirectory,
+      onDebug
+    );
+    if (skillResult.modified) {
+      currentInput = skillResult.input;
+      wasModified = true;
+    }
+  }
+
+  // 5d. Metadata stripping
+  const metadataResult = stripToolMetadata(toolName, currentInput, onDebug);
+  if (metadataResult.modified) {
+    currentInput = metadataResult.input;
+    wasModified = true;
+  }
+
+  // ============================================================
+  // 6. ASK MODE PROMPT DECISION
+  // ============================================================
+  if (permissionMode === 'ask') {
+    const promptInfo = shouldPromptInAskMode(
+      toolName,
+      input, // Use original input for permission decisions (before stripping)
+      permissionManager,
+      permissionsContext,
+      plansFolderPath,
+      onDebug,
+    );
+    if (promptInfo) {
+      return {
+        type: 'prompt',
+        promptType: promptInfo.promptType,
+        description: promptInfo.description,
+        command: promptInfo.command,
+        modifiedInput: wasModified ? currentInput : undefined,
+      };
+    }
+  }
+
+  // ============================================================
+  // RESULT
+  // ============================================================
+  if (wasModified) {
+    return { type: 'modify', input: currentInput };
+  }
+  return { type: 'allow' };
+}
+
+// ============================================================
+// ASK-MODE PROMPT DECISION (centralized — fixes Copilot + Pi bugs)
+// ============================================================
+
+interface PromptInfo {
+  promptType: 'bash' | 'file_write' | 'mcp_mutation' | 'api_mutation';
+  description: string;
+  command?: string;
+}
+
+/**
+ * Determine if user approval is needed in 'ask' mode.
+ *
+ * Returns prompt info if user should be asked, null if auto-allowed.
+ * This is the single source of truth for ask-mode decisions across all agents.
+ *
+ * Previously: ClaudeAgent had full inline logic, CodexAgent had shouldPromptForPermission(),
+ * CopilotAgent and Pi relied on `check.requiresPermission` which was NEVER set to true
+ * by shouldAllowToolInMode() in ask mode (it always returns {allowed: true}).
+ */
+export function shouldPromptInAskMode(
+  toolName: string,
+  input: Record<string, unknown>,
+  permissionManager: PermissionManagerLike,
+  permissionsContext: PermissionsContext,
+  plansFolderPath?: string,
+  onDebug?: (message: string) => void,
+): PromptInfo | null {
+
+  // --- File writes ---
+  if (FILE_WRITE_TOOLS.has(toolName)) {
+    if (permissionManager.isCommandWhitelisted(toolName)) {
+      onDebug?.(`Auto-allowing "${toolName}" (previously approved)`);
+      return null;
+    }
+    const filePath = (input.file_path as string) || (input.notebook_path as string) || 'unknown';
+    return {
+      promptType: 'file_write',
+      description: `${toolName}: ${filePath}`,
+      command: filePath,
+    };
+  }
+
+  // --- Bash commands ---
+  if (toolName === 'Bash') {
+    const command = typeof input.command === 'string' ? input.command : '';
+    const baseCommand = permissionManager.getBaseCommand(command);
+
+    // Auto-allow read-only commands using full AST-based validation
+    // (same pipeline as Explore mode — catches redirects, substitutions, pipes to write commands)
+    const mergedConfig = permissionsConfigCache.getMergedConfig(permissionsContext);
+    if (isReadOnlyBashCommandWithConfig(command, mergedConfig)) {
+      onDebug?.(`Auto-allowing read-only command: ${baseCommand}`);
+      return null;
+    }
+
+    // Check session whitelist (not dangerous)
+    if (permissionManager.isCommandWhitelisted(baseCommand) &&
+        !permissionManager.isDangerousCommand(baseCommand)) {
+      onDebug?.(`Auto-allowing "${baseCommand}" (previously approved)`);
+      return null;
+    }
+
+    // Check domain whitelist for curl/wget
+    if (['curl', 'wget'].includes(baseCommand)) {
+      const domain = permissionManager.extractDomainFromNetworkCommand(command);
+      if (domain && permissionManager.isDomainWhitelisted(domain)) {
+        onDebug?.(`Auto-allowing ${baseCommand} to "${domain}" (domain whitelisted)`);
+        return null;
+      }
+    }
+
+    return {
+      promptType: 'bash',
+      description: `Execute: ${command}`,
+      command,
+    };
+  }
+
+  // --- MCP mutations ---
+  if (toolName.startsWith('mcp__')) {
+    // Check if it would be blocked in safe mode (= it's a mutation)
+    const safeModeResult = shouldAllowToolInMode(
+      toolName, input, 'safe', { plansFolderPath }
+    );
+    if (!safeModeResult.allowed) {
+      // It's a mutation — check whitelist
+      if (permissionManager.isCommandWhitelisted(toolName)) {
+        onDebug?.(`Auto-allowing "${toolName}" (previously approved)`);
+        return null;
+      }
+      const serverAndTool = toolName.replace('mcp__', '').replace(/__/g, '/');
+      return {
+        promptType: 'mcp_mutation',
+        description: `MCP: ${serverAndTool}`,
+        command: toolName,
+      };
+    }
+    // Read-only MCP tool — no prompt needed
+    return null;
+  }
+
+  // --- API mutations ---
+  if (toolName.startsWith('api_')) {
+    const method = ((input?.method as string) || 'GET').toUpperCase();
+    const path = input?.path as string | undefined;
+
+    if (method !== 'GET') {
+      const apiDescription = `${method} ${path || ''}`;
+
+      // Check permissions.json whitelist
+      if (isApiEndpointAllowed(method, path, permissionsContext)) {
+        onDebug?.(`Auto-allowing API "${apiDescription}" (whitelisted in permissions.json)`);
+        return null;
+      }
+
+      // Check session whitelist
+      if (permissionManager.isCommandWhitelisted(apiDescription)) {
+        onDebug?.(`Auto-allowing API "${apiDescription}" (previously approved)`);
+        return null;
+      }
+
+      return {
+        promptType: 'api_mutation',
+        description: `API: ${apiDescription}`,
+        command: apiDescription,
+      };
+    }
+  }
+
+  return null;
 }

@@ -71,6 +71,27 @@ export interface LlmConnectionSetup {
   baseUrl?: string | null   // Custom API endpoint (null to clear)
   defaultModel?: string | null  // Custom model override (null to clear)
   models?: string[] | null  // Optional model list for compat providers
+  piAuthProvider?: string   // Pi auth provider (e.g. 'anthropic', 'google', 'openai') — for pi_api_key flow
+}
+
+/**
+ * Params for unified connection test (spawns a lightweight agent subprocess).
+ * Works for all agent types that use simple API key auth.
+ */
+export interface TestLlmConnectionParams {
+  provider: 'anthropic' | 'pi'
+  apiKey: string
+  baseUrl?: string           // Custom endpoint (anthropic/openai compat)
+  model?: string             // Model to test (uses provider default if omitted)
+  piAuthProvider?: string    // Pi SDK provider name (e.g. 'anthropic', 'google', 'openai')
+}
+
+/**
+ * Result of a unified connection test.
+ */
+export interface TestLlmConnectionResult {
+  success: boolean
+  error?: string             // User-friendly error message
 }
 
 
@@ -440,7 +461,7 @@ export type SessionEvent =
   | { type: 'error'; sessionId: string; error: string; timestamp?: number }
   | { type: 'typed_error'; sessionId: string; error: TypedError; timestamp?: number }
   | { type: 'complete'; sessionId: string; tokenUsage?: Session['tokenUsage']; hasUnread?: boolean }
-  | { type: 'interrupted'; sessionId: string; message?: Message }
+  | { type: 'interrupted'; sessionId: string; message?: Message; queuedMessages?: string[] }
   | { type: 'status'; sessionId: string; message: string; statusType?: 'compacting' }
   | { type: 'info'; sessionId: string; message: string; statusType?: 'compaction_complete'; level?: 'info' | 'warning' | 'error' | 'success'; timestamp?: number }
   | { type: 'title_generated'; sessionId: string; title: string }
@@ -683,6 +704,7 @@ export const IPC_CHANNELS = {
   LLM_CONNECTION_LIST: 'LLM_Connection:list',
   LLM_CONNECTION_LIST_WITH_STATUS: 'LLM_Connection:listWithStatus',
   LLM_CONNECTION_GET: 'LLM_Connection:get',
+  LLM_CONNECTION_GET_API_KEY: 'LLM_Connection:getApiKey',
   LLM_CONNECTION_SAVE: 'LLM_Connection:save',
   LLM_CONNECTION_DELETE: 'LLM_Connection:delete',
   LLM_CONNECTION_TEST: 'LLM_Connection:test',
@@ -706,8 +728,12 @@ export const IPC_CHANNELS = {
 
   // Settings - API Setup
   SETUP_LLM_CONNECTION: 'settings:setupLlmConnection',
-  SETTINGS_TEST_API_CONNECTION: 'settings:testApiConnection',
-  SETTINGS_TEST_OPENAI_CONNECTION: 'settings:testOpenAiConnection',
+  SETTINGS_TEST_LLM_CONNECTION_SETUP: 'settings:testLlmConnectionSetup',
+
+  // Pi provider discovery (main process only — Pi SDK can't run in renderer)
+  PI_GET_API_KEY_PROVIDERS: 'pi:getApiKeyProviders',
+  PI_GET_PROVIDER_BASE_URL: 'pi:getProviderBaseUrl',
+  PI_GET_PROVIDER_MODELS: 'pi:getProviderModels',
 
   // Settings - Model
   SESSION_GET_MODEL: 'session:getModel',
@@ -1030,8 +1056,13 @@ export interface ElectronAPI {
 
   /** Unified LLM connection setup */
   setupLlmConnection(setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }>
-  testApiConnection(apiKey: string, baseUrl?: string, models?: string[]): Promise<{ success: boolean; error?: string; modelCount?: number }>
-  testOpenAiConnection(apiKey: string, baseUrl?: string, models?: string[]): Promise<{ success: boolean; error?: string }>
+  /** Unified connection test — spawns a lightweight agent subprocess to validate credentials */
+  testLlmConnectionSetup(params: TestLlmConnectionParams): Promise<TestLlmConnectionResult>
+
+  // Pi provider discovery (main process only — Pi SDK can't run in renderer)
+  getPiApiKeyProviders(): Promise<Array<{ key: string; label: string; placeholder: string }>>
+  getPiProviderBaseUrl(provider: string): Promise<string | undefined>
+  getPiProviderModels(provider: string): Promise<{ models: Array<{ id: string; name: string; costInput: number; costOutput: number; contextWindow: number; reasoning: boolean }>; totalCount: number }>
 
   // Session-specific model (overrides global)
   getSessionModel(sessionId: string, workspaceId: string): Promise<string | null>
@@ -1202,6 +1233,7 @@ export interface ElectronAPI {
   listLlmConnections(): Promise<LlmConnection[]>
   listLlmConnectionsWithStatus(): Promise<LlmConnectionWithStatus[]>
   getLlmConnection(slug: string): Promise<LlmConnection | null>
+  getLlmConnectionApiKey(slug: string): Promise<string | null>
   saveLlmConnection(connection: LlmConnection): Promise<{ success: boolean; error?: string }>
   deleteLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>
   testLlmConnection(slug: string): Promise<{ success: boolean; error?: string }>

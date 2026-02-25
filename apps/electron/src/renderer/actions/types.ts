@@ -1,4 +1,4 @@
-export type ActionScope = 'global' | 'session-list' | 'chat' | 'sidebar'
+export type ActionScope = 'global' | 'navigator' | 'chat' | 'sidebar'
 
 export interface ActionDefinition {
   id: string

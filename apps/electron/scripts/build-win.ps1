@@ -8,7 +8,7 @@ $ElectronDir = Split-Path -Parent $ScriptDir
 $RootDir = Split-Path -Parent (Split-Path -Parent $ElectronDir)
 
 # Configuration
-$BunVersion = "bun-v1.3.5"  # Pinned version for reproducible builds
+$BunVersion = "bun-v1.3.9"  # Pinned version for reproducible builds
 
 Write-Host "=== Building Craft Agents Windows Installer using electron-builder ===" -ForegroundColor Cyan
 
@@ -166,7 +166,7 @@ New-Item -ItemType Directory -Force -Path "$ElectronDir\node_modules\@anthropic-
 Copy-Item -Recurse -Force $SdkSource "$ElectronDir\node_modules\@anthropic-ai\"
 
 # 5. Copy interceptor
-$InterceptorSource = "$RootDir\packages\shared\src\network-interceptor.ts"
+$InterceptorSource = "$RootDir\packages\shared\src\unified-network-interceptor.ts"
 if (-not (Test-Path $InterceptorSource)) {
     Write-Host "ERROR: Interceptor not found at $InterceptorSource" -ForegroundColor Red
     exit 1
@@ -174,6 +174,13 @@ if (-not (Test-Path $InterceptorSource)) {
 Write-Host "Copying interceptor..."
 New-Item -ItemType Directory -Force -Path "$ElectronDir\packages\shared\src" | Out-Null
 Copy-Item $InterceptorSource "$ElectronDir\packages\shared\src\"
+# Also copy dependencies imported by the interceptor at runtime
+foreach ($dep in @("interceptor-common.ts", "feature-flags.ts")) {
+    $depPath = "$RootDir\packages\shared\src\$dep"
+    if (Test-Path $depPath) {
+        Copy-Item $depPath "$ElectronDir\packages\shared\src\"
+    }
+}
 
 # 6. Build Electron app
 Write-Host "Building Electron app..."

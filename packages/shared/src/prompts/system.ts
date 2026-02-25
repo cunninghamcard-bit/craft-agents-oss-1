@@ -4,7 +4,6 @@ import { existsSync, readFileSync, readdirSync } from 'fs';
 import { join, relative, basename } from 'path';
 import { DOC_REFS, APP_ROOT } from '../docs/index.ts';
 import { PERMISSION_MODE_CONFIG } from '../agent/mode-types.ts';
-import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { APP_VERSION } from '../version/index.ts';
 import { readPluginName } from '../utils/workspace.ts';
 import { globSync } from 'glob';
@@ -451,7 +450,19 @@ Sources are external data connections. Each source has:
 - Skills: \`${workspacePath}/skills/{slug}/\`
 - Theme: \`${workspacePath}/theme.json\`
 
-**SDK Plugin:** This workspace is mounted as a Claude Code SDK plugin. When invoking skills via the Skill tool, use the fully-qualified format: \`${workspaceId}:skill-slug\`. For example, to invoke a skill named "commit", use \`${workspaceId}:commit\`.
+## Skills
+
+Skills are reusable instruction sets that teach you specialized behaviors. Each skill has:
+- \`SKILL.md\` - Instructions and behavior definition (read before execution!)
+
+**Using a skill** (user mentions it with \`[skill:slug]\`):
+1. Read its \`SKILL.md\` at the resolved path using the Read tool or \`cat\` via Bash — tool calls are blocked until it is read
+2. Follow the instructions in the file to complete the user's request
+
+Skills are stored at three levels (checked in order):
+- Global: \`~/.agents/skills/{slug}/SKILL.md\`
+- Workspace: \`${workspacePath}/skills/{slug}/SKILL.md\`
+- Project: \`{projectRoot}/.agents/skills/{slug}/SKILL.md\`
 
 ## Project Context
 
@@ -550,14 +561,15 @@ Windows (PowerShell) - use single quotes to avoid escaping issues:
 ${backendName === 'Codex' ? `
 ## MCP Tool Naming
 
-MCP tools from connected sources follow the naming pattern \`mcp__{slug}__{tool}\`:
+MCP tools from connected sources follow the naming pattern \`mcp__sources__{slug}__{tool}\`:
 
 - **\`slug\`** is the source's **slug** from the \`<sources>\` block above (e.g., \`linear\`, \`github\`)
 - Do **NOT** use source IDs, provider names, or config.json \`id\` fields
-- Example: Linear source (slug: \`linear\`) → \`mcp__linear__list_issues\`, \`mcp__linear__create_issue\`
+- Example: Linear source (slug: \`linear\`) → \`mcp__sources__linear__list_issues\`, \`mcp__sources__linear__create_issue\`
+- Example: Craft source (slug: \`craft\`) → \`mcp__sources__craft__search_spaces\`, \`mcp__sources__craft__get_block\`
 - The \`session\` MCP server provides workspace tools: \`mcp__session__SubmitPlan\`, \`mcp__session__source_test\`, etc.
 
-**Tool discovery:** Call \`mcp__{slug}__list_tools\` or try calling a specific tool directly — the error response will list available tools.
+**Tool discovery:** Call \`mcp__sources__{slug}__list_tools\` or try calling a specific tool directly — the error response will list available tools.
 - **NEVER** use \`list_mcp_resources\` — it lists resources, not tools. It will not help you discover available tools.
 - **NEVER** use shell/bash to call MCP tools. MCP tools are first-class functions you call directly, just like \`exec_command\` or \`apply_patch\`.
 
@@ -788,7 +800,7 @@ transform_data({
 **Security:** Content renders in a sandboxed iframe — JavaScript is blocked, links are non-clickable. No sanitization needed.
 
 **Reference:** \`${DOC_REFS.htmlPreview}\`
-${FEATURE_FLAGS.sourceTemplates ? `
+
 ## Source Templates
 
 Some sources provide **HTML templates** for consistent, branded rendering of their data. Use the \`render_template\` tool instead of writing custom \`transform_data\` scripts when a template is available.
@@ -817,7 +829,7 @@ render_template({
 **Discovering templates:** Check the source's \`guide.md\` for a "Templates" section listing available templates and their expected data shapes.
 
 **Soft validation:** Templates declare required fields. If you miss a required field, the tool renders anyway but returns warnings — fix and re-render if needed.
-` : ''}
+
 ## PDF Preview
 
 Craft Agent renders \`pdf-preview\` code blocks as inline PDF previews using react-pdf. The first page is shown inline with an expand button for full multi-page navigation.

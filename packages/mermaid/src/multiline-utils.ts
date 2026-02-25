@@ -20,6 +20,10 @@ export function normalizeBrTags(label: string): string {
     .replace(/<br\s*\/?>/gi, '\n')
     .replace(/\\n/g, '\n')
     .replace(/<\/?(?:sub|sup|small|mark)\s*>/gi, '')
+    // Markdown formatting → HTML tags (order matters: ** before *)
+    .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
+    .replace(/(?<!\*)\*([^\s*](?:[^*]*[^\s*])?)\*(?!\*)/g, '<i>$1</i>')
+    .replace(/~~(.+?)~~/g, '<s>$1</s>')
 }
 
 /**

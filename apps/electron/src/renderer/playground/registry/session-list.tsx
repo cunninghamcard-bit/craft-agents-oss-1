@@ -2,11 +2,12 @@ import * as React from 'react'
 import type { ComponentEntry } from './types'
 import type { SessionMeta } from '@/atoms/sessions'
 import type { SessionStatus } from '@/config/session-status-config'
-import { Circle, Flag } from 'lucide-react'
-import { Spinner } from '@craft-agent/ui'
-import { cn } from '@/lib/utils'
-import { Separator } from '@/components/ui/separator'
+import type { ContentSearchResult } from '@/hooks/useSessionSearch'
+import { Circle } from 'lucide-react'
 import { SessionSearchHeader } from '@/components/app-shell/SessionSearchHeader'
+import { SessionItem } from '@/components/app-shell/SessionItem'
+import { SessionListProvider, type SessionListContextValue } from '@/context/SessionListContext'
+import { ActionRegistryProvider } from '@/actions/registry'
 
 // ============================================================================
 // Mock Todo States (minimal set for playground)
@@ -40,32 +41,6 @@ const mockSessionStatuses: SessionStatus[] = [
 ]
 
 // ============================================================================
-// Highlight matching text utility (mirrored from SessionList)
-// ============================================================================
-
-function highlightMatch(text: string, query: string): React.ReactNode {
-  if (!query.trim()) return text
-
-  const lowerText = text.toLowerCase()
-  const lowerQuery = query.toLowerCase()
-  const index = lowerText.indexOf(lowerQuery)
-
-  if (index === -1) return text
-
-  const before = text.slice(0, index)
-  const match = text.slice(index, index + query.length)
-  const after = text.slice(index + query.length)
-
-  return (
-    <>
-      {before}
-      <span className="px-1 py-0.5 bg-yellow-300/30 rounded-[4px]">{match}</span>
-      {highlightMatch(after, query)}
-    </>
-  )
-}
-
-// ============================================================================
 // Sample Session Data
 // ============================================================================
 
@@ -85,6 +60,7 @@ const sampleSessions: SessionMeta[] = [
     workspaceId: 'workspace-1',
     lastMessageAt: Date.now() - 1000 * 60 * 30, // 30 min ago
     sessionStatus: 'todo',
+    isFlagged: true,
     labels: ['feature', 'priority::high'],
   },
   {
@@ -93,6 +69,7 @@ const sampleSessions: SessionMeta[] = [
     workspaceId: 'workspace-1',
     lastMessageAt: Date.now() - 1000 * 60 * 60, // 1 hour ago
     sessionStatus: 'done',
+    isFlagged: true,
     isProcessing: true,
   },
   {
@@ -101,161 +78,50 @@ const sampleSessions: SessionMeta[] = [
     workspaceId: 'workspace-1',
     lastMessageAt: Date.now() - 1000 * 60 * 60 * 2, // 2 hours ago
     sessionStatus: 'todo',
+    isFlagged: true,
+  },
+  // Child sessions of session-1
+  {
+    id: 'session-1-child-1',
+    name: 'Research OAuth providers',
+    workspaceId: 'workspace-1',
+    lastMessageAt: Date.now() - 1000 * 60 * 10, // 10 min ago
+    parentSessionId: 'session-1',
+    isFlagged: true,
+  },
+  {
+    id: 'session-1-child-2',
+    name: 'Write unit tests for token refresh',
+    workspaceId: 'workspace-1',
+    lastMessageAt: Date.now() - 1000 * 60 * 20, // 20 min ago
+    parentSessionId: 'session-1',
+    isFlagged: true,
   },
 ]
 
-// ============================================================================
-// SessionItemPreview - Simplified SessionItem for playground
-// Renders the visual states without requiring all SessionList infrastructure
-// ============================================================================
-
-interface SessionItemPreviewProps {
-  item: SessionMeta
-  isSelected?: boolean
-  searchQuery?: string
-  /** Number of matches in ChatDisplay (for match badge) */
-  chatMatchCount?: number
-  sessionStatuses?: SessionStatus[]
+function createMockContext(overrides: Partial<SessionListContextValue> = {}): SessionListContextValue {
+  return {
+    onRenameClick: () => {},
+    onSessionStatusChange: () => {},
+    onMarkUnread: () => {},
+    onDelete: async () => true,
+    onSelectSessionById: () => {},
+    onOpenInNewWindow: () => {},
+    onFocusZone: () => {},
+    onKeyDown: () => {},
+    sessionStatuses: mockSessionStatuses,
+    flatLabels: [],
+    labels: [],
+    isMultiSelectActive: false,
+    contentSearchResults: new Map(),
+    ...overrides,
+  }
 }
 
-function SessionItemPreview({
-  item,
-  isSelected = false,
-  searchQuery = '',
-  chatMatchCount,
-  sessionStatuses = mockSessionStatuses,
-}: SessionItemPreviewProps) {
-  const currentSessionStatus = sessionStatuses.find(s => s.id === item.sessionStatus) ?? sessionStatuses[0]
-  const title = item.name || item.preview || 'Untitled conversation'
-
-  return (
-    <div
-      className="session-item"
-      data-selected={isSelected || undefined}
-    >
-      {/* Wrapper for button content */}
-      <div className="session-content relative group select-none pl-2 mr-2">
-        {/* Todo State Icon */}
-        <div className="absolute left-4 top-3.5 z-10">
-          <div
-            className={cn(
-              "w-4 h-4 flex items-center justify-center rounded-full transition-colors cursor-pointer",
-              "hover:bg-foreground/5",
-            )}
-            style={{ color: currentSessionStatus.resolvedColor }}
-          >
-            <div className="w-4 h-4 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full">
-              {currentSessionStatus.icon}
-            </div>
-          </div>
-        </div>
-
-        {/* Main content button */}
-        <div
-          className={cn(
-            "flex w-full items-start gap-2 pl-2 pr-4 py-3 text-left text-sm outline-none rounded-[8px]",
-            "transition-[background-color] duration-75",
-            isSelected
-              ? "bg-foreground/5 hover:bg-foreground/7"
-              : "hover:bg-foreground/2"
-          )}
-        >
-          {/* Spacer for todo icon */}
-          <div className="w-4 h-5 shrink-0" />
-
-          {/* Content column */}
-          <div className="flex flex-col gap-1.5 min-w-0 flex-1">
-            {/* Title with search highlighting */}
-            <div className="flex items-start gap-2 w-full pr-6 min-w-0">
-              <div className="font-medium font-sans line-clamp-2 min-w-0 -mb-[2px]">
-                {searchQuery ? highlightMatch(title, searchQuery) : title}
-              </div>
-            </div>
-
-            {/* Subtitle row */}
-            <div className="flex items-center gap-1.5 text-xs text-foreground/70 w-full -mb-[2px] min-w-0">
-              {/* Processing spinner */}
-              {item.isProcessing && (
-                <Spinner className="text-[8px] text-foreground shrink-0" />
-              )}
-
-              {/* New badge */}
-              {!item.isProcessing && item.hasUnread && (
-                <span className="shrink-0 px-1.5 py-0.5 text-[10px] font-medium rounded bg-accent text-white">
-                  New
-                </span>
-              )}
-
-              {/* Badges container */}
-              <div
-                className="flex-1 flex items-center gap-1 min-w-0 overflow-x-auto scrollbar-hide pr-4"
-                style={{ maskImage: 'linear-gradient(to right, black calc(100% - 16px), transparent 100%)', WebkitMaskImage: 'linear-gradient(to right, black calc(100% - 16px), transparent 100%)' }}
-              >
-                {item.isFlagged && (
-                  <span className="shrink-0 h-[18px] w-[18px] flex items-center justify-center rounded bg-foreground/5">
-                    <Flag className="h-[10px] w-[10px] text-info fill-info" />
-                  </span>
-                )}
-                {item.labels?.map((label, i) => (
-                  <span
-                    key={i}
-                    className="shrink-0 h-[18px] max-w-[120px] px-1.5 text-[10px] font-medium rounded flex items-center whitespace-nowrap"
-                    style={{
-                      backgroundColor: 'rgba(var(--foreground-rgb), 0.05)',
-                      color: 'rgba(var(--foreground-rgb), 0.8)',
-                    }}
-                  >
-                    {label}
-                  </span>
-                ))}
-              </div>
-
-              {/* Timestamp - hidden when showing match navigation */}
-              {!(isSelected && searchQuery && chatMatchCount && chatMatchCount > 0) && (
-                <span className="shrink-0 text-[11px] text-foreground/40 whitespace-nowrap">
-                  {item.lastMessageAt ? formatRelativeTime(item.lastMessageAt) : ''}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Match count badge - shown on right side for all items with matches */}
-        {chatMatchCount != null && chatMatchCount > 0 && (
-          <div className="absolute right-3 top-2 z-10">
-            <span
-              className={cn(
-                "inline-flex items-center justify-center min-w-[24px] px-1 py-1 rounded-[6px] text-[10px] font-medium tabular-nums leading-tight whitespace-nowrap",
-                isSelected
-                  ? "bg-yellow-300/50 border border-yellow-500 text-yellow-900"
-                  : "bg-yellow-300/10 border border-yellow-600/20 text-yellow-800"
-              )}
-              style={{ boxShadow: isSelected ? '0 1px 2px 0 rgba(234, 179, 8, 0.3)' : '0 1px 2px 0 rgba(133, 77, 14, 0.15)' }}
-              title="Matches found (⌘G next, ⌘⇧G prev)"
-            >
-              {chatMatchCount}
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-// Simple relative time formatter
-function formatRelativeTime(timestamp: number): string {
-  const seconds = Math.floor((Date.now() - timestamp) / 1000)
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h`
-  const days = Math.floor(hours / 24)
-  return `${days}d`
-}
+const noopKeyDown = () => {}
 
 // ============================================================================
-// SessionListSearchPreview - Shows multiple session items in search context
+// SessionListSearchPreview - Renders REAL SessionItem components with context
 // ============================================================================
 
 interface SessionListSearchPreviewProps {
@@ -273,6 +139,8 @@ interface SessionListSearchPreviewProps {
   showNoResults?: boolean
   /** Explicit result count to display (defaults to filtered session count) */
   resultCount?: number
+  /** Override selectedSessionId to a child ID — auto-expands parent's children */
+  selectedChildId?: string
 }
 
 function SessionListSearchPreview({
@@ -283,76 +151,216 @@ function SessionListSearchPreview({
   chatMatchCount,
   showNoResults = false,
   resultCount,
+  selectedChildId,
 }: SessionListSearchPreviewProps) {
-  // Filter sessions if there's a search query (simple title match for demo)
-  const filteredSessions = searchQuery && !showNoResults
-    ? sampleSessions.filter(s => {
-        const title = s.name || s.preview || ''
-        return title.toLowerCase().includes(searchQuery.toLowerCase())
-      })
-    : showNoResults
-    ? []
-    : sampleSessions
+  const rootSessions = sampleSessions.filter(s => !s.parentSessionId)
+  const childMap = React.useMemo(() => {
+    const map = new Map<string, SessionMeta[]>()
+    for (const session of sampleSessions) {
+      if (!session.parentSessionId) continue
+      const list = map.get(session.parentSessionId) ?? []
+      list.push(session)
+      map.set(session.parentSessionId, list)
+    }
+    return map
+  }, [])
 
-  // Use explicit resultCount if provided, otherwise use filtered count
+  // Filter if there's a search query (simple title match for demo)
+  const filteredSessions = React.useMemo(() => {
+    if (showNoResults) return []
+    if (!searchQuery) return rootSessions
+    return rootSessions.filter(s => (s.name || '').toLowerCase().includes(searchQuery.toLowerCase()))
+  }, [showNoResults, searchQuery, rootSessions])
+
+  // When a child is selected, use its ID so SessionItem auto-expands children
+  const selectedSessionId = selectedChildId ?? filteredSessions[selectedIndex]?.id ?? null
+
+  const selectedChildParentId = React.useMemo(() => {
+    if (!selectedChildId) return null
+    return sampleSessions.find(s => s.id === selectedChildId)?.parentSessionId ?? null
+  }, [selectedChildId])
+
+  const [expandedParentIds, setExpandedParentIds] = React.useState<Set<string>>(
+    () => selectedChildParentId ? new Set([selectedChildParentId]) : new Set()
+  )
+
+  React.useEffect(() => {
+    if (!selectedChildParentId) return
+    setExpandedParentIds((prev) => {
+      if (prev.has(selectedChildParentId)) return prev
+      const next = new Set(prev)
+      next.add(selectedChildParentId)
+      return next
+    })
+  }, [selectedChildParentId])
+
+  const rows = React.useMemo(() => {
+    const result: Array<{
+      item: SessionMeta
+      depth: 0 | 1
+      parentId?: string
+      childCount: number
+      isParentExpanded: boolean
+      isFirstChild: boolean
+      isLastChild: boolean
+    }> = []
+
+    for (const parent of filteredSessions) {
+      const children = childMap.get(parent.id) ?? []
+      const isParentExpanded = children.length > 0 && expandedParentIds.has(parent.id)
+
+      result.push({
+        item: parent,
+        depth: 0,
+        childCount: children.length,
+        isParentExpanded,
+        isFirstChild: false,
+        isLastChild: false,
+      })
+
+      if (!isParentExpanded) continue
+
+      children.forEach((child, index) => {
+        result.push({
+          item: child,
+          depth: 1,
+          parentId: parent.id,
+          childCount: 0,
+          isParentExpanded: false,
+          isFirstChild: index === 0,
+          isLastChild: index === children.length - 1,
+        })
+      })
+    }
+
+    return result
+  }, [filteredSessions, childMap, expandedParentIds])
+
+  // Build content search results for match badge
+  const contentSearchResults = new Map<string, ContentSearchResult>()
+  if (chatMatchCount && selectedSessionId) {
+    contentSearchResults.set(selectedSessionId, { matchCount: chatMatchCount, snippet: '' })
+  }
+
+  const ctx = createMockContext({
+    searchQuery,
+    selectedSessionId,
+    contentSearchResults,
+  })
+
   const displayCount = resultCount ?? filteredSessions.length
 
   return (
-    <div className="w-[320px] h-[480px] flex flex-col border border-border rounded-lg overflow-hidden bg-background">
-      {/* Search header - uses the SAME component as the real app */}
-      {showSearchInput && (
-        <SessionSearchHeader
-          searchQuery={searchQuery}
-          isSearching={isSearching}
-          resultCount={displayCount}
-          readOnly
-        />
-      )}
+    <ActionRegistryProvider>
+      <SessionListProvider value={ctx}>
+        <div className="w-[320px] h-[480px] flex flex-col border border-border rounded-lg overflow-hidden bg-background">
+          {/* Search header - uses the SAME component as the real app */}
+          {showSearchInput && (
+            <SessionSearchHeader
+              searchQuery={searchQuery}
+              isSearching={isSearching}
+              resultCount={displayCount}
+              readOnly
+            />
+          )}
 
-      {/* Session list */}
-      <div className="flex-1 overflow-auto">
-        {showNoResults ? (
-          <div className="flex flex-col items-center justify-center py-12 px-4">
-            <p className="text-sm text-muted-foreground">No conversations found</p>
-            <p className="text-xs text-muted-foreground/60 mt-0.5">
-              Searched titles and message content
-            </p>
-            <button className="text-xs text-foreground hover:underline mt-2">
-              Clear search
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-col pb-4">
-            {/* Date header */}
-            <div className="px-4 py-2">
-              <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
-                Today
-              </span>
-            </div>
+          {/* Session list */}
+          <div className="flex-1 overflow-auto">
+            {showNoResults ? (
+              <div className="flex flex-col items-center justify-center py-12 px-4">
+                <p className="text-sm text-muted-foreground">No conversations found</p>
+                <p className="text-xs text-muted-foreground/60 mt-0.5">
+                  Searched titles and message content
+                </p>
+                <button className="text-xs text-foreground hover:underline mt-2">
+                  Clear search
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-col pb-4">
+                {/* Date header */}
+                <div className="px-4 py-2">
+                  <span className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                    Today
+                  </span>
+                </div>
 
-            {filteredSessions.map((session, index) => {
-              const isSelected = index === selectedIndex
-
-              return (
-                <React.Fragment key={session.id}>
-                  {index > 0 && (
-                    <div className="session-separator pl-12 pr-4">
-                      <Separator />
-                    </div>
-                  )}
-                  <SessionItemPreview
-                    item={session}
-                    isSelected={isSelected}
-                    searchQuery={searchQuery}
-                    chatMatchCount={chatMatchCount}
+                {rows.map((row, index) => (
+                  <SessionItem
+                    key={row.item.id}
+                    item={row.item}
+                    index={index}
+                    itemProps={{ tabIndex: 0, onKeyDown: noopKeyDown }}
+                    isSelected={row.item.id === selectedSessionId}
+                    isFirstInGroup={index === 0 || row.depth === 0}
+                    isInMultiSelect={false}
+                    depth={row.depth}
+                    childCount={row.childCount}
+                    isParentExpanded={row.isParentExpanded}
+                    isFirstChild={row.isFirstChild}
+                    isLastChild={row.isLastChild}
+                    onToggleChildren={row.depth === 0 && row.childCount > 0 ? () => {
+                      setExpandedParentIds((prev) => {
+                        const next = new Set(prev)
+                        if (next.has(row.item.id)) next.delete(row.item.id)
+                        else next.add(row.item.id)
+                        return next
+                      })
+                    } : undefined}
+                    onSelect={() => {}}
                   />
-                </React.Fragment>
-              )
-            })}
+                ))}
+              </div>
+            )}
           </div>
-        )}
-      </div>
-    </div>
+        </div>
+      </SessionListProvider>
+    </ActionRegistryProvider>
+  )
+}
+
+// ============================================================================
+// SessionItemPreview - Single real SessionItem with context providers
+// ============================================================================
+
+interface SessionItemPreviewProps {
+  item?: SessionMeta
+  isSelected?: boolean
+  searchQuery?: string
+  chatMatchCount?: number
+}
+
+function SessionItemPreview({
+  item = sampleSessions[0],
+  isSelected = false,
+  searchQuery = '',
+  chatMatchCount,
+}: SessionItemPreviewProps) {
+  const contentSearchResults = new Map<string, ContentSearchResult>()
+  if (chatMatchCount && item) {
+    contentSearchResults.set(item.id, { matchCount: chatMatchCount, snippet: '' })
+  }
+
+  const ctx = createMockContext({
+    searchQuery,
+    selectedSessionId: isSelected ? item.id : null,
+    contentSearchResults,
+  })
+
+  return (
+    <ActionRegistryProvider>
+      <SessionListProvider value={ctx}>
+        <SessionItem
+          item={item}
+          index={0}
+          itemProps={{ tabIndex: 0, onKeyDown: noopKeyDown }}
+          isSelected={isSelected}
+          isFirstInGroup
+          isInMultiSelect={false}
+          onSelect={() => {}}
+        />
+      </SessionListProvider>
+    </ActionRegistryProvider>
   )
 }
 
@@ -365,7 +373,7 @@ export const sessionListComponents: ComponentEntry[] = [
     id: 'session-list-search',
     name: 'SessionList Search States',
     category: 'Session List',
-    description: 'Session list search UI showing title matching and yellow match count badge',
+    description: 'Session list using real SessionItem components with search, children, and badges',
     component: SessionListSearchPreview,
     props: [
       {
@@ -468,14 +476,23 @@ export const sessionListComponents: ComponentEntry[] = [
           resultCount: 0,
         },
       },
+      {
+        name: 'With Children',
+        description: 'Session with expanded child sessions (child selected, auto-expanded)',
+        props: {
+          searchQuery: '',
+          showSearchInput: false,
+          selectedChildId: 'session-1-child-1',
+        },
+      },
     ],
     mockData: () => ({}),
   },
   {
     id: 'session-item-search',
-    name: 'SessionItem Search States',
+    name: 'SessionItem States',
     category: 'Session List',
-    description: 'Individual session item showing search-related visual states',
+    description: 'Individual real SessionItem showing visual states with search and badges',
     component: SessionItemPreview,
     props: [
       {
@@ -521,6 +538,13 @@ export const sessionListComponents: ComponentEntry[] = [
           searchQuery: 'auth',
           isSelected: true,
           chatMatchCount: 5,
+        },
+      },
+      {
+        name: 'With Children',
+        description: 'Parent session with child count badge (click to expand)',
+        props: {
+          item: sampleSessions[0],
         },
       },
     ],

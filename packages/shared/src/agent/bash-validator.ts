@@ -118,6 +118,22 @@ interface ScriptNode extends ASTNode {
 }
 
 // ============================================================
+// Dangerous Argument Patterns
+// ============================================================
+
+/**
+ * Command arguments that execute subcommands or perform writes.
+ * These are program-level features (not shell constructs) that the AST parser
+ * cannot detect — e.g., `find -exec` runs arbitrary commands despite `find`
+ * being a read-only search tool.
+ *
+ * Checked BEFORE the regex allowlist pattern match in validateCommand().
+ */
+const DANGEROUS_COMMAND_ARGS: Record<string, Set<string>> = {
+  find: new Set(['-exec', '-execdir', '-ok', '-okdir', '-delete']),
+};
+
+// ============================================================
 // Validation Logic
 // ============================================================
 
@@ -294,6 +310,32 @@ function validateCommand(
         }
 
         commandParts.push(word.text);
+      }
+    }
+  }
+
+  // Check for command arguments that enable sub-command execution or writes.
+  // e.g., `find -exec touch file \;` — the `-exec` flag runs arbitrary commands.
+  // These are program-level features invisible to the shell AST.
+  const cmdName = node.name?.text;
+  if (cmdName && DANGEROUS_COMMAND_ARGS[cmdName]) {
+    const dangerousArgs = DANGEROUS_COMMAND_ARGS[cmdName];
+    for (const part of commandParts) {
+      if (dangerousArgs.has(part)) {
+        const subResult: SubcommandResult = {
+          command: commandParts.join(' '),
+          allowed: false,
+          reason: `Argument "${part}" executes subcommands or performs writes`,
+        };
+        results.push(subResult);
+        return {
+          allowed: false,
+          reason: {
+            type: 'unsafe_command',
+            command: commandParts.join(' '),
+            explanation: `"${part}" allows arbitrary command execution or file modification within "${cmdName}"`,
+          },
+        };
       }
     }
   }

@@ -55,7 +55,7 @@ import { cn } from '@/lib/utils'
 import { isMac, PATH_SEP, getPathBasename } from '@/lib/platform'
 import { applySmartTypography } from '@/lib/smart-typography'
 import { AttachmentPreview } from '../AttachmentPreview'
-import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, isCodexModel, isCopilotModel } from '@config/models'
+import { ANTHROPIC_MODELS, getModelShortName, getModelDisplayName, getModelContextWindow, type ModelDefinition } from '@config/models'
 import { resolveEffectiveConnectionSlug, isCompatProvider } from '@config/llm-connections'
 import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import { EditPopover, getEditConfig } from '@/components/ui/EditPopover'
@@ -310,22 +310,19 @@ export function FreeFormInput({
   }, [availableModels, currentModel, connectionDefaultModel])
 
   // Group connections by provider type for hierarchical dropdown
-  // Each provider (Anthropic, OpenAI) can have multiple connections (API Key, Claude Max, etc.)
+  // Each provider (Anthropic, Pi) can have multiple connections (API Key, OAuth, etc.)
   const connectionsByProvider = React.useMemo(() => {
     const groups: Record<string, typeof llmConnections> = {
       'Anthropic': [],
-      'OpenAI': [],
-      'GitHub Copilot': [],
+      'Craft Agents Backend': [],
     }
     for (const conn of llmConnections) {
       const provider = conn.providerType || 'anthropic'
       // Group by SDK: anthropic/anthropic_compat/bedrock/vertex use Anthropic SDK
       if (provider === 'anthropic' || provider === 'anthropic_compat' || provider === 'bedrock' || provider === 'vertex') {
         groups['Anthropic'].push(conn)
-      } else if (provider === 'openai' || provider === 'openai_compat') {
-        groups['OpenAI'].push(conn)
-      } else if (provider === 'copilot') {
-        groups['GitHub Copilot'].push(conn)
+      } else if (provider === 'pi' || provider === 'pi_compat') {
+        groups['Craft Agents Backend'].push(conn)
       }
     }
     // Return only non-empty groups
@@ -1860,7 +1857,7 @@ Model
               : null
             // Show badge when >= 80% of compaction threshold AND not currently compacting
             // Hide for Codex and Copilot models which don't support context compaction
-            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting && !isCodexModel(currentModel) && !isCopilotModel(currentModel)
+            const showWarning = usagePercent !== null && usagePercent >= 80 && !contextStatus?.isCompacting
 
             if (!showWarning) return null
 

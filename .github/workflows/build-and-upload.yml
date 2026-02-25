@@ -3,11 +3,6 @@ name: Build
 on:
   workflow_dispatch:
     inputs:
-      codex-version:
-        description: 'Codex fork version to bundle (e.g., craft-v0.1.0). See: https://github.com/lukilabs/craft-agents-codex/releases'
-        required: false
-        type: string
-        default: ''
       targets:
         description: 'Targets to build (comma-separated: macos-arm64, macos-x64, windows, linux, or "all")'
         required: false
@@ -28,32 +23,18 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
       version: ${{ steps.version.outputs.version }}
-      codex_version: ${{ steps.version.outputs.codex_version }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate backend import boundary
+        run: bash scripts/check-main-backend-boundary.sh
 
       - name: Get version
         id: version
         run: |
           VERSION=$(jq -r .version packages/shared/package.json)
-          CODEX_VERSION_FILE=$(jq -r .codexVersion packages/shared/package.json)
-          INPUT_CODEX_VERSION="${{ inputs.codex-version }}"
-
-          if [ -n "$INPUT_CODEX_VERSION" ]; then
-            CODEX_VERSION="$INPUT_CODEX_VERSION"
-          else
-            CODEX_VERSION="$CODEX_VERSION_FILE"
-          fi
-
-          if [ -z "$CODEX_VERSION" ] || [ "$CODEX_VERSION" = "null" ]; then
-            echo "::error::Missing codexVersion. Provide workflow input 'codex-version' or set packages/shared/package.json codexVersion."
-            exit 1
-          fi
-
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "codex_version=$CODEX_VERSION" >> "$GITHUB_OUTPUT"
           echo "Version: $VERSION"
-          echo "Codex version: $CODEX_VERSION"
 
       - name: Build matrix
         id: matrix
@@ -76,7 +57,7 @@ jobs:
           fi
 
           if [[ "$TARGETS" == "all" || "$TARGETS" == *"windows"* ]]; then
-            add_target '{"os":"windows-2019","platform":"win32","arch":"x64","ext":"exe"}'
+            add_target '{"os":"windows-latest","platform":"win32","arch":"x64","ext":"exe"}'
           fi
 
           if [[ "$TARGETS" == "all" || "$TARGETS" == *"linux"* ]]; then
@@ -95,8 +76,6 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
-    env:
-      CODEX_VERSION: ${{ needs.prepare.outputs.codex_version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -147,7 +126,7 @@ jobs:
 
       - name: Build (macOS)
         if: matrix.platform == 'darwin'
-        run: bun run scripts/build.ts --codex-version=${{ env.CODEX_VERSION }} --platform=darwin --arch=${{ matrix.arch }}
+        run: bun run scripts/build.ts --platform=darwin --arch=${{ matrix.arch }}
         env:
           # Note: Google OAuth credentials not included - users provide their own via source config
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
@@ -168,7 +147,7 @@ jobs:
 
       - name: Build (Windows)
         if: matrix.platform == 'win32'
-        run: bun run scripts/build.ts --codex-version=${{ env.CODEX_VERSION }} --platform=win32 --arch=${{ matrix.arch }}
+        run: bun run scripts/build.ts --platform=win32 --arch=${{ matrix.arch }}
         env:
           # Note: Google OAuth credentials not included - users provide their own via source config
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
@@ -201,7 +180,7 @@ jobs:
 
       - name: Build (Linux)
         if: matrix.platform == 'linux'
-        run: bun run scripts/build.ts --codex-version=${{ env.CODEX_VERSION }} --platform=linux --arch=${{ matrix.arch }}
+        run: bun run scripts/build.ts --platform=linux --arch=${{ matrix.arch }}
         env:
           # Note: Google OAuth credentials not included - users provide their own via source config
           SLACK_OAUTH_CLIENT_ID: ${{ secrets.SLACK_OAUTH_CLIENT_ID }}
@@ -211,7 +190,7 @@ jobs:
 
       - name: Verify MCP helper servers exist
         run: |
-          node -e "const fs=require('fs');const path=require('path');const root=process.cwd();const bridge=path.join(root,'apps','electron','resources','bridge-mcp-server','index.js');const session=path.join(root,'apps','electron','resources','session-mcp-server','index.js');if(!fs.existsSync(bridge)) {console.error('Missing bridge MCP server:', bridge); process.exit(1);} if(!fs.existsSync(session)) {console.error('Missing session MCP server:', session); process.exit(1);} console.log('MCP helper servers present');"
+          node -e "const fs=require('fs');const path=require('path');const root=process.cwd();const session=path.join(root,'apps','electron','resources','session-mcp-server','index.js');const pi=path.join(root,'apps','electron','resources','pi-agent-server','index.js');if(!fs.existsSync(session)) {console.error('Missing session MCP server:', session); process.exit(1);} if(!fs.existsSync(pi)) {console.error('Missing Pi agent server:', pi); process.exit(1);} console.log('MCP helper servers present');"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -222,9 +201,9 @@ jobs:
             apps/electron/release/Craft-Agent-${{ matrix.arch }}.zip
           retention-days: 7
 
-  # Verify SDK, Codex, and Copilot CLI are bundled in all artifacts
+  # Verify SDK is bundled in all artifacts
   verify-bundles:
-    name: Verify SDK, Codex & Copilot Bundling
+    name: Verify SDK Bundling
     needs: [prepare, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -250,22 +229,6 @@ jobs:
           fi
           SIZE=$(stat -c%s "$SDK")
           echo "✓ macOS ARM64: SDK found ($SIZE bytes)"
-          CODEX="$APP/vendor/codex/darwin-arm64/codex"
-          if [ ! -f "$CODEX" ]; then
-            echo "::error::Codex binary missing in macOS ARM64 bundle"
-            ls -la "$APP/vendor/codex/" || true
-            exit 1
-          fi
-          SIZE=$(stat -c%s "$CODEX")
-          echo "✓ macOS ARM64: Codex found ($SIZE bytes)"
-          COPILOT="$APP/vendor/copilot/darwin-arm64/copilot"
-          if [ ! -f "$COPILOT" ]; then
-            echo "::error::Copilot CLI missing in macOS ARM64 bundle"
-            ls -la "$APP/vendor/copilot/" || true
-            exit 1
-          fi
-          SIZE=$(stat -c%s "$COPILOT")
-          echo "✓ macOS ARM64: Copilot CLI found ($SIZE bytes)"
 
       - name: Verify macOS x64
         if: contains(inputs.targets, 'macos-x64') || inputs.targets == 'all' || inputs.targets == ''
@@ -280,22 +243,6 @@ jobs:
           fi
           SIZE=$(stat -c%s "$SDK")
           echo "✓ macOS x64: SDK found ($SIZE bytes)"
-          CODEX="$APP/vendor/codex/darwin-x64/codex"
-          if [ ! -f "$CODEX" ]; then
-            echo "::error::Codex binary missing in macOS x64 bundle"
-            ls -la "$APP/vendor/codex/" || true
-            exit 1
-          fi
-          SIZE=$(stat -c%s "$CODEX")
-          echo "✓ macOS x64: Codex found ($SIZE bytes)"
-          COPILOT="$APP/vendor/copilot/darwin-x64/copilot"
-          if [ ! -f "$COPILOT" ]; then
-            echo "::error::Copilot CLI missing in macOS x64 bundle"
-            ls -la "$APP/vendor/copilot/" || true
-            exit 1
-          fi
-          SIZE=$(stat -c%s "$COPILOT")
-          echo "✓ macOS x64: Copilot CLI found ($SIZE bytes)"
 
       - name: Verify Linux
         if: contains(inputs.targets, 'linux') || inputs.targets == 'all' || inputs.targets == ''
@@ -311,22 +258,6 @@ jobs:
           fi
           SIZE=$(stat -c%s "$SDK")
           echo "✓ Linux: SDK found ($SIZE bytes)"
-          CODEX="$APP/vendor/codex/linux-x64/codex"
-          if [ ! -f "$CODEX" ]; then
-            echo "::error::Codex binary missing in Linux bundle"
-            ls -la "$APP/vendor/codex/" || true
-            exit 1
-          fi
-          SIZE=$(stat -c%s "$CODEX")
-          echo "✓ Linux: Codex found ($SIZE bytes)"
-          COPILOT="$APP/vendor/copilot/linux-x64/copilot"
-          if [ ! -f "$COPILOT" ]; then
-            echo "::error::Copilot CLI missing in Linux bundle"
-            ls -la "$APP/vendor/copilot/" || true
-            exit 1
-          fi
-          SIZE=$(stat -c%s "$COPILOT")
-          echo "✓ Linux: Copilot CLI found ($SIZE bytes)"
 
       - name: Verify Windows
         if: contains(inputs.targets, 'windows') || inputs.targets == 'all' || inputs.targets == ''
@@ -345,22 +276,6 @@ jobs:
             fi
             SIZE=$(stat -c%s "$SDK_PATH")
             echo "✓ Windows: SDK found ($SIZE bytes)"
-            CODEX="$APP/vendor/codex/win32-x64/codex.exe"
-            if [ ! -f "$CODEX" ]; then
-              echo "::error::Codex binary missing in Windows bundle"
-              ls -la "$APP/vendor/codex/" || true
-              exit 1
-            fi
-            SIZE=$(stat -c%s "$CODEX")
-            echo "✓ Windows: Codex found ($SIZE bytes)"
-            COPILOT="$APP/vendor/copilot/win32-x64/copilot.exe"
-            if [ ! -f "$COPILOT" ]; then
-              echo "::error::Copilot CLI missing in Windows bundle"
-              ls -la "$APP/vendor/copilot/" || true
-              exit 1
-            fi
-            SIZE=$(stat -c%s "$COPILOT")
-            echo "✓ Windows: Copilot CLI found ($SIZE bytes)"
           else
             echo "::error::Windows: Could not extract installer for verification"
             exit 1
@@ -375,7 +290,6 @@ jobs:
           echo ""
           echo "=========================================="
           echo "  Build v${{ needs.prepare.outputs.version }} complete"
-          echo "  Codex: ${{ env.CODEX_VERSION }}"
           echo "=========================================="
           echo ""
           echo "Download artifacts from:"

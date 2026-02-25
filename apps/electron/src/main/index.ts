@@ -66,7 +66,8 @@ Sentry.setUser({ id: machineId })
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { SessionManager } from './sessions'
-import { registerIpcHandlers, startCodexModelRefresh, stopCodexModelRefresh } from './ipc'
+import { registerIpcHandlers } from './ipc'
+import { initModelRefreshService, getModelRefreshService } from './model-fetchers'
 import { createApplicationMenu } from './menu'
 import { WindowManager } from './window-manager'
 import { loadWindowState, saveWindowState } from './window-state'
@@ -77,12 +78,14 @@ import { initializeReleaseNotes } from '@craft-agent/shared/release-notes'
 import { ensureDefaultPermissions } from '@craft-agent/shared/agent/permissions-config'
 import { ensureToolIcons, ensurePresetThemes } from '@craft-agent/shared/config'
 import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
-import { setVendorRoot } from '@craft-agent/shared/codex'
+import { initializeBackendHostRuntime } from '@craft-agent/shared/agent/backend'
 import { setPowerShellValidatorRoot } from '@craft-agent/shared/agent'
 import { handleDeepLink } from './deep-link'
 import { registerThumbnailScheme, registerThumbnailHandler } from './thumbnail-protocol'
 import log, { isDebugMode, mainLog, getLogFilePath } from './logger'
 import { setPerfEnabled, enableDebug } from '@craft-agent/shared/utils'
+import { registerPiModelResolver } from '@craft-agent/shared/config'
+import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/config'
 import { initNotificationService, clearBadgeCount, initBadgeIcon, initInstanceBadge } from './notifications'
 import { checkForUpdatesOnLaunch, setWindowManager as setAutoUpdateWindowManager, isUpdating } from './auto-update'
 import { validateGitBashPath } from './git-bash'
@@ -96,6 +99,12 @@ if (isDebugMode) {
   enableDebug()
   setPerfEnabled(true)
 }
+
+// Register Pi model resolver so llm-connections.ts can resolve Pi models
+// without importing @mariozechner/pi-ai (which breaks the Vite renderer build)
+registerPiModelResolver((piAuthProvider) =>
+  piAuthProvider ? getPiModelsForAuthProvider(piAuthProvider) : getAllPiModels()
+)
 
 // Custom URL scheme for deeplinks (e.g., craftagents://auth-complete)
 // Supports multi-instance dev: CRAFT_DEEPLINK_SCHEME env var (craftagents1, craftagents2, etc.)
@@ -226,9 +235,14 @@ app.whenReady().then(async () => {
   // (docs, permissions, themes, tool-icons resolve via getBundledAssetsDir)
   setBundledAssetsRoot(__dirname)
 
-  // Register vendor root so the Codex binary resolver can find bundled binaries
-  // (Codex binary resolves via resolveCodexBinary() which checks vendor/codex/)
-  setVendorRoot(__dirname)
+  // Initialize backend runtime bootstrapping (Codex vendor root, Claude SDK runtime paths).
+  initializeBackendHostRuntime({
+    hostRuntime: {
+      appRootPath: app.isPackaged ? app.getAppPath() : process.cwd(),
+      resourcesPath: process.resourcesPath,
+      isPackaged: app.isPackaged,
+    },
+  })
 
   // Register PowerShell validator root so it can find the bundled parser script
   // (Windows only: validates PowerShell commands in Explore mode using AST analysis)
@@ -312,6 +326,25 @@ app.whenReady().then(async () => {
       }
     }
 
+    // Initialize model refresh service BEFORE IPC handlers —
+    // getModelRefreshService() is called from IPC handlers, so it must be ready
+    // before any renderer can send messages. The credential resolver uses lazy
+    // import() so it doesn't depend on session manager being initialized first.
+    const modelRefreshService = initModelRefreshService(async (slug: string) => {
+      const { getCredentialManager } = await import('@craft-agent/shared/credentials')
+      const manager = getCredentialManager()
+      const [apiKey, oauth] = await Promise.all([
+        manager.getLlmApiKey(slug).catch(() => null),
+        manager.getLlmOAuth(slug).catch(() => null),
+      ])
+      return {
+        apiKey: apiKey ?? undefined,
+        oauthAccessToken: oauth?.accessToken,
+        oauthRefreshToken: oauth?.refreshToken,
+        oauthIdToken: oauth?.idToken,
+      }
+    })
+
     // Register IPC handlers (must happen before window creation)
     registerIpcHandlers(sessionManager, windowManager)
 
@@ -321,8 +354,8 @@ app.whenReady().then(async () => {
     // Initialize auth (must happen after window creation for error reporting)
     await sessionManager.initialize()
 
-    // Start periodic Codex model discovery (fetches model/list from app-server every 30 min)
-    startCodexModelRefresh()
+    // Start periodic model refresh after auth is initialized
+    modelRefreshService.startAll()
 
     // Run credential health check at startup to detect issues early
     // (corruption, machine migration, missing credentials for default connection)
@@ -451,8 +484,8 @@ app.on('before-quit', async (event) => {
     // Clean up SessionManager resources (file watchers, timers, etc.)
     sessionManager.cleanup()
 
-    // Stop periodic Codex model refresh
-    stopCodexModelRefresh()
+    // Stop all model refresh timers
+    getModelRefreshService().stopAll()
 
     // Clean up power manager (release power blocker)
     const { cleanup: cleanupPowerManager } = await import('./power-manager')

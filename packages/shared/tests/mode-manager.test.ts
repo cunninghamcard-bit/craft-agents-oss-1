@@ -588,6 +588,41 @@ describe('isReadOnlyBashCommand (full integration)', () => {
       });
     }
   });
+
+  describe('commands with dangerous program-level arguments (should be blocked)', () => {
+    const dangerousArgCommands = [
+      'find . -exec touch file.txt \\;',
+      'find . -execdir rm {} \\;',
+      'find . -ok touch file.txt \\;',
+      'find . -okdir rm {} \\;',
+      'find . -delete',
+      'find . -name "*.log" -delete',
+      'find /tmp -name "*.log" -exec cat {} \\; -exec rm {} \\;',
+      'find . -type f -exec chmod 777 {} +',
+    ];
+
+    for (const cmd of dangerousArgCommands) {
+      it(`should block dangerous argument: ${cmd}`, () => {
+        expect(isReadOnlyBashCommandWithConfig(cmd, TEST_MODE_CONFIG)).toBe(false);
+      });
+    }
+  });
+
+  describe('find with safe arguments (should be allowed)', () => {
+    const safeFindCommands = [
+      'find . -name "*.ts"',
+      'find . -type f -mtime -7',
+      'find . -name "*.log" -print',
+      'find /tmp -maxdepth 2 -type d',
+      'find . -name "*.js" -not -path "*/node_modules/*"',
+    ];
+
+    for (const cmd of safeFindCommands) {
+      it(`should allow safe find: ${cmd}`, () => {
+        expect(isReadOnlyBashCommandWithConfig(cmd, TEST_MODE_CONFIG)).toBe(true);
+      });
+    }
+  });
 });
 
 describe('SAFE_MODE_CONFIG', () => {

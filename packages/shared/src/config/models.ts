@@ -17,7 +17,7 @@
 /**
  * Provider identifier for AI backends.
  */
-export type ModelProvider = 'anthropic' | 'openai' | 'copilot';
+export type ModelProvider = 'anthropic' | 'pi';
 
 /**
  * Full model definition with capabilities and costs.
@@ -86,34 +86,10 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
   },
 
   // ----------------------------------------
-  // OpenAI Codex Models — FALLBACK entries only.
-  // At runtime, models are discovered dynamically via model/list from the Codex app-server.
-  // See fetchAndStoreCodexModels() in ipc.ts. These entries are used when:
-  //   - App-server is not running (e.g., first launch before auth)
-  //   - model/list call fails (network, timeout)
-  //   - Offline mode
-  // ----------------------------------------
-  {
-    id: 'gpt-5.3-codex',
-    name: 'GPT-5.3 Codex',
-    shortName: 'Codex',
-    description: 'OpenAI reasoning model',
-    provider: 'openai',
-    contextWindow: 256_000,
-  },
-  {
-    id: 'gpt-5.1-codex-mini',
-    name: 'GPT-5.1 Codex Mini',
-    shortName: 'Codex Mini',
-    description: 'Fast OpenAI model',
-    provider: 'openai',
-    contextWindow: 128_000,
-  },
-
-  // ----------------------------------------
-  // GitHub Copilot Models (via Copilot SDK)
-  // No hardcoded entries — models are discovered at runtime via client.listModels()
-  // and stored on the connection. See fetchAndStoreCopilotModels() in ipc.ts.
+  // Pi Models
+  // No hardcoded entries — models are discovered dynamically:
+  //   - Pi: getModels(provider) from @mariozechner/pi-ai SDK
+  // See ModelRefreshService in apps/electron/src/main/model-fetchers/
   // ----------------------------------------
 ];
 
@@ -131,11 +107,6 @@ export function getModelsByProvider(provider: ModelProvider): ModelDefinition[] 
 /** All Anthropic Claude models */
 export const ANTHROPIC_MODELS = getModelsByProvider('anthropic');
 
-/** All OpenAI/Codex models */
-export const OPENAI_MODELS = getModelsByProvider('openai');
-
-/** All GitHub Copilot models */
-export const COPILOT_MODELS = getModelsByProvider('copilot');
 
 /**
  * Legacy compatibility export.
@@ -168,11 +139,6 @@ export function getModelIdByShortName(shortName: string): string {
 /** Default model for Anthropic connections (used when creating/backfilling connections) */
 export const DEFAULT_MODEL = getModelIdByShortName('Opus');
 
-/** Default model for Codex/OpenAI connections (used when creating/backfilling connections) */
-export const DEFAULT_CODEX_MODEL = getModelIdByShortName('Codex');
-
-/** Default model for Copilot connections — no hardcoded default; models come from listModels() */
-export const DEFAULT_COPILOT_MODEL: string | undefined = undefined;
 
 // ============================================
 // UTILITY MODELS
@@ -260,22 +226,6 @@ export function isClaudeModel(modelId: string): boolean {
   return lower.startsWith('claude-') || lower.includes('/claude');
 }
 
-/**
- * Check if a model ID refers to a Codex/OpenAI model.
- * Matches patterns like 'gpt-5.3-codex', 'gpt-5.1-codex-mini', etc.
- */
-export function isCodexModel(modelId: string): boolean {
-  const lower = modelId.toLowerCase();
-  return lower.includes('codex');
-}
-
-/**
- * Check if a model ID refers to a Copilot model.
- */
-export function isCopilotModel(modelId: string): boolean {
-  const model = getModelById(modelId);
-  return model?.provider === 'copilot';
-}
 
 /**
  * Get the provider for a model ID.
@@ -283,4 +233,3 @@ export function isCopilotModel(modelId: string): boolean {
 export function getModelProvider(modelId: string): ModelProvider | undefined {
   return getModelById(modelId)?.provider;
 }
-

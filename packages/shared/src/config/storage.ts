@@ -37,10 +37,9 @@ import type { Workspace, AuthType } from '@craft-agent/core/types';
 
 // Import LLM connection types and constants
 import type { LlmConnection } from './llm-connections.ts';
-import { isValidProviderAuthCombination, getDefaultModelsForConnection, getDefaultModelForConnection } from './llm-connections.ts';
+import { isValidProviderAuthCombination, getDefaultModelsForConnection, getDefaultModelForConnection, isPiProvider } from './llm-connections.ts';
 import {
   getModelProvider,
-  isCodexModel,
 } from './models.ts';
 
 // Config stored in JSON file (credentials stored in encrypted file, not here)
@@ -62,10 +61,6 @@ export interface StoredConfig {
   autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: true)
   sendMessageKey?: 'enter' | 'cmd-enter';  // Key to send messages (default: 'enter')
   spellCheck?: boolean;  // Enable spell check in input (default: false)
-  // Experimental: OpenAI backend variant for A/B testing
-  // 'responses' = Custom Responses API implementation (default)
-  // 'codex-sdk' = Forked @openai/codex-sdk with callback support
-  openaiVariant?: 'responses' | 'codex-sdk';
   // Power settings
   keepAwakeWhileRunning?: boolean;  // Prevent screen sleep while sessions are running (default: false)
   // Tool metadata
@@ -1216,6 +1211,77 @@ export type {
 } from './llm-connections.ts';
 
 /**
+ * Migrate Codex (OpenAI) and Copilot connections to Pi backend.
+ * Runs on startup — transparently routes existing users through PiAgent.
+ *
+ * No re-auth needed: credentials are keyed by connection slug (not provider),
+ * and PiAgent reads the same OAuth tokens via piAuthProvider.
+ *
+ * Migration rules:
+ * - openai + oauth       → pi + openai-codex
+ * - openai + api_key     → pi + openai
+ * - openai_compat        → pi + openai  (keep baseUrl)
+ * - copilot              → pi + github-copilot
+ * - defaultModel reset to Pi's default (stale Codex/Copilot model IDs dropped)
+ * - codexPath removed (no longer needed)
+ */
+function migrateCodexCopilotToPi(config: StoredConfig): boolean {
+  if (!config.llmConnections) return false;
+  let changed = false;
+
+  for (const connection of config.llmConnections) {
+    // Cast to string for legacy providerType values that were removed from LlmProviderType
+    // but may still exist on disk in old configs. Cast to any for legacy codexPath field.
+    const providerStr = connection.providerType as string;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const connAny = connection as any;
+    if (providerStr === 'openai' && connection.authType === 'oauth') {
+      connection.providerType = 'pi';
+      connection.piAuthProvider = 'openai-codex';
+      connection.name = 'ChatGPT Plus (via Pi)';
+      delete connAny.codexPath;
+      connection.defaultModel = undefined; // reset — backfill picks Pi default
+      connection.models = undefined;
+      changed = true;
+    } else if (providerStr === 'openai' && (connection.authType === 'api_key' || connection.authType === 'api_key_with_endpoint')) {
+      connection.providerType = 'pi';
+      connection.piAuthProvider = 'openai';
+      connection.name = 'OpenAI API (via Pi)';
+      delete connAny.codexPath;
+      connection.defaultModel = undefined;
+      connection.models = undefined;
+      changed = true;
+    } else if (providerStr === 'openai_compat') {
+      connection.providerType = 'pi';
+      connection.piAuthProvider = 'openai';
+      // keep baseUrl for custom endpoints
+      delete connAny.codexPath;
+      connection.defaultModel = undefined;
+      connection.models = undefined;
+      changed = true;
+    } else if (providerStr === 'copilot') {
+      connection.providerType = 'pi';
+      connection.piAuthProvider = 'github-copilot';
+      connection.name = 'GitHub Copilot (via Pi)';
+      delete connAny.codexPath;
+      connection.defaultModel = undefined;
+      connection.models = undefined;
+      changed = true;
+    }
+  }
+
+  // Clean up openaiVariant config field (Codex-specific A/B testing, no longer relevant)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const configAny = config as any;
+  if (configAny.openaiVariant) {
+    delete configAny.openaiVariant;
+    changed = true;
+  }
+
+  return changed;
+}
+
+/**
  * Backfill models and defaultModel on ALL connections.
  * Ensures built-in connections (anthropic, openai) always have models populated,
  * not just compat connections.
@@ -1224,13 +1290,41 @@ function backfillAllConnectionModels(config: StoredConfig): boolean {
   if (!config.llmConnections) return false;
   let changed = false;
   for (const connection of config.llmConnections) {
-    const defaultModels = getDefaultModelsForConnection(connection.providerType);
-    const defaultModel = getDefaultModelForConnection(connection.providerType);
+    // Migrate pi-codex connections from 'openai' to 'openai-codex' provider.
+    // 'openai-codex' uses the ChatGPT Plus backend (chatgpt.com/backend-api),
+    // while 'openai' is for regular API key auth (api.openai.com).
+    if (isPiProvider(connection.providerType) && connection.piAuthProvider === 'openai') {
+      connection.piAuthProvider = 'openai-codex';
+      changed = true;
+    }
+
+    const defaultModels = getDefaultModelsForConnection(connection.providerType, connection.piAuthProvider);
+    const defaultModel = getDefaultModelForConnection(connection.providerType, connection.piAuthProvider);
 
     if (!connection.models || (Array.isArray(connection.models) && connection.models.length === 0)) {
       connection.models = defaultModels;
       changed = true;
     }
+
+    // For Pi connections with piAuthProvider, re-filter models to ensure
+    // only models matching the auth provider are shown. This migrates
+    // existing connections that were created before provider-based filtering.
+    if (isPiProvider(connection.providerType) && connection.piAuthProvider && connection.models) {
+      const correctIds = new Set(
+        (defaultModels as Array<{ id: string } | string>).map(m => typeof m === 'string' ? m : m.id)
+      );
+      const currentIds = new Set(
+        connection.models.map(m => typeof m === 'string' ? m : (m as { id: string }).id)
+      );
+      const mismatch = currentIds.size !== correctIds.size
+        || [...currentIds].some(id => !correctIds.has(id))
+        || [...correctIds].some(id => !currentIds.has(id));
+      if (mismatch) {
+        connection.models = defaultModels;
+        changed = true;
+      }
+    }
+
     if (!connection.defaultModel) {
       connection.defaultModel = defaultModel;
       changed = true;
@@ -1343,9 +1437,10 @@ function migrateModelDefaultsToConnections(config: StoredConfig): boolean {
   }
 
   // Apply openai model default to the default openai connection
+  // Cast providerType to string for legacy values removed from LlmProviderType
   if (configAny.modelDefaults.openai) {
     const openaiConn = config.llmConnections.find(c =>
-      c.providerType === 'openai' || c.providerType === 'openai_compat'
+      (c.providerType as string) === 'openai' || (c.providerType as string) === 'openai_compat'
     );
     if (openaiConn) {
       openaiConn.defaultModel = configAny.modelDefaults.openai;
@@ -1387,7 +1482,9 @@ export function migrateLegacyLlmConnectionsConfig(): void {
     if (!target.llmConnections) return false;
     let changed = false;
     for (const connection of target.llmConnections) {
-      if (connection.providerType !== 'anthropic_compat' && connection.providerType !== 'openai_compat') {
+      // Cast to string for legacy 'openai_compat' values that may still exist on disk
+      const providerStr = connection.providerType as string;
+      if (providerStr !== 'anthropic_compat' && providerStr !== 'openai_compat') {
         continue;
       }
       const compatDefaults = getDefaultModelsForConnection(connection.providerType).map(
@@ -1446,7 +1543,7 @@ export function migrateLegacyLlmConnectionsConfig(): void {
     if ('model' in config) {
       const legacyModel = configAny.model as string | undefined;
       if (legacyModel) {
-        const provider = getModelProvider(legacyModel) ?? (isCodexModel(legacyModel) ? 'openai' : 'anthropic');
+        const provider = getModelProvider(legacyModel) ?? 'anthropic';
         configAny.modelDefaults = { ...(configAny.modelDefaults ?? {}), [provider]: legacyModel };
       }
       delete configAny.model;
@@ -1457,6 +1554,11 @@ export function migrateLegacyLlmConnectionsConfig(): void {
     // silently extend or override the user's model list on every startup.
     // Compat defaults are only applied during fresh connection creation or
     // first-time legacy migration (the config.llmConnections === undefined path below).
+
+    // Phase 1a-bis: Migrate Codex/Copilot connections to Pi backend
+    if (migrateCodexCopilotToPi(config)) {
+      needsSave = true;
+    }
 
     // Phase 1b: Backfill models/defaultModel on ALL connections (not just compat)
     // This ensures built-in connections (anthropic, openai) always have models populated
@@ -1505,25 +1607,25 @@ export function migrateLegacyLlmConnectionsConfig(): void {
         createdAt: Date.now(),
       };
     } else if (legacyAuthType === 'codex_oauth') {
-      // ChatGPT Plus OAuth (Codex)
+      // ChatGPT Plus OAuth → Pi backend
       migrated = {
         slug: 'codex',
-        name: 'Codex (ChatGPT Plus)',
-        providerType: 'openai',
+        name: 'ChatGPT Plus (via Pi)',
+        providerType: 'pi',
         authType: 'oauth',
-        models: getDefaultModelsForConnection('openai'),
+        piAuthProvider: 'openai-codex',
+        models: getDefaultModelsForConnection('pi', 'openai-codex'),
         createdAt: Date.now(),
       };
     } else if (legacyAuthType === 'codex_api_key') {
-      // OpenAI API Key via Codex (OpenRouter, Vercel AI Gateway compatible)
-      // Always use openai_compat for API key connections (5.3 is OAuth-only)
-      const hasCustomEndpoint = !!legacyBaseUrl;
+      // OpenAI API Key → Pi backend
       migrated = {
         slug: 'codex-api',
-        name: hasCustomEndpoint ? 'Codex (Custom Endpoint)' : 'Codex (OpenAI API Key)',
-        providerType: 'openai_compat',
-        authType: hasCustomEndpoint ? 'api_key_with_endpoint' : 'api_key',
-        models: getDefaultModelsForConnection('openai_compat'),
+        name: 'OpenAI API (via Pi)',
+        providerType: 'pi',
+        authType: 'api_key',
+        piAuthProvider: 'openai',
+        models: getDefaultModelsForConnection('pi', 'openai'),
         createdAt: Date.now(),
       };
     } else if (legacyAuthType === 'api_key') {
@@ -1572,11 +1674,12 @@ export function migrateLegacyLlmConnectionsConfig(): void {
   delete configAny.model;
 
   if (legacyModel) {
-    const provider = getModelProvider(legacyModel) ?? (isCodexModel(legacyModel) ? 'openai' : 'anthropic');
+    const provider = getModelProvider(legacyModel) ?? 'anthropic';
     configAny.modelDefaults = { ...(configAny.modelDefaults ?? {}), [provider]: legacyModel };
   }
 
   // Run the same backfill and migration on newly created connections
+  migrateCodexCopilotToPi(config);
   backfillAllConnectionModels(config);
   migrateModelDefaultsToConnections(config);
 
@@ -1798,11 +1901,12 @@ export function updateLlmConnection(slug: string, updates: Partial<Omit<LlmConne
     baseUrl: updates.baseUrl !== undefined ? updates.baseUrl : existing.baseUrl,
     models: updates.models !== undefined ? updates.models : existing.models,
     defaultModel: updates.defaultModel !== undefined ? updates.defaultModel : existing.defaultModel,
-    codexPath: updates.codexPath !== undefined ? updates.codexPath : existing.codexPath,
     // Cloud provider fields
     awsRegion: updates.awsRegion !== undefined ? updates.awsRegion : existing.awsRegion,
     gcpProjectId: updates.gcpProjectId !== undefined ? updates.gcpProjectId : existing.gcpProjectId,
     gcpRegion: updates.gcpRegion !== undefined ? updates.gcpRegion : existing.gcpRegion,
+    // Pi auth provider
+    piAuthProvider: updates.piAuthProvider !== undefined ? updates.piAuthProvider : existing.piAuthProvider,
     // Timestamps
     lastUsedAt: updates.lastUsedAt !== undefined ? updates.lastUsedAt : existing.lastUsedAt,
   };

@@ -11,7 +11,7 @@ import {
   copyFileSync,
   cpSync,
   lstatSync,
-  statSync,
+  readdirSync,
 } from 'fs';
 import { join, dirname } from 'path';
 import { createHash } from 'crypto';
@@ -27,8 +27,6 @@ export interface BuildConfig {
   uploadScript: boolean;
   rootDir: string;
   electronDir: string;
-  codexVersion: string;
-  localCodex: boolean;
 }
 
 /**
@@ -36,13 +34,7 @@ export interface BuildConfig {
  * Update this when upgrading Bun. Check latest at: https://github.com/oven-sh/bun/releases
  * This should match or be close to the version used in CI (setup-bun action).
  */
-export const BUN_VERSION = 'bun-v1.3.5';
-
-/**
- * Codex fork release repository.
- * The fork includes PreToolUse hook support for permission enforcement.
- */
-export const CODEX_REPO = 'lukilabs/craft-agents-codex';
+export const BUN_VERSION = 'bun-v1.3.9';
 
 /**
  * Get the Bun download filename for a platform/arch combination
@@ -155,174 +147,23 @@ export async function downloadBun(config: BuildConfig): Promise<void> {
 }
 
 /**
- * Get the Codex download target name for a platform/arch combination.
- * Must match the target names used in the craft-release.yml workflow.
- */
-export function getCodexTarget(platform: Platform, arch: Arch): string {
-  // Map to Rust target triples used in the Codex release workflow
-  const targetMap: Record<string, string> = {
-    'darwin-arm64': 'aarch64-apple-darwin',
-    'darwin-x64': 'x86_64-apple-darwin',
-    'linux-x64': 'x86_64-unknown-linux-gnu',
-    'linux-arm64': 'aarch64-unknown-linux-gnu',
-    'win32-x64': 'x86_64-pc-windows-msvc',
-  };
-
-  const key = `${platform}-${arch}`;
-  const target = targetMap[key];
-
-  if (!target) {
-    throw new Error(`Unsupported platform/arch combination: ${key}`);
-  }
-
-  return target;
-}
-
-/**
- * Download and verify Codex binary from GitHub releases.
- * Fails if the version doesn't match or the binary can't be downloaded.
- */
-export async function downloadCodex(config: BuildConfig): Promise<void> {
-  const { platform, arch, electronDir, codexVersion } = config;
-  const target = getCodexTarget(platform, arch);
-  const vendorDir = join(electronDir, 'vendor', 'codex', `${platform}-${arch}`);
-
-  console.log(`Downloading Codex ${codexVersion} for ${platform}-${arch}...`);
-
-  // Create vendor directory
-  mkdirSync(vendorDir, { recursive: true });
-
-  // Create temp directory
-  const tempDir = join(electronDir, '.codex-download-temp');
-  mkdirSync(tempDir, { recursive: true });
-
-  try {
-    const isWindows = platform === 'win32';
-    const archiveExt = isWindows ? 'zip' : 'tar.gz';
-    const archiveUrl = `https://github.com/${CODEX_REPO}/releases/download/${codexVersion}/codex-${target}.${archiveExt}`;
-    const archivePath = join(tempDir, `codex-${target}.${archiveExt}`);
-
-    console.log(`  Downloading ${archiveUrl}...`);
-    const result = await $`curl -fsSL --retry 3 --retry-delay 2 -o ${archivePath} ${archiveUrl}`.nothrow();
-
-    if (result.exitCode !== 0) {
-      throw new Error(
-        `Failed to download Codex ${codexVersion}.\n` +
-        `  URL: ${archiveUrl}\n` +
-        `  Make sure the release exists at: https://github.com/${CODEX_REPO}/releases/tag/${codexVersion}`
-      );
-    }
-    console.log('  Download complete');
-
-    // Extract
-    console.log('  Extracting...');
-    if (isWindows) {
-      await $`unzip -o ${archivePath} -d ${tempDir}`.quiet();
-    } else {
-      await $`tar -xzf ${archivePath} -C ${tempDir}`.quiet();
-    }
-
-    // Copy binary
-    const codexBinary = isWindows ? 'codex.exe' : 'codex';
-    const sourcePath = join(tempDir, codexBinary);
-    const destPath = join(vendorDir, codexBinary);
-
-    if (!existsSync(sourcePath)) {
-      throw new Error(`Codex binary not found in archive at ${sourcePath}`);
-    }
-
-    copyFileSync(sourcePath, destPath);
-
-    // Make executable on Unix
-    if (!isWindows) {
-      await $`chmod +x ${destPath}`.quiet();
-    }
-
-    // Verify version (temporarily relaxed - just warn on mismatch)
-    console.log('  Verifying version...');
-    const versionResult = await $`${destPath} --version`.text();
-    const versionOutput = versionResult.trim();
-
-    // The version output should contain the version tag (e.g., "codex craft-v0.1.0" or similar)
-    // We check if the version string contains our expected version
-    if (!versionOutput.toLowerCase().includes(codexVersion.toLowerCase().replace('craft-', ''))) {
-      console.log(
-        `  ⚠️  Version mismatch (proceeding anyway):\n` +
-        `      Expected: ${codexVersion}\n` +
-        `      Got: ${versionOutput}`
-      );
-    } else {
-      console.log(`  Version verified: ${versionOutput} ✓`);
-    }
-    console.log(`  Codex installed to ${destPath} ✓`);
-  } finally {
-    // Cleanup temp directory
-    rmSync(tempDir, { recursive: true, force: true });
-  }
-}
-
-/**
- * Verify that a local Codex binary exists and is executable.
- * Used when --local-codex flag is specified instead of downloading.
- */
-export function verifyLocalCodex(config: BuildConfig): void {
-  const { platform, arch, electronDir } = config;
-  const isWindows = platform === 'win32';
-  const codexBinary = isWindows ? 'codex.exe' : 'codex';
-  const vendorDir = join(electronDir, 'vendor', 'codex', `${platform}-${arch}`);
-  const binaryPath = join(vendorDir, codexBinary);
-
-  console.log(`Verifying local Codex binary at ${binaryPath}...`);
-
-  if (!existsSync(binaryPath)) {
-    throw new Error(
-      `Local Codex binary not found!\n\n` +
-      `Expected path: ${binaryPath}\n\n` +
-      `To use --local-codex, first copy your Codex binary:\n` +
-      `  mkdir -p ${vendorDir}\n` +
-      `  cp /path/to/your/codex ${binaryPath}\n` +
-      `  chmod +x ${binaryPath}`
-    );
-  }
-
-  console.log(`  Local Codex binary found ✓`);
-}
-
-/**
  * Clean previous build artifacts
  */
 export function cleanBuildArtifacts(config: BuildConfig): void {
-  const { electronDir, localCodex } = config;
+  const { electronDir } = config;
 
   console.log('Cleaning previous builds...');
 
-  // When using local Codex, preserve vendor/codex but clean vendor/bun
-  if (localCodex) {
-    const foldersToClean = [
-      join(electronDir, 'vendor', 'bun'),
-      join(electronDir, 'node_modules', '@anthropic-ai'),
-      join(electronDir, 'packages'),
-      join(electronDir, 'release'),
-    ];
+  const foldersToClean = [
+    join(electronDir, 'vendor'),
+    join(electronDir, 'node_modules', '@anthropic-ai'),
+    join(electronDir, 'packages'),
+    join(electronDir, 'release'),
+  ];
 
-    for (const folder of foldersToClean) {
-      if (existsSync(folder)) {
-        rmSync(folder, { recursive: true, force: true });
-      }
-    }
-    console.log('  Preserved vendor/codex (--local-codex mode)');
-  } else {
-    const foldersToClean = [
-      join(electronDir, 'vendor'),
-      join(electronDir, 'node_modules', '@anthropic-ai'),
-      join(electronDir, 'packages'),
-      join(electronDir, 'release'),
-    ];
-
-    for (const folder of foldersToClean) {
-      if (existsSync(folder)) {
-        rmSync(folder, { recursive: true, force: true });
-      }
+  for (const folder of foldersToClean) {
+    if (existsSync(folder)) {
+      rmSync(folder, { recursive: true, force: true });
     }
   }
 }
@@ -396,7 +237,7 @@ export function verifySDKCopy(config: BuildConfig): void {
 }
 
 /**
- * Copy network interceptor (Anthropic — runs under Bun via --preload)
+ * Copy network interceptor source files (Anthropic — runs under Bun via --preload)
  */
 export function copyInterceptor(config: BuildConfig): void {
   const { rootDir, electronDir } = config;
@@ -405,22 +246,28 @@ export function copyInterceptor(config: BuildConfig): void {
   const sourceDir = join(rootDir, sharedSrcDir);
   const destDir = join(electronDir, sharedSrcDir);
 
-  const interceptorSource = join(sourceDir, 'network-interceptor.ts');
+  const interceptorSource = join(sourceDir, 'unified-network-interceptor.ts');
   if (!existsSync(interceptorSource)) {
     throw new Error(`Interceptor not found at ${interceptorSource}`);
   }
 
   console.log('Copying interceptor...');
   mkdirSync(destDir, { recursive: true });
-  copyFileSync(interceptorSource, join(destDir, 'network-interceptor.ts'));
+  copyFileSync(interceptorSource, join(destDir, 'unified-network-interceptor.ts'));
 
-  // Also copy shared infrastructure (imported by network-interceptor.ts at runtime)
+  // Also copy shared infrastructure (imported by unified-network-interceptor.ts at runtime)
   const commonSource = join(sourceDir, 'interceptor-common.ts');
   if (existsSync(commonSource)) {
     copyFileSync(commonSource, join(destDir, 'interceptor-common.ts'));
   }
 
-  // Copy feature flags (imported by network-interceptor.ts for fast mode / source templates)
+  // Copy request utilities (imported by unified-network-interceptor.ts)
+  const requestUtilsSource = join(sourceDir, 'interceptor-request-utils.ts');
+  if (existsSync(requestUtilsSource)) {
+    copyFileSync(requestUtilsSource, join(destDir, 'interceptor-request-utils.ts'));
+  }
+
+  // Copy feature flags (imported by unified-network-interceptor.ts for fast mode / source templates)
   const featureFlagsSource = join(sourceDir, 'feature-flags.ts');
   if (existsSync(featureFlagsSource)) {
     copyFileSync(featureFlagsSource, join(destDir, 'feature-flags.ts'));
@@ -428,45 +275,25 @@ export function copyInterceptor(config: BuildConfig): void {
 }
 
 /**
- * Copy Copilot network interceptor (bundled CJS — runs under Node.js via --require)
- * Built by `bun run build:copilot-interceptor` into apps/electron/dist/
+ * Verify the unified interceptor CJS bundle exists (runs under Node.js via --require)
+ * Built by `bun run build:interceptor` into apps/electron/dist/
  */
-export function copyCopilotInterceptor(config: BuildConfig): void {
+export function copyInterceptorBundle(config: BuildConfig): void {
   const { electronDir } = config;
 
-  const source = join(electronDir, 'dist', 'copilot-interceptor.cjs');
+  const source = join(electronDir, 'dist', 'interceptor.cjs');
   if (!existsSync(source)) {
-    console.warn('Warning: Copilot interceptor not found at', source, '— tool metadata will be unavailable for Copilot sessions');
+    console.warn('Warning: Interceptor bundle not found at', source, '— tool metadata will be unavailable for Pi sessions');
     return;
   }
 
   // Already in dist/ which is included in the packaged app — just verify it exists
-  console.log('Copilot interceptor verified at:', source);
-}
-
-/**
- * Copy Bridge MCP Server to packaged app resources.
- * The bridge server is used for API sources in Codex sessions.
- */
-export function copyBridgeServer(config: BuildConfig): void {
-  const { rootDir, electronDir } = config;
-
-  const bridgeSource = join(rootDir, 'packages', 'bridge-mcp-server', 'dist', 'index.js');
-  const bridgeDest = join(electronDir, 'resources', 'bridge-mcp-server', 'index.js');
-
-  if (!existsSync(bridgeSource)) {
-    console.warn(`Warning: Bridge server not found at ${bridgeSource}. API sources in Codex sessions will not work.`);
-    return;
-  }
-
-  console.log('Copying Bridge MCP Server...');
-  mkdirSync(dirname(bridgeDest), { recursive: true });
-  copyFileSync(bridgeSource, bridgeDest);
+  console.log('Interceptor bundle verified at:', source);
 }
 
 /**
  * Copy Session MCP Server to packaged app resources.
- * The session server provides session-scoped tools (SubmitPlan, config_validate, etc.) for Codex sessions.
+ * The session server provides session-scoped tools (SubmitPlan, config_validate, etc.) for agent sessions.
  */
 export function copySessionServer(config: BuildConfig): void {
   const { rootDir, electronDir } = config;
@@ -475,7 +302,7 @@ export function copySessionServer(config: BuildConfig): void {
   const sessionDest = join(electronDir, 'resources', 'session-mcp-server', 'index.js');
 
   if (!existsSync(sessionSource)) {
-    console.warn(`Warning: Session server not found at ${sessionSource}. Session-scoped tools in Codex sessions will not work.`);
+    console.warn(`Warning: Session server not found at ${sessionSource}. Session-scoped tools will not work.`);
     return;
   }
 
@@ -485,88 +312,127 @@ export function copySessionServer(config: BuildConfig): void {
 }
 
 /**
- * Build MCP helper servers (bridge + session).
+ * Map our Platform type to koffi's directory naming convention.
+ * koffi uses: darwin_arm64, darwin_x64, linux_x64, win32_x64, etc.
+ */
+function koffiPlatformDir(platform: Platform, arch: Arch): string {
+  return `${platform}_${arch}`;
+}
+
+/**
+ * Copy Pi Agent Server to packaged app resources.
+ *
+ * The bun build uses --external koffi so the bare import resolves through
+ * node_modules at runtime. We copy the koffi npm package next to index.js
+ * with only the target platform's native binary (~4MB instead of ~80MB).
+ */
+export function copyPiAgentServer(config: BuildConfig): void {
+  const { rootDir, electronDir, platform, arch } = config;
+
+  const piSourceDir = join(rootDir, 'packages', 'pi-agent-server', 'dist');
+  const piDestDir = join(electronDir, 'resources', 'pi-agent-server');
+
+  if (!existsSync(join(piSourceDir, 'index.js'))) {
+    console.warn(`Warning: Pi agent server not found at ${piSourceDir}/index.js. Pi SDK sessions will not work.`);
+    return;
+  }
+
+  console.log('Copying Pi Agent Server...');
+  mkdirSync(piDestDir, { recursive: true });
+
+  // 1. Copy index.js
+  copyFileSync(join(piSourceDir, 'index.js'), join(piDestDir, 'index.js'));
+
+  // 2. Copy koffi npm package (external import, resolved via node_modules at runtime)
+  const koffiSource = join(rootDir, 'node_modules', 'koffi');
+
+  if (!existsSync(koffiSource)) {
+    console.warn('  Warning: koffi not found in node_modules. Pi SDK sessions may not work.');
+    return;
+  }
+
+  const koffiDest = join(piDestDir, 'node_modules', 'koffi');
+  mkdirSync(koffiDest, { recursive: true });
+
+  // Copy koffi JS files
+  for (const entry of ['package.json', 'index.js', 'indirect.js', 'index.d.ts', 'lib']) {
+    const src = join(koffiSource, entry);
+    if (existsSync(src)) {
+      cpSync(src, join(koffiDest, entry), { recursive: true });
+    }
+  }
+
+  // Copy only the target platform's native binary
+  const targetDir = koffiPlatformDir(platform, arch);
+  const nativeSrc = join(koffiSource, 'build', 'koffi', targetDir);
+  const nativeDest = join(koffiDest, 'build', 'koffi', targetDir);
+
+  if (existsSync(nativeSrc)) {
+    mkdirSync(nativeDest, { recursive: true });
+    cpSync(nativeSrc, nativeDest, { recursive: true });
+    const size = lstatSync(join(nativeSrc, readdirSync(nativeSrc)[0])).size;
+    console.log(`  Copied index.js + koffi/${targetDir} (${(size / 1024 / 1024).toFixed(1)}MB)`);
+  } else {
+    console.warn(`  Warning: koffi native binary not found for ${targetDir}`);
+    cpSync(join(koffiSource, 'build'), join(koffiDest, 'build'), { recursive: true });
+    console.log('  Copied index.js + koffi (all platforms as fallback)');
+  }
+}
+
+/**
+ * Build MCP servers (session) and Pi agent server.
  * Shared across all platforms to avoid drift.
  */
 export function buildMcpServers(config: BuildConfig): void {
   const { rootDir } = config;
 
-  const bridgeDir = join(rootDir, 'packages', 'bridge-mcp-server');
-  const bridgeOut = join(bridgeDir, 'dist', 'index.js');
   const sessionDir = join(rootDir, 'packages', 'session-mcp-server');
   const sessionOut = join(sessionDir, 'dist', 'index.js');
+  const piDir = join(rootDir, 'packages', 'pi-agent-server');
+  const piOut = join(piDir, 'dist', 'index.js');
 
-  console.log('Building MCP helper servers...');
+  console.log('Building MCP servers...');
 
-  mkdirSync(join(bridgeDir, 'dist'), { recursive: true });
   mkdirSync(join(sessionDir, 'dist'), { recursive: true });
-
-  execSync(
-    `bun build ${join(bridgeDir, 'src', 'index.ts')} --outfile ${bridgeOut} --target node --format cjs`,
-    { cwd: rootDir, stdio: 'inherit', shell: true }
-  );
+  mkdirSync(join(piDir, 'dist'), { recursive: true });
 
   execSync(
     `bun build ${join(sessionDir, 'src', 'index.ts')} --outfile ${sessionOut} --target node --format cjs`,
     { cwd: rootDir, stdio: 'inherit', shell: true }
   );
 
-  if (!existsSync(bridgeOut)) {
-    throw new Error(`Bridge MCP server output not found at ${bridgeOut}`);
-  }
+  // Pi agent server uses --target=bun --format=esm because its Pi SDK deps are ESM-only.
+  // --target=node --format=cjs leaves ESM deps as external require() calls that fail at runtime.
+  // koffi is marked external because it's a native N-API module — bun can't inline .node binaries
+  // and inlining its JS breaks the native binary resolution paths.
+  execSync(
+    `bun build ${join(piDir, 'src', 'index.ts')} --outdir ${join(piDir, 'dist')} --target bun --format esm --external koffi`,
+    { cwd: rootDir, stdio: 'inherit', shell: true }
+  );
+
   if (!existsSync(sessionOut)) {
     throw new Error(`Session MCP server output not found at ${sessionOut}`);
+  }
+  if (!existsSync(piOut)) {
+    throw new Error(`Pi agent server output not found at ${piOut}`);
   }
 }
 
 /**
- * Verify MCP helper servers are present in packaged resources.
+ * Verify MCP helper servers and Pi agent server are present in packaged resources.
  */
 export function verifyMcpServersExist(config: BuildConfig): void {
   const { electronDir } = config;
 
-  const bridgePath = join(electronDir, 'resources', 'bridge-mcp-server', 'index.js');
   const sessionPath = join(electronDir, 'resources', 'session-mcp-server', 'index.js');
+  const piPath = join(electronDir, 'resources', 'pi-agent-server', 'index.js');
 
-  if (!existsSync(bridgePath)) {
-    throw new Error(`Bridge MCP server not found at ${bridgePath}`);
-  }
   if (!existsSync(sessionPath)) {
     throw new Error(`Session MCP server not found at ${sessionPath}`);
   }
-}
-
-/**
- * Copy the native Copilot CLI binary from node_modules to vendor/copilot/.
- * The @github/copilot package has platform-specific optional deps that provide
- * native binaries (e.g., @github/copilot-darwin-arm64). bun install only installs
- * the matching platform's binary. We copy it to vendor/copilot/{platform}-{arch}/
- * so electron-builder can include it via extraResources.
- */
-export function copyCopilotCli(config: BuildConfig): void {
-  const { platform, arch, rootDir, electronDir } = config;
-  const isWindows = platform === 'win32';
-  const binaryName = isWindows ? 'copilot.exe' : 'copilot';
-  const packageDir = join(rootDir, 'node_modules', '@github', `copilot-${platform}-${arch}`);
-  const sourcePath = join(packageDir, binaryName);
-  const vendorDir = join(electronDir, 'vendor', 'copilot', `${platform}-${arch}`);
-  const destPath = join(vendorDir, binaryName);
-
-  if (!existsSync(sourcePath)) {
-    console.warn(`Warning: Copilot CLI binary not found at ${sourcePath} — Copilot sessions will fall back to SDK resolution`);
-    return;
+  if (!existsSync(piPath)) {
+    throw new Error(`Pi agent server not found at ${piPath}`);
   }
-
-  console.log(`Copying Copilot CLI for ${platform}-${arch}...`);
-  mkdirSync(vendorDir, { recursive: true });
-  copyFileSync(sourcePath, destPath);
-
-  if (!isWindows) {
-    execSync(`chmod +x "${destPath}"`);
-  }
-
-  const size = statSync(destPath).size;
-  console.log(`  Copilot CLI installed to ${destPath} (${(size / 1024 / 1024).toFixed(0)} MB) ✓`);
 }
 
 /**

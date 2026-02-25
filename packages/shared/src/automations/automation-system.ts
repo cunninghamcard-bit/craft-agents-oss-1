@@ -22,7 +22,7 @@ import { AUTOMATIONS_HISTORY_FILE } from './constants.ts';
 import { createLogger } from '../utils/debug.ts';
 import { WorkspaceEventBus, type EventPayloadMap } from './event-bus.ts';
 import { PromptHandler, EventLogHandler, type AutomationsConfigProvider } from './handlers/index.ts';
-import { type AutomationsConfig, type AutomationEvent, type AutomationMatcher, type PendingPrompt, type AppEvent, type AgentEvent, type SdkAutomationCallbackMatcher } from './types.ts';
+import { type AutomationsConfig, type AutomationEvent, type AutomationMatcher, type PendingPrompt, type AppEvent, type AgentEvent, type SdkAutomationCallbackMatcher, type SdkAutomationInput } from './types.ts';
 import { validateAutomationsConfig } from './validation.ts';
 import { SchedulerService, type SchedulerTickPayload } from '../scheduler/scheduler-service.ts';
 
@@ -448,6 +448,77 @@ export class AutomationSystem implements AutomationsConfigProvider {
    */
   async emit<T extends AutomationEvent>(event: T, payload: EventPayloadMap[T]): Promise<void> {
     await this.eventBus.emit(event, payload);
+  }
+
+  // ============================================================================
+  // Agent Event Execution (Backend-Agnostic)
+  // ============================================================================
+
+  /**
+   * Execute agent event automations directly (without going through the Claude SDK).
+   * This is the backend-agnostic entry point for non-Claude backends (Codex, Copilot, Pi)
+   * to fire agent events from automations.json.
+   *
+   * For each matching automation matcher, builds env vars and evaluates matching.
+   * Command execution has been removed — all automation actions now go through prompt-based
+   * execution (creating agent sessions via PromptHandler).
+   * Catches all errors — automations must never break the agent flow.
+   *
+   * @param signal - Optional AbortSignal for cancelling automation execution on abort
+   */
+  async executeAgentEvent(event: AgentEvent, input: SdkAutomationInput, signal?: AbortSignal): Promise<void> {
+    if (!this.config) return;
+
+    const matchers = this.config.automations[event];
+    if (!matchers?.length) return;
+
+    const matchValue = this.getMatchValueForSdkInput(event, input);
+
+    for (const matcher of matchers) {
+      if (matcher.enabled === false) continue;
+
+      // Check regex matcher against the match value
+      if (matcher.matcher) {
+        try {
+          const regex = new RegExp(matcher.matcher);
+          if (!regex.test(matchValue)) continue;
+        } catch {
+          // Invalid regex — skip this matcher
+          continue;
+        }
+      }
+
+      // Note: Command execution has been removed. Prompt-based execution for
+      // non-Claude backends is not yet implemented. This method currently only
+      // validates matching — actual execution is a no-op.
+      log.debug(`[AutomationSystem] Matched ${event} automation (prompt-based execution pending)`);
+    }
+  }
+
+  /**
+   * Extract the regex match target from SdkAutomationInput based on the event type.
+   * Mirrors the Claude SDK's `fieldToMatch` per event — each event type matches
+   * against a specific field from the input.
+   */
+  private getMatchValueForSdkInput(event: AgentEvent, input: SdkAutomationInput): string {
+    switch (event) {
+      case 'PreToolUse':
+      case 'PostToolUse':
+      case 'PostToolUseFailure':
+      case 'PermissionRequest':
+        return input.tool_name ?? '';
+      case 'Notification':
+        // SDK matches against notification_type (not available in SdkAutomationInput — use message as fallback)
+        return input.message ?? '';
+      case 'SessionStart':
+        return input.source ?? '';
+      case 'SubagentStart':
+      case 'SubagentStop':
+        return input.agent_type ?? '';
+      default:
+        // UserPromptSubmit, Stop, SessionEnd — no meaningful match field
+        return '';
+    }
   }
 
   // ============================================================================

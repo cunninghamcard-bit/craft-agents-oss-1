@@ -15,7 +15,6 @@
 import { homedir } from 'os';
 import { debug } from '../utils/debug.ts';
 import { resolve } from 'path';
-import { FEATURE_FLAGS } from '../feature-flags.ts';
 import type { PermissionsContext, MergedPermissionsConfig } from './permissions-config.ts';
 import {
   validateBashCommand,
@@ -1726,8 +1725,8 @@ export function shouldAllowToolInMode(
 
   // Handle MCP tools - allow read-only, block write operations
   if (toolName.startsWith('mcp__')) {
-    // Always allow preferences and documentation tools (read-only, always available)
-    if (toolName.startsWith('mcp__preferences__') || toolName.startsWith('mcp__craft-agents-docs__')) {
+    // Always allow documentation tools (read-only, always available)
+    if (toolName.startsWith('mcp__craft-agents-docs__')) {
       return { allowed: true };
     }
 
@@ -1742,8 +1741,8 @@ export function shouldAllowToolInMode(
         'mcp__session__mermaid_validate',
         'mcp__session__source_test',
         'mcp__session__transform_data',
+        'mcp__session__render_template',
         'mcp__session__call_llm',
-        ...(FEATURE_FLAGS.sourceTemplates ? ['mcp__session__render_template'] : []),
       ];
       if (readOnlySessionTools.includes(toolName)) {
         return { allowed: true };
