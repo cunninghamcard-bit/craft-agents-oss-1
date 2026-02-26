@@ -128,6 +128,9 @@ export interface AppShellContextType {
   // Right sidebar button (for page headers)
   rightSidebarButton?: React.ReactNode
 
+  /** Whether this panel is the focused panel (for multi-panel visual differentiation) */
+  isFocusedPanel?: boolean
+
   // Session list search state (for ChatDisplay highlighting)
   /** Current search query from session list - used to highlight matches in ChatDisplay */
   sessionListSearchQuery?: string

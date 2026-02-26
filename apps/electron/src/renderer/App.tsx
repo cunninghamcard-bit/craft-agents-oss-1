@@ -758,6 +758,12 @@ export default function App() {
     return true
   }, [store, removeSession])
 
+  // Auto-delete handler for empty sessions (fire-and-forget, no confirmation)
+  const handleAutoDeleteEmptySession = useCallback((sessionId: string) => {
+    window.electronAPI.deleteSession(sessionId)
+    removeSession(sessionId)
+  }, [removeSession])
+
   const handleFlagSession = useCallback((sessionId: string) => {
     updateSessionById(sessionId, { isFlagged: true })
     window.electronAPI.sessionCommand(sessionId, { type: 'flag' })
@@ -1451,6 +1457,8 @@ export default function App() {
           workspaceId={windowWorkspaceId}
           onCreateSession={handleCreateSession}
           onInputChange={handleInputChange}
+          getDraft={getDraft}
+          onAutoDeleteEmptySession={handleAutoDeleteEmptySession}
           isReady={appState === 'ready'}
         >
           {/* Handle window close requests (X button, Cmd+W) - close modal first if open */}

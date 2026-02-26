@@ -5,6 +5,7 @@ import { FreeFormInput, type FreeFormInputProps } from './FreeFormInput'
 import { StructuredInput } from './StructuredInput'
 import { UltrathinkGlow } from '@/components/ui/ultrathink-glow'
 import type { RichTextInputHandle } from '@/components/ui/rich-text-input'
+import { useOptionalAppShellContext } from '@/context/AppShellContext'
 import type { StructuredInputState, StructuredResponse, InputMode } from './structured/types'
 
 interface InputContainerProps extends Omit<FreeFormInputProps, 'inputRef'> {
@@ -48,6 +49,8 @@ export function InputContainer({
   onAnimatedHeightChange,
   ...freeFormProps
 }: InputContainerProps) {
+  const appShellContext = useOptionalAppShellContext()
+  const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
   const mode: InputMode = structuredInput ? 'structured' : 'freeform'
   const measureRef = React.useRef<HTMLDivElement>(null)
   const containerRef = React.useRef<HTMLDivElement>(null)
@@ -233,7 +236,9 @@ export function InputContainer({
       <motion.div
         ref={containerRef}
         className={cn(
-          "input-container relative rounded-[12px] shadow-middle overflow-hidden transition-colors bg-background"
+          "input-container relative rounded-[12px] overflow-hidden transition-colors",
+          isFocusedPanel ? "shadow-middle" : "shadow-minimal",
+          "bg-background"
         )}
         style={{ height: heightMotionValue }}
       >

@@ -102,7 +102,7 @@ export class WindowManager {
       // macOS-specific: hidden title bar with inset traffic lights
       ...(isMac && {
         titleBarStyle: 'hiddenInset',
-        trafficLightPosition: { x: 18, y: 18 },
+        trafficLightPosition: { x: 18, y: 16 },
         vibrancy: 'under-window',
         visualEffectState: 'active',
       }),

@@ -1457,7 +1457,7 @@ export function ResponseCard({
 
           {/* Scrollable content area with subtle fade at edges (dark mode only) */}
           <div
-            className="pl-[22px] pr-[16px] py-3 text-sm overflow-y-auto"
+            className="pl-[22px] pr-[16px] py-3 text-sm overflow-y-auto scrollbar-hover"
             style={{
               maxHeight: MAX_HEIGHT,
               // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
@@ -1531,9 +1531,6 @@ export function ResponseCard({
                         : "opacity-0 translate-x-2 pointer-events-none"
                     )}
                   >
-                    <span className="text-xs text-muted-foreground">
-                      Type your feedback in chat or
-                    </span>
                     <AcceptPlanDropdown
                       onAccept={onAccept}
                       onAcceptWithCompact={onAcceptWithCompact}
@@ -1573,11 +1570,11 @@ export function ResponseCard({
 
   // Streaming response - show throttled content with spinner
   return (
-    <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden">
+    <div className="bg-background shadow-minimal rounded-[8px] overflow-hidden group">
       {/* Content area - uses displayedText (throttled) for performance */}
       {/* Subtle fade at top and bottom edges (dark mode only) */}
       <div
-        className="pl-[22px] pr-4 py-3 text-sm overflow-y-auto"
+        className="pl-[22px] pr-4 py-3 text-sm overflow-y-auto scrollbar-hover"
         style={{
           maxHeight: MAX_HEIGHT,
           // Subtle fade at top and bottom edges (16px) - only in dark mode for better contrast
@@ -1961,7 +1958,7 @@ export const TurnCard = React.memo(function TurnCard({
                   ref={activitiesContainerRef}
                   className={cn(
                     "pl-4 pr-2 py-0 space-y-0.5 border-l-2 border-muted ml-[13px]",
-                    sortedActivities.length > SIZE_CONFIG.maxVisibleActivities && "rounded-r-md overflow-y-auto py-1.5"
+                    sortedActivities.length > SIZE_CONFIG.maxVisibleActivities && "rounded-r-md overflow-y-auto scrollbar-hover py-1.5"
                   )}
                   style={{
                     maxHeight: sortedActivities.length > SIZE_CONFIG.maxVisibleActivities

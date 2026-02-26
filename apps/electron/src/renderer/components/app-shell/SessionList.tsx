@@ -73,6 +73,10 @@ interface SessionListProps {
   statusFilter?: Map<string, FilterMode>
   /** Secondary label filter (label chips) - for search result grouping */
   labelFilterMap?: Map<string, FilterMode>
+  /** Override which session is highlighted (for multi-panel focused panel tracking) */
+  focusedSessionId?: string | null
+  /** Override navigation target (for multi-panel: navigates focused panel instead of primary) */
+  onNavigateToSession?: (sessionId: string) => void
 }
 
 // Re-export SessionStatusId for use by parent components
@@ -117,6 +121,8 @@ export function SessionList({
   workspaceId,
   statusFilter,
   labelFilterMap,
+  focusedSessionId,
+  onNavigateToSession,
 }: SessionListProps) {
   // --- Selection (atom-backed, shared with ChatDisplay + BatchActionPanel) ---
   const {
@@ -127,7 +133,8 @@ export function SessionList({
   } = useSessionSelection()
   const selectionStore = useSessionSelectionStore()
 
-  const { navigate, navigateToSession } = useNavigation()
+  const { navigate, navigateToSession: navigateToSessionPrimary } = useNavigation()
+  const navigateToSession = onNavigateToSession ?? navigateToSessionPrimary
   const navState = useNavigationState()
   const { showEscapeOverlay } = useEscapeInterrupt()
 
@@ -435,6 +442,7 @@ export function SessionList({
     },
     multiSelect: true,
     selectionStore,
+    selectedIdOverride: focusedSessionId,
   })
 
   // Sync activeIndex when selection changes externally (e.g. from ChatDisplay)
@@ -567,7 +575,7 @@ export function SessionList({
     flatLabels,
     labels,
     searchQuery: resolvedSearchQuery,
-    selectedSessionId: selectionStore.state.selected,
+    selectedSessionId: focusedSessionId ?? selectionStore.state.selected,
     isMultiSelectActive,
     sessionOptions,
     contentSearchResults,
@@ -578,7 +586,7 @@ export function SessionList({
     onMarkUnread, handleDeleteWithToast, onLabelsChange,
     handleSelectSessionById, handleOpenInNewWindow, handleFocusZone, handleKeyDown,
     sessionStatuses, flatLabels, labels, resolvedSearchQuery,
-    selectionStore.state.selected, isMultiSelectActive,
+    focusedSessionId, selectionStore.state.selected, isMultiSelectActive,
     sessionOptions, contentSearchResults,
   ])
 

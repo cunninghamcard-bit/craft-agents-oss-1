@@ -1,6 +1,6 @@
 import * as React from "react"
 import { useRef, useState, useEffect, useCallback, useMemo } from "react"
-import { useAtomValue } from "jotai"
+import { useAtomValue, useStore } from "jotai"
 import { motion, AnimatePresence } from "motion/react"
 import {
   Archive,
@@ -30,7 +30,7 @@ import {
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
 // SessionStatusIcons no longer used - icons come from dynamic sessionStatuses
 import { SourceAvatar } from "@/components/ui/source-avatar"
-import { AppMenu } from "../AppMenu"
+import { TopBar } from "./TopBar"
 import { SquarePenRounded } from "../icons/SquarePenRounded"
 import { McpIcon } from "../icons/McpIcon"
 import { cn } from "@/lib/utils"
@@ -85,6 +85,8 @@ import type { Session, Workspace, FileAttachment, PermissionRequest, LoadedSourc
 import { sessionMetaMapAtom, type SessionMeta } from "@/atoms/sessions"
 import { sourcesAtom } from "@/atoms/sources"
 import { skillsAtom } from "@/atoms/skills"
+import { panelStackAtom, panelCountAtom, focusedPanelIdAtom, focusedPanelRouteAtom, focusedPanelIndexAtom, focusedSessionIdAtom, focusNextPanelAtom, focusPrevPanelAtom, updateFocusedPanelRouteAtom, parseSessionIdFromRoute } from "@/atoms/panel-stack"
+import { parseRouteToNavigationState, buildRouteFromNavigationState } from "../../../shared/route-parser"
 import { type SessionStatusId, type SessionStatus, statusConfigsToSessionStatuses } from "@/config/session-status-config"
 import { useStatuses } from "@/hooks/useStatuses"
 import { useLabels } from "@/hooks/useLabels"
@@ -108,6 +110,7 @@ import {
   type SessionFilter,
 } from "@/contexts/NavigationContext"
 import type { SettingsSubpage } from "../../../shared/types"
+import type { ViewRoute } from "../../../shared/routes"
 import { SourcesListPanel } from "./SourcesListPanel"
 import { SkillsListPanel } from "./SkillsListPanel"
 import { PanelHeader } from "./PanelHeader"
@@ -557,7 +560,49 @@ function AppShellContent({
 
   // UNIFIED NAVIGATION STATE - single source of truth from NavigationContext
   // All sidebar/navigator/main panel state is derived from this
-  const navState = useNavigationState()
+  const primaryNavState = useNavigationState()
+
+  // In multi-panel, sidebar/navigator reflect the focused panel (not just primary)
+  const store = useStore()
+  const panelCount = useAtomValue(panelCountAtom)
+  const focusedPanelRoute = useAtomValue(focusedPanelRouteAtom)
+  const focusedPanelIndex = useAtomValue(focusedPanelIndexAtom)
+  const focusedSessionId = useAtomValue(focusedSessionIdAtom)
+  const updateFocusedPanelRoute = useSetAtom(updateFocusedPanelRouteAtom)
+
+  const navState = useMemo(() => {
+    if (panelCount > 1 && focusedPanelRoute) {
+      return parseRouteToNavigationState(focusedPanelRoute) ?? primaryNavState
+    }
+    return primaryNavState
+  }, [panelCount, focusedPanelRoute, primaryNavState])
+
+  // Navigate the focused panel to a session.
+  // If the session is already open in any panel, focus that panel instead.
+  // Primary panel → NavigationContext (updates URL/history).
+  // Secondary panel → update its route directly via atom.
+  const setFocusedPanel = useSetAtom(focusedPanelIdAtom)
+  const navigateToSessionInPanel = useCallback((sessionId: string) => {
+    // Check if the session is already open in any panel — focus it instead of navigating
+    const stack = store.get(panelStackAtom)
+    for (const entry of stack) {
+      if (parseSessionIdFromRoute(entry.route) === sessionId) {
+        setFocusedPanel(entry.id)
+        return
+      }
+    }
+
+    // Not open in any panel — navigate the focused panel
+    if (focusedPanelIndex === 0) {
+      navigateToSession(sessionId)
+      return
+    }
+    if (isSessionsNavigation(navState)) {
+      const newState = { ...navState, details: { type: 'session' as const, sessionId } }
+      const route = buildRouteFromNavigationState(newState)
+      updateFocusedPanelRoute(route as ViewRoute)
+    }
+  }, [store, setFocusedPanel, focusedPanelIndex, navigateToSession, navState, updateFocusedPanelRoute])
 
   // Derive chat filter from navigation state (only when in chats navigator)
   const sessionFilter = isSessionsNavigation(navState) ? navState.filter : null
@@ -1008,9 +1053,11 @@ function AppShellContent({
   }, { enabled: () => !document.querySelector('[role="dialog"]') })
 
   // Shift+Tab cycles permission mode through enabled modes (textarea handles its own, this handles when focus is elsewhere)
+  // In multi-panel, targets the focused panel's session
+  const effectiveSessionId = focusedSessionId ?? session.selected
   useAction('chat.cyclePermissionMode', () => {
-    if (session.selected) {
-      const currentOptions = contextValue.sessionOptions.get(session.selected)
+    if (effectiveSessionId) {
+      const currentOptions = contextValue.sessionOptions.get(effectiveSessionId)
       const currentMode = currentOptions?.permissionMode ?? 'ask'
       // Cycle through enabled permission modes
       const modes = enabledModes.length >= 2 ? enabledModes : ['safe', 'ask', 'allow-all'] as PermissionMode[]
@@ -1018,7 +1065,7 @@ function AppShellContent({
       // If current mode not in enabled list, jump to first enabled mode
       const nextIndex = currentIndex === -1 ? 0 : (currentIndex + 1) % modes.length
       const nextMode = modes[nextIndex]
-      contextValue.onSessionOptionsChange(session.selected, { permissionMode: nextMode })
+      contextValue.onSessionOptionsChange(effectiveSessionId, { permissionMode: nextMode })
     }
   }, { enabled: () => !document.querySelector('[role="dialog"]') && document.activeElement?.tagName !== 'TEXTAREA' })
 
@@ -1027,6 +1074,12 @@ function AppShellContent({
 
   // Focus mode toggle (CMD+.) - hides both sidebars
   useAction('view.toggleFocusMode', () => setIsFocusModeActive(v => !v))
+
+  // Panel focus navigation (CMD+SHIFT+[ / ])
+  const focusNextPanel = useSetAtom(focusNextPanelAtom)
+  const focusPrevPanel = useSetAtom(focusPrevPanelAtom)
+  useAction('panel.focusNext', focusNextPanel, { enabled: () => panelCount > 1 })
+  useAction('panel.focusPrev', focusPrevPanel, { enabled: () => panelCount > 1 })
 
   // New chat
   useAction('app.newChat', () => handleNewChat(true))
@@ -1061,14 +1114,15 @@ function AppShellContent({
 
   // ESC to stop processing - requires double-press within 1 second
   // First press shows warning overlay, second press interrupts
+  // In multi-panel, targets the focused panel's session
   useAction('chat.stopProcessing', () => {
-    if (session.selected) {
-      const meta = sessionMetaMap.get(session.selected)
+    if (effectiveSessionId) {
+      const meta = sessionMetaMap.get(effectiveSessionId)
       if (meta?.isProcessing) {
         // handleEscapePress returns true on second press (within timeout)
         const shouldInterrupt = handleEscapePress()
         if (shouldInterrupt) {
-          window.electronAPI.cancelProcessing(session.selected, false).catch(err => {
+          window.electronAPI.cancelProcessing(effectiveSessionId, false).catch(err => {
             console.error('[AppShell] Failed to cancel processing:', err)
           })
         }
@@ -1079,11 +1133,11 @@ function AppShellContent({
     // Overlays (dialogs, menus, popovers, etc.) should handle their own Escape
     enabled: () => {
       if (hasOpenOverlay()) return false
-      if (!session.selected) return false
-      const meta = sessionMetaMap.get(session.selected)
+      if (!effectiveSessionId) return false
+      const meta = sessionMetaMap.get(effectiveSessionId)
       return meta?.isProcessing ?? false
     }
-  }, [session, handleEscapePress])
+  }, [effectiveSessionId, handleEscapePress])
 
   // Theme toggle (CMD+SHIFT+A)
   useAction('app.toggleTheme', () => setMode(resolvedMode === 'dark' ? 'light' : 'dark'))
@@ -1987,53 +2041,27 @@ function AppShellContent({
 
   return (
     <AppShellProvider value={appShellContextValue}>
-        {/*
-          Draggable title bar region for transparent window (macOS)
-          - Fixed overlay at z-titlebar allows window dragging from the top bar area
-          - Interactive elements (buttons, dropdowns) must use:
-            1. titlebar-no-drag: prevents drag behavior on clickable elements
-            2. relative z-panel: ensures elements render above this drag overlay
-        */}
-        <div className="titlebar-drag-region fixed top-0 left-0 right-0 h-[50px] z-titlebar" />
-
-      {/* App Menu - fixed position, fades out in focused mode
-          On macOS: offset 86px to avoid stoplight controls
-          On Windows/Linux: offset 12px (no stoplight controls) */}
-      {(() => {
-        const menuLeftOffset = isMac ? 86 : 12
-        return (
-          <motion.div
-            initial={false}
-            animate={{ opacity: effectiveFocusMode ? 0 : 1 }}
-            transition={springTransition}
-            className={cn(
-              "fixed top-0 h-[50px] z-overlay flex items-center pointer-events-none pr-2",
-              effectiveFocusMode && "pointer-events-none"
-            )}
-            style={{ left: menuLeftOffset, width: sidebarWidth - menuLeftOffset }}
-          >
-            <AppMenu
-              onNewChat={() => handleNewChat(true)}
-              onNewWindow={() => window.electronAPI.menuNewWindow()}
-              onOpenSettings={onOpenSettings}
-              onOpenSettingsSubpage={handleSettingsClick}
-              onOpenKeyboardShortcuts={onOpenKeyboardShortcuts}
-              onOpenStoredUserPreferences={onOpenStoredUserPreferences}
-              onBack={goBack}
-              onForward={goForward}
-              canGoBack={canGoBack}
-              canGoForward={canGoForward}
-              onToggleSidebar={() => setIsSidebarVisible(prev => !prev)}
-              onToggleFocusMode={() => setIsFocusModeActive(prev => !prev)}
-            />
-          </motion.div>
-        )
-      })()}
+        {/* === TOP BAR === */}
+        <TopBar
+          workspaceName={activeWorkspace?.name}
+          onNewChat={() => handleNewChat(true)}
+          onNewWindow={() => window.electronAPI.menuNewWindow()}
+          onOpenSettings={onOpenSettings}
+          onOpenSettingsSubpage={handleSettingsClick}
+          onOpenKeyboardShortcuts={onOpenKeyboardShortcuts}
+          onOpenStoredUserPreferences={onOpenStoredUserPreferences}
+          onBack={goBack}
+          onForward={goForward}
+          canGoBack={canGoBack}
+          canGoForward={canGoForward}
+          onToggleSidebar={() => setIsSidebarVisible(prev => !prev)}
+          onToggleFocusMode={() => setIsFocusModeActive(prev => !prev)}
+        />
 
       {/* === OUTER LAYOUT: Unified Panel Stack | Right Sidebar === */}
       <div
         className="h-full flex items-stretch relative"
-        style={{ padding: PANEL_WINDOW_EDGE_SPACING, paddingLeft: 0, gap: PANEL_PANEL_SPACING / 2 }}
+        style={{ padding: PANEL_WINDOW_EDGE_SPACING, paddingLeft: 0, paddingTop: 48, gap: PANEL_PANEL_SPACING / 2 }}
       >
         <PanelStackContainer
           sidebarSlot={
@@ -2045,7 +2073,7 @@ function AppShellContent({
               tabIndex={sidebarFocused ? 0 : -1}
               onKeyDown={handleSidebarKeyDown}
             >
-            <div className="flex h-full flex-col pt-[50px] select-none">
+            <div className="flex h-full flex-col select-none">
               {/* Sidebar Top Section */}
               <div className="flex-1 flex flex-col min-h-0">
                 {/* New Session Button - Gmail-style, with context menu for "Open in New Window" */}
@@ -2324,7 +2352,6 @@ function AppShellContent({
           </div>
           }
           sidebarWidth={effectiveFocusMode ? 0 : (isSidebarVisible ? sidebarWidth : 0)}
-          sidebarTitle="Sidebar"
           navigatorSlot={
             <div
               style={{ width: sessionListWidth }}
@@ -2973,13 +3000,14 @@ function AppShellContent({
                   workspaceId={activeWorkspaceId ?? undefined}
                   statusFilter={listFilter}
                   labelFilterMap={labelFilter}
+                  focusedSessionId={panelCount > 1 ? focusedSessionId : undefined}
+                  onNavigateToSession={panelCount > 1 ? navigateToSessionInPanel : undefined}
                 />
               </>
             )}
             </div>
           }
           navigatorWidth={effectiveFocusMode ? 0 : sessionListWidth}
-          navigatorTitle={listTitle}
           isFocusedMode={effectiveFocusMode}
           isRightSidebarVisible={isRightSidebarVisible}
           isResizing={!!isResizing}

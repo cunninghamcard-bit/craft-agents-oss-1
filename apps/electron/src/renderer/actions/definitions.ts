@@ -156,6 +156,20 @@ export const actions = {
     defaultHotkey: null, // Handled via Cmd+W interceptor; no standalone hotkey
     category: 'Navigation',
   },
+  'panel.focusNext': {
+    id: 'panel.focusNext',
+    label: 'Focus Next Panel',
+    description: 'Move focus to the next panel',
+    defaultHotkey: 'mod+shift+]',
+    category: 'Navigation',
+  },
+  'panel.focusPrev': {
+    id: 'panel.focusPrev',
+    label: 'Focus Previous Panel',
+    description: 'Move focus to the previous panel',
+    defaultHotkey: 'mod+shift+[',
+    category: 'Navigation',
+  },
 
   // ═══════════════════════════════════════════
   // Chat

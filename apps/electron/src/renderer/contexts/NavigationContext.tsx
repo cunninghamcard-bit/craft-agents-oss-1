@@ -41,7 +41,7 @@ import {
   buildUrlWithState,
   type ParsedRoute,
 } from '../../shared/route-parser'
-import { routes, type Route } from '../../shared/routes'
+import { routes, type Route, type ViewRoute } from '../../shared/routes'
 import { NAVIGATE_EVENT } from '../lib/navigate'
 import * as storage from '@/lib/local-storage'
 import type {
@@ -64,7 +64,7 @@ import { isValidSettingsSubpage, type SettingsSubpage } from '../../shared/setti
 import { sessionMetaMapAtom, updateSessionMetaAtom, type SessionMeta } from '@/atoms/sessions'
 import { sourcesAtom } from '@/atoms/sources'
 import { skillsAtom } from '@/atoms/skills'
-import { panelStackAtom, updatePrimaryPanelAtom, pushPanelAtom, closeAllSecondaryPanelsAtom } from '@/atoms/panel-stack'
+import { panelStackAtom, updatePrimaryPanelAtom, restorePanelStackAtom, closeAllSecondaryPanelsAtom } from '@/atoms/panel-stack'
 
 // Re-export routes for convenience
 export { routes }
@@ -109,6 +109,10 @@ interface NavigationProviderProps {
   onCreateSession: (workspaceId: string, options?: import('../../shared/types').CreateSessionOptions) => Promise<Session>
   /** Input change handler for pre-filling chat input */
   onInputChange?: (sessionId: string, value: string) => void
+  /** Get draft input text for a session (reads from ref, no re-render) */
+  getDraft?: (sessionId: string) => string
+  /** Auto-delete an empty session (no confirmation needed) */
+  onAutoDeleteEmptySession?: (sessionId: string) => void
   /** Whether the app is ready to navigate */
   isReady?: boolean
 }
@@ -118,6 +122,8 @@ export function NavigationProvider({
   workspaceId,
   onCreateSession,
   onInputChange,
+  getDraft,
+  onAutoDeleteEmptySession,
   isReady = true,
 }: NavigationProviderProps) {
   const [, setSession] = useSession()
@@ -517,6 +523,35 @@ export function NavigationProvider({
         return
       }
 
+      // Auto-delete empty sessions when navigating away.
+      // If the user is leaving a session that has no messages and no draft input, clean it up.
+      if (onAutoDeleteEmptySession) {
+        const currentSessionId = isSessionsNavigation(navigationState)
+          ? navigationState.details?.sessionId
+          : null
+
+        if (currentSessionId) {
+          // Determine the target session ID from the new route (if navigating to another session)
+          const targetNavState = parsed.type === 'view'
+            ? parseRouteToNavigationState(route)
+            : null
+          const targetSessionId = targetNavState && isSessionsNavigation(targetNavState)
+            ? targetNavState.details?.sessionId
+            : null
+
+          // Only check if navigating to a DIFFERENT session or away from sessions entirely
+          if (currentSessionId !== targetSessionId) {
+            const freshMetaMap = store.get(sessionMetaMapAtom)
+            const meta = freshMetaMap.get(currentSessionId)
+            const isEmpty = meta && !meta.lastFinalMessageId && !meta.name && !meta.isProcessing
+            const hasDraft = getDraft?.(currentSessionId)?.trim()
+            if (isEmpty && !hasDraft) {
+              onAutoDeleteEmptySession(currentSessionId)
+            }
+          }
+        }
+      }
+
       // Handle actions (side effects)
       if (parsed.type === 'action') {
         await handleActionNavigation(parsed)
@@ -544,6 +579,7 @@ export function NavigationProvider({
         }
       }
 
+      let effectiveNavState = navigationState
       if (newNavState) {
         // Apply navigation state (may auto-select first item)
         const finalState = applyNavigationState(newNavState)
@@ -551,22 +587,23 @@ export function NavigationProvider({
         // Build route from final state (includes auto-selection)
         // This ensures the URL reflects the actual displayed content
         finalRoute = buildRouteFromNavigationState(finalState) as Route
+        effectiveNavState = finalState
       }
 
       // Persist route, sidebar, and panels in URL for reload restoration
       const url = new URL(window.location.href)
       const currentPanels = store.get(panelStackAtom)
-      const secondaryRoutes = currentPanels.length > 1
-        ? currentPanels.slice(1).map(p => p.route)
+      const secondaryPanels = currentPanels.length > 1
+        ? currentPanels.slice(1).map(p => `${p.route}:${p.proportion.toFixed(4)}`)
         : undefined
-      if (navigationState.rightSidebar) {
-        const fullUrl = buildUrlWithState(navigationState, secondaryRoutes)
+      if (effectiveNavState.rightSidebar) {
+        const fullUrl = buildUrlWithState(effectiveNavState, secondaryPanels)
         url.search = fullUrl
       } else {
         url.searchParams.set('route', finalRoute)
         url.searchParams.delete('sidebar')
-        if (secondaryRoutes?.length) {
-          url.searchParams.set('panels', secondaryRoutes.join(','))
+        if (secondaryPanels?.length) {
+          url.searchParams.set('panels', secondaryPanels.join(','))
         } else {
           url.searchParams.delete('panels')
         }
@@ -594,7 +631,7 @@ export function NavigationProvider({
       setCanGoBack(newCanGoBack)
       setCanGoForward(newCanGoForward)
     },
-    [isReady, handleActionNavigation, applyNavigationState]
+    [isReady, handleActionNavigation, applyNavigationState, navigationState, store, getDraft, onAutoDeleteEmptySession]
   )
 
   // Keep navigateRef in sync with latest navigate function
@@ -817,14 +854,42 @@ export function NavigationProvider({
       }
     }
 
-    // Restore secondary panels from URL
+    // Restore secondary panels from URL (batch restore to avoid ordering race)
     if (panelsParam) {
-      const panelRoutes = panelsParam.split(',').filter(Boolean)
-      for (const route of panelRoutes) {
-        store.set(pushPanelAtom, { route: route as import('../../shared/routes').ViewRoute })
+      const primaryRoute = initialRoute ?? buildRouteFromNavigationState(navigationState)
+      const secondaryEntries = panelsParam.split(',').filter(Boolean).map(entry => {
+        // Parse proportion from "route:0.3500" format (backwards-compatible with "route" only)
+        const colonIdx = entry.lastIndexOf(':')
+        if (colonIdx > 0) {
+          const proportion = parseFloat(entry.slice(colonIdx + 1))
+          if (!isNaN(proportion) && proportion > 0 && proportion < 1) {
+            return { route: entry.slice(0, colonIdx) as ViewRoute, proportion }
+          }
+        }
+        return { route: entry as ViewRoute, proportion: 0 }
+      })
+
+      const hasProportions = secondaryEntries.some(e => e.proportion > 0)
+      const totalSecondaryProp = secondaryEntries.reduce((s, e) => s + e.proportion, 0)
+
+      let allEntries: { route: ViewRoute; proportion: number }[]
+      if (hasProportions && totalSecondaryProp < 1) {
+        allEntries = [
+          { route: primaryRoute as ViewRoute, proportion: 1 - totalSecondaryProp },
+          ...secondaryEntries,
+        ]
+      } else {
+        // No proportions encoded (old URL format) — distribute equally
+        const equal = 1 / (1 + secondaryEntries.length)
+        allEntries = [
+          { route: primaryRoute as ViewRoute, proportion: equal },
+          ...secondaryEntries.map(e => ({ ...e, proportion: equal })),
+        ]
       }
+
+      store.set(restorePanelStackAtom, allEntries)
     }
-  }, [isReady, workspaceId, navigate, applyNavigationState, store])
+  }, [isReady, workspaceId, navigate, applyNavigationState, store, navigationState])
 
   // Listen for deep link navigation events from main process
   useEffect(() => {
@@ -896,10 +961,10 @@ export function NavigationProvider({
 
     // Update URL with sidebar param and panels
     const currentPanels = store.get(panelStackAtom)
-    const secondaryRoutes = currentPanels.length > 1
-      ? currentPanels.slice(1).map(p => p.route)
+    const secondaryPanels = currentPanels.length > 1
+      ? currentPanels.slice(1).map(p => `${p.route}:${p.proportion.toFixed(4)}`)
       : undefined
-    const url = buildUrlWithState(newState, secondaryRoutes)
+    const url = buildUrlWithState(newState, secondaryPanels)
     const fullUrl = new URL(window.location.href)
     fullUrl.search = url
     history.replaceState({ route: buildRouteFromNavigationState(newState) }, '', fullUrl.toString())
@@ -973,7 +1038,7 @@ export function NavigationProvider({
   const updatePrimaryPanel = useSetAtom(updatePrimaryPanelAtom)
   useEffect(() => {
     const route = buildRouteFromNavigationState(navigationState)
-    updatePrimaryPanel(route as import('../../shared/routes').ViewRoute)
+    updatePrimaryPanel(route as ViewRoute)
   }, [navigationState, updatePrimaryPanel])
 
   // Persist panel stack changes to URL (gated on initial route restoration
@@ -983,8 +1048,8 @@ export function NavigationProvider({
     if (!initialRouteRestoredRef.current) return
     const url = new URL(window.location.href)
     if (panelStack.length > 1) {
-      const secondaryRoutes = panelStack.slice(1).map(p => p.route)
-      url.searchParams.set('panels', secondaryRoutes.join(','))
+      const secondaryPanels = panelStack.slice(1).map(p => `${p.route}:${p.proportion.toFixed(4)}`)
+      url.searchParams.set('panels', secondaryPanels.join(','))
     } else {
       url.searchParams.delete('panels')
     }

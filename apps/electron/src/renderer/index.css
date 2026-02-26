@@ -71,8 +71,12 @@
 :root {
   /* === 6 BASE COLORS === */
   --background: oklch(0.98 0.003 265);
+  --background-elevated: color-mix(in srgb, var(--foreground) 1.5%, var(--background));
   --foreground: oklch(0.185 0.01 270);
+  --foreground-dimmed: color-mix(in srgb, var(--foreground) 70%, var(--background)); /* unfocused panel text */
   --foreground-rgb: 38, 36, 42;             /* RGB for shadow borders */
+  --user-message-bubble: oklch(from var(--foreground) l c h / 0.05);
+  --user-message-bubble-dimmed: oklch(from var(--foreground) l c h / 0.03);
   --accent: oklch(0.62 0.13 293);           /* purple - brand, Auto mode */
   --accent-rgb: 104, 78, 133;               /* darkened RGB for shadow-tinted (70% of accent) */
   --info: oklch(0.75 0.16 70);              /* amber - warnings, Ask mode */
@@ -93,6 +97,12 @@
     rgba(var(--foreground-rgb), 0.06) 0px 0px 0px 1px,
     rgba(0, 0, 0, var(--shadow-blur-opacity)) 0px 1px 1px -0.5px,
     rgba(0, 0, 0, var(--shadow-blur-opacity)) 0px 3px 3px -1.5px;
+
+  /* Minimal shadow without blur layers — just the border ring */
+  --shadow-minimal-flat:
+    rgba(0, 0, 0, 0) 0px 0px 0px 0px,
+    rgba(0, 0, 0, 0) 0px 0px 0px 0px,
+    rgba(var(--foreground-rgb), 0.06) 0px 0px 0px 1px;
 
   --shadow-modal-small:
     rgba(0, 0, 0, 0) 0px 0px 0px 0px,
@@ -209,8 +219,12 @@
 .dark {
   /* === 6 BASE COLORS === */
   --background: oklch(0.2 0.005 270);
+  --background-elevated: color-mix(in srgb, var(--foreground) 1.5%, var(--background));
   --foreground: oklch(0.92 0.005 270);
+  --foreground-dimmed: color-mix(in srgb, var(--foreground) 70%, var(--background)); /* unfocused panel text */
   --foreground-rgb: 227, 226, 229;           /* RGB for shadow borders */
+  --user-message-bubble: oklch(from var(--foreground) l c h / 0.05);
+  --user-message-bubble-dimmed: oklch(from var(--foreground) l c h / 0.03);
   --accent: oklch(0.68 0.13 293);            /* brighter purple in dark */
   --accent-rgb: 118, 92, 147;                /* darkened RGB for shadow-tinted (70% of accent) */
   --info: oklch(0.70 0.16 70);               /* amber */
@@ -375,6 +389,8 @@ html[data-font="inter"] {
   /* === SEMANTIC SURFACE COLORS === */
   /* Subtle hover background for sidebar list items (2% foreground opacity) */
   --color-sidebar-hover: oklch(from var(--foreground) l c h / 0.02);
+  /* User message bubble background (overridden on unfocused panels) */
+  --color-user-message-bubble: var(--user-message-bubble);
 
   /* === LEGACY COMPATIBILITY === */
   --color-card: var(--card);
@@ -481,6 +497,11 @@ html[data-font="inter"] {
     box-shadow: var(--tw-ring-offset-shadow), var(--tw-ring-shadow), var(--tw-shadow, 0 0 #0000);
   }
 
+  /* Thin horizontal scrollbar for panel stack */
+  .panel-scroll::-webkit-scrollbar {
+    height: 4px;
+  }
+
   /* Hide scrollbar but keep scrolling */
   .scrollbar-hide {
     -ms-overflow-style: none;
@@ -488,6 +509,24 @@ html[data-font="inter"] {
   }
   .scrollbar-hide::-webkit-scrollbar {
     display: none;
+  }
+
+  /* Hide scrollbar until parent .group is hovered */
+  .scrollbar-hover::-webkit-scrollbar {
+    width: 4px;
+  }
+  .scrollbar-hover::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-hover::-webkit-scrollbar-thumb {
+    background: transparent;
+    border-radius: 4px;
+  }
+  .group:hover .scrollbar-hover::-webkit-scrollbar-thumb {
+    background: var(--border);
+  }
+  .group:hover .scrollbar-hover::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
   }
 
   /* Mask fade utilities - for fading content at edges over transparent/image backgrounds */

@@ -2,14 +2,10 @@
  * PanelSlot
  *
  * Renders a single content panel within the PanelStackContainer.
- * Uses position: sticky for the Matuschak-style pinning behavior.
  *
- * When a panel is the only one (isOnly), it behaves like the original MainContentPanel:
- * flex-grows to fill available space, no sticky positioning.
- *
- * When multiple panels exist, each gets:
- * - position: sticky with left: leftOffset (computed by PanelStackContainer)
- * - Fixed width of panelWidth
+ * When a panel is the only one (isOnly), it flex-grows to fill available space.
+ * When multiple panels exist, each uses flex-grow with its proportion as the weight,
+ * combined with min-width to prevent shrinking below PANEL_MIN_WIDTH.
  *
  * Each PanelSlot overrides AppShellContext to inject a per-panel close button
  * into PanelHeader's rightSidebarButton slot:
@@ -19,7 +15,6 @@
 
 import { useCallback, useMemo } from 'react'
 import { useSetAtom } from 'jotai'
-import { motion } from 'motion/react'
 import { cn } from '@/lib/utils'
 import { X } from 'lucide-react'
 import { parseRouteToNavigationState } from '../../../shared/route-parser'
@@ -31,63 +26,26 @@ import {
   isSkillsNavigation,
 } from '../../../shared/types'
 import type { NavigationState } from '../../../shared/types'
-import { closePanelAtom, type PanelStackEntry } from '@/atoms/panel-stack'
+import { closePanelAtom, focusedPanelIdAtom, type PanelStackEntry } from '@/atoms/panel-stack'
 import { useNavigation } from '@/contexts/NavigationContext'
 import { useAppShellContext, AppShellProvider } from '@/context/AppShellContext'
 import { HeaderIconButton } from '@/components/ui/HeaderIconButton'
-import { PEEK_WIDTH, type PanelScrollState } from '@/hooks/usePanelScrollStates'
-import { ObscuredLabel } from './ObscuredLabel'
 import { MainContentPanel } from './MainContentPanel'
+import { PANEL_MIN_WIDTH } from './PanelResizeSash'
 
 interface PanelSlotProps {
   entry: PanelStackEntry
-  state: PanelScrollState
   isPrimary: boolean
   isOnly: boolean
   isLast: boolean
+  /** Whether this panel is the focused panel in a multi-panel layout */
+  isFocusedPanel: boolean
   isFocusedMode: boolean
   isRightSidebarVisible?: boolean
-  /** Sticky left offset (computed by PanelStackContainer based on all panels) */
-  leftOffset: number
-  /** Panel width in pixels */
-  panelWidth: number
-  /** Z-index for stacking order (ascending: sidebar < navigator < content) */
-  zIndex?: number
-}
-
-/**
- * Derive a human-readable title from a NavigationState for the obscured label.
- */
-function getPanelTitle(navState: NavigationState | null): string {
-  if (!navState) return 'Panel'
-
-  if (isSettingsNavigation(navState)) {
-    return `Settings`
-  }
-
-  if (isSourcesNavigation(navState)) {
-    if (navState.details) return navState.details.sourceSlug
-    return 'Sources'
-  }
-
-  if (isSkillsNavigation(navState)) {
-    if (navState.details?.type === 'skill') return navState.details.skillSlug
-    return 'Skills'
-  }
-
-  if (isSessionsNavigation(navState)) {
-    if (navState.details) return 'Session'
-    switch (navState.filter.kind) {
-      case 'allSessions': return 'All Sessions'
-      case 'flagged': return 'Flagged'
-      case 'archived': return 'Archived'
-      case 'state': return 'State'
-      case 'label': return 'Label'
-      case 'view': return 'View'
-    }
-  }
-
-  return 'Panel'
+  /** Flex-grow weight for proportional sizing */
+  proportion: number
+  /** Optional sash element rendered before this panel */
+  sash?: React.ReactNode
 }
 
 /**
@@ -120,21 +78,20 @@ function getParentRoute(navState: NavigationState | null): string | null {
 
 export function PanelSlot({
   entry,
-  state,
   isPrimary,
   isOnly,
   isLast,
+  isFocusedPanel,
   isFocusedMode,
   isRightSidebarVisible,
-  leftOffset,
-  panelWidth,
-  zIndex,
+  proportion,
+  sash,
 }: PanelSlotProps) {
   const closePanel = useSetAtom(closePanelAtom)
+  const setFocusedPanel = useSetAtom(focusedPanelIdAtom)
   const { navigate } = useNavigation()
   const parentContext = useAppShellContext()
   const navState = parseRouteToNavigationState(entry.route)
-  const title = getPanelTitle(navState)
   const parentRoute = isPrimary ? getParentRoute(navState) : null
 
   const handleClose = useCallback(() => {
@@ -146,8 +103,6 @@ export function PanelSlot({
   }, [isPrimary, parentRoute, navigate, closePanel, entry.id])
 
   // Build close button for PanelHeader (via context override)
-  // Primary: shown when there's a selection to clear
-  // Secondary: always shown
   const showCloseButton = isPrimary ? !!parentRoute : true
   const closeButton = useMemo(() => {
     if (!showCloseButton) return null
@@ -162,75 +117,74 @@ export function PanelSlot({
   }, [showCloseButton, handleClose])
 
   // Override AppShellContext so ChatPage/PanelHeader gets our per-panel close button
+  // and isFocusedPanel for input field appearance
   const contextOverride = useMemo(() => ({
     ...parentContext,
     rightSidebarButton: closeButton,
-  }), [parentContext, closeButton])
+    isFocusedPanel,
+  }), [parentContext, closeButton, isFocusedPanel])
+
+  const handlePointerDown = useCallback(() => {
+    if (!isFocusedPanel) {
+      setFocusedPanel(entry.id)
+    }
+  }, [isFocusedPanel, setFocusedPanel, entry.id])
 
   return (
-    <motion.div
-      layout={false}
-      initial={isPrimary ? false : { opacity: 0, x: 50 }}
-      animate={{ opacity: 1, x: 0 }}
-      exit={{ opacity: 0, scale: 0.95 }}
-      transition={{ duration: 0.15, ease: [0.19, 1, 0.22, 1] }}
-      className={cn(
-        'h-full overflow-hidden relative',
-        !isOnly && 'shrink-0',
-        'bg-foreground-2',
-        state === 'overlay' ? 'shadow-strong' : 'shadow-middle',
-        !isOnly && !isPrimary && 'border-l border-foreground/5',
-      )}
-      style={{
-        // Single panel: fill all available space (identical to previous layout)
-        ...(isOnly
-          ? {
-              flexGrow: 1,
-              minWidth: 0,
-              borderTopLeftRadius: isFocusedMode ? 14 : 10,
-              borderBottomLeftRadius: isFocusedMode ? 14 : 10,
-              borderTopRightRadius: isRightSidebarVisible ? 10 : 14,
-              borderBottomRightRadius: isRightSidebarVisible ? 10 : 14,
-            }
-          : {
-              // Multi-panel: sticky positioning with computed offsets
-              position: 'sticky',
-              top: 0,
-              left: leftOffset,
-              right: -(panelWidth - PEEK_WIDTH),
-              width: panelWidth,
-              maxWidth: panelWidth,
-              zIndex,
-              // Border radius: first panel gets larger left radius, last gets larger right
-              borderTopLeftRadius: isPrimary ? (isFocusedMode ? 14 : 10) : 10,
-              borderBottomLeftRadius: isPrimary ? (isFocusedMode ? 14 : 10) : 10,
-              borderTopRightRadius: isLast ? 14 : 10,
-              borderBottomRightRadius: isLast ? 14 : 10,
-            }
-        ),
-      }}
-    >
-      {/* Obscured label — vertical title shown when panel is pinned */}
-      {!isOnly && (
-        <ObscuredLabel title={title} visible={state === 'obscured'} />
-      )}
-
-      {/* Main content — fades when obscured */}
+    <>
+      {sash}
       <div
+        onPointerDown={handlePointerDown}
         className={cn(
-          'h-full flex flex-col',
-          'transition-opacity duration-150',
+          'h-full overflow-hidden relative',
+          'shadow-middle',
+          'bg-foreground-2',
+          !isOnly && !isPrimary && 'border-l border-foreground/5',
         )}
-        style={{ opacity: state === 'obscured' ? 0 : 1 }}
+        style={{
+          // In multi-panel, unfocused panels override --background so all
+          // bg-background children render at the elevated (dimmed) background.
+          ...(!isFocusedPanel && !isOnly
+            ? {
+                '--background': 'var(--background-elevated)',
+                '--foreground': 'var(--foreground-dimmed)',
+                color: 'var(--foreground)',
+                '--shadow-minimal': 'var(--shadow-minimal-flat)',
+                '--user-message-bubble': 'var(--user-message-bubble-dimmed)',
+              } as React.CSSProperties
+            : {}
+          ),
+          ...(isOnly
+            ? {
+                flexGrow: 1,
+                minWidth: 0,
+                borderTopLeftRadius: isFocusedMode ? 14 : 10,
+                borderBottomLeftRadius: isFocusedMode ? 14 : 10,
+                borderTopRightRadius: isRightSidebarVisible ? 10 : 14,
+                borderBottomRightRadius: isRightSidebarVisible ? 10 : 14,
+              }
+            : {
+                flexGrow: proportion,
+                flexShrink: 1,
+                flexBasis: 0,
+                minWidth: PANEL_MIN_WIDTH,
+                borderTopLeftRadius: isPrimary ? (isFocusedMode ? 14 : 10) : 10,
+                borderBottomLeftRadius: isPrimary ? (isFocusedMode ? 14 : 10) : 10,
+                borderTopRightRadius: isLast ? 14 : 10,
+                borderBottomRightRadius: isLast ? 14 : 10,
+              }
+          ),
+        }}
       >
-        {/* Override context so each panel gets its own close button in PanelHeader */}
-        <AppShellProvider value={contextOverride}>
-          <MainContentPanel
-            navStateOverride={navState}
-            isFocusedMode={isFocusedMode}
-          />
-        </AppShellProvider>
+        <div className="h-full flex flex-col">
+          <AppShellProvider value={contextOverride}>
+            <MainContentPanel
+              navStateOverride={navState}
+              isFocusedMode={isFocusedMode}
+            />
+          </AppShellProvider>
+        </div>
       </div>
-    </motion.div>
+    </>
   )
 }

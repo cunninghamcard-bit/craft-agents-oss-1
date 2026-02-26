@@ -363,11 +363,17 @@ export function FreeFormInput({
     return extractWorkspaceSlugFromPath(workspaceRootPath, workspaceId ?? '')
   }, [workspaceRootPath, workspaceId])
 
+  // Read panel focus state from context (for multi-panel unfocused styling)
+  const appShellContext = useOptionalAppShellContext()
+  const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
+
   // Shuffle placeholder order once per mount so each session feels fresh
+  // Hide placeholder entirely when panel is unfocused in multi-panel layout
   const shuffledPlaceholder = React.useMemo(
     () => Array.isArray(placeholder) ? shuffleArray(placeholder) : placeholder,
     [] // eslint-disable-line react-hooks/exhaustive-deps -- intentionally shuffle only on mount
   )
+  const effectivePlaceholder = isFocusedPanel ? shuffledPlaceholder : ''
 
   // Performance optimization: Always use internal state for typing to avoid parent re-renders
   // Sync FROM parent on mount/change (for restoring drafts)
@@ -1406,7 +1412,7 @@ export function FreeFormInput({
             setIsFocused(false)
             onFocusChange?.(false)
           }}
-          placeholder={shuffledPlaceholder}
+          placeholder={effectivePlaceholder}
           disabled={disabled}
           skills={skills}
           sources={sources}
