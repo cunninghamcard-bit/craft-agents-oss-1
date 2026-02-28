@@ -22,11 +22,10 @@
  */
 
 import * as React from 'react'
-import { Image as ImageIcon, Maximize2 } from 'lucide-react'
+import { Maximize2 } from 'lucide-react'
 import { cn } from '../../lib/utils'
 import { CodeBlock } from './CodeBlock'
 import { ImagePreviewOverlay } from '../overlay/ImagePreviewOverlay'
-import { ItemNavigator } from '../overlay/ItemNavigator'
 import { usePlatform } from '../../context/PlatformContext'
 import { ImageCardStack } from './ImageCardStack'
 
@@ -62,6 +61,21 @@ export interface MarkdownImageBlockProps {
   className?: string
 }
 
+function detectImageRatio(src: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.onload = () => {
+      if (!img.naturalWidth || !img.naturalHeight) {
+        resolve(null)
+        return
+      }
+      resolve(img.naturalWidth / img.naturalHeight)
+    }
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
+}
+
 export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps) {
   const { onReadFileDataUrl } = usePlatform()
 
@@ -92,6 +106,8 @@ export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps)
 
   // Content cache: src path → data URL string
   const [contentCache, setContentCache] = React.useState<Record<string, string>>({})
+  // Ratio cache: src path → intrinsic width/height ratio
+  const [ratioCache, setRatioCache] = React.useState<Record<string, number>>({})
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
 
@@ -124,20 +140,25 @@ export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps)
     setError(null)
 
     Promise.allSettled(
-      pendingItems.map(async (item) => ({
-        src: item.src,
-        dataUrl: await onReadFileDataUrl(item.src),
-      }))
+      pendingItems.map(async (item) => {
+        const dataUrl = await onReadFileDataUrl(item.src)
+        const ratio = await detectImageRatio(dataUrl)
+        return { src: item.src, dataUrl, ratio }
+      })
     )
       .then((results) => {
         if (cancelled) return
 
         const nextCache: Record<string, string> = {}
+        const nextRatios: Record<string, number> = {}
         let failedCount = 0
 
         for (const result of results) {
           if (result.status === 'fulfilled') {
             nextCache[result.value.src] = result.value.dataUrl
+            if (result.value.ratio && Number.isFinite(result.value.ratio)) {
+              nextRatios[result.value.src] = result.value.ratio
+            }
           } else {
             failedCount += 1
           }
@@ -145,6 +166,9 @@ export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps)
 
         if (Object.keys(nextCache).length > 0) {
           setContentCache((prev) => ({ ...prev, ...nextCache }))
+        }
+        if (Object.keys(nextRatios).length > 0) {
+          setRatioCache((prev) => ({ ...prev, ...nextRatios }))
         }
 
         if (failedCount > 0) {
@@ -182,7 +206,7 @@ export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps)
     acc.push({
       src: dataUrl,
       label: item.label,
-      ratio: item.ratio,
+      ratio: item.ratio ?? ratioCache[item.src],
       alt: item.label || `Image ${index + 1}`,
     })
     return acc
@@ -196,36 +220,27 @@ export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps)
 
   return (
     <ImageBlockErrorBoundary fallback={fallback}>
-      <div className={cn('relative group rounded-[8px] overflow-hidden border bg-muted/10', className)}>
-        <div className="px-3 py-2 bg-muted/50 border-b flex items-center gap-2">
-          <ImageIcon className="w-3.5 h-3.5 text-muted-foreground/50" />
-          <span className="text-[12px] text-muted-foreground font-medium flex-1">
-            {spec.title || 'Image Preview'}
-          </span>
-          <div className="flex items-center gap-1">
-            <ItemNavigator items={items} activeIndex={activeIndex} onSelect={setActiveIndex} />
-            <button
-              onClick={() => setIsFullscreen(true)}
-              className={cn(
-                'p-1 rounded-[6px] transition-all select-none',
-                'bg-background shadow-minimal',
-                'text-muted-foreground/50 hover:text-foreground',
-                'focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:opacity-100',
-                hasMultiple ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-              )}
-              title="View Fullscreen"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-
-        <div className="relative h-[320px] overflow-hidden bg-muted/20 flex items-center justify-center p-3">
+      <div className={cn('relative group rounded-[8px] overflow-visible', className)}>
+        <div className="relative h-[320px] overflow-visible flex items-center justify-center p-3">
+          <button
+            onClick={() => setIsFullscreen(true)}
+            className={cn(
+              'absolute right-2 top-2 z-10 p-1 rounded-[6px] transition-all select-none',
+              'bg-background/90 shadow-minimal',
+              'text-muted-foreground/60 hover:text-foreground',
+              'focus:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:opacity-100',
+              hasMultiple ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            )}
+            title="View Fullscreen"
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
           {hasMultiple && stackItems.length > 0 && (
             <ImageCardStack
               items={stackItems}
               currentIndex={activeIndex}
               onIndexChange={setActiveIndex}
+              onTopCardTap={() => setIsFullscreen(true)}
               className="max-w-full max-h-full"
             />
           )}
@@ -236,6 +251,7 @@ export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps)
               alt={safeActiveItem?.label || safeActiveItem?.src.split('/').pop() || 'Image preview'}
               className="max-w-full max-h-full object-contain"
               draggable={false}
+              onClick={() => setIsFullscreen(true)}
             />
           )}
 
@@ -247,14 +263,6 @@ export function MarkdownImageBlock({ code, className }: MarkdownImageBlockProps)
             <div className="py-6 text-center text-destructive/70 text-[13px]">{error}</div>
           )}
 
-          {(activeDataUrl || stackItems.length > 0) && (
-            <div
-              className="absolute bottom-0 left-0 right-0 h-8 pointer-events-none"
-              style={{
-                background: 'linear-gradient(to bottom, transparent, var(--muted))',
-              }}
-            />
-          )}
         </div>
       </div>
 

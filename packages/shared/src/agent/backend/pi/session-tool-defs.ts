@@ -7,16 +7,14 @@
 
 import {
   getToolDefsAsJsonSchema,
-  getSessionToolNames,
+  SESSION_TOOL_NAMES,
   type JsonSchemaToolDef,
 } from '@craft-agent/session-tools-core';
 import { FEATURE_FLAGS } from '../../../feature-flags.ts';
 
 export type SessionToolProxyDef = JsonSchemaToolDef;
 
-export const SESSION_TOOL_NAMES = getSessionToolNames({
-  includeDeveloperFeedback: FEATURE_FLAGS.developerFeedback,
-});
+export { SESSION_TOOL_NAMES };
 
 export function getSessionToolProxyDefs(): SessionToolProxyDef[] {
   return getToolDefsAsJsonSchema({

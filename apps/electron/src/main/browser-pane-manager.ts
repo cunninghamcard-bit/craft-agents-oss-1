@@ -845,101 +845,113 @@ export class BrowserPaneManager {
     const instance = this.instances.get(id)
     if (!instance) throw new Error(`Browser instance not found: ${id}`)
 
-    const mode = options?.mode === 'agent' ? 'agent' : 'raw'
-
-    if (mode === 'raw') {
-      const captured = await this.capturePageWithRecovery(instance, {
-        mode,
-        errorPrefix: 'screenshot',
-      })
-
-      return {
-        png: captured.png,
-        metadata: options?.includeMetadata
-          ? {
-            mode: 'raw',
-            warnings: captured.warnings.length > 0 ? captured.warnings : undefined,
-          }
-          : undefined,
-      }
+    // Hide the agent control overlay so it doesn't appear in captures
+    const hadAgentOverlay = !!instance.agentControl?.active
+    if (hadAgentOverlay) {
+      await instance.cdp.setAgentOverlayVisibility(false).catch(() => {})
     }
-
-    const warnings: string[] = []
-    const geometries: ElementGeometry[] = []
-
-    const refs = options?.refs ?? []
-    for (const ref of refs) {
-      try {
-        geometries.push(await instance.cdp.getElementGeometry(ref))
-      } catch (error) {
-        warnings.push(`Could not resolve ref ${ref}: ${error instanceof Error ? error.message : String(error)}`)
-      }
-    }
-
-    if (options?.includeLastAction && instance.lastAction?.geometry) {
-      geometries.push(instance.lastAction.geometry)
-    }
-
-    const metadataText = instance.lastAction
-      ? `${instance.lastAction.tool} • ${instance.lastAction.status} • ${new Date(instance.lastAction.timestamp).toISOString()}`
-      : `browser_screenshot • ${new Date().toISOString()}`
-
-    let annotationPartial = false
 
     try {
-      if (geometries.length > 0 || options?.includeMetadata) {
-        await instance.cdp.renderTemporaryOverlay({
-          geometries,
-          includeMetadata: !!options?.includeMetadata,
-          metadataText,
-          includeClickPoints: true,
+      const mode = options?.mode === 'agent' ? 'agent' : 'raw'
+
+      if (mode === 'raw') {
+        const captured = await this.capturePageWithRecovery(instance, {
+          mode,
+          errorPrefix: 'screenshot',
         })
-      }
-    } catch (error) {
-      annotationPartial = true
-      warnings.push(`Annotation overlay failed: ${error instanceof Error ? error.message : String(error)}`)
-    }
 
-    try {
-      const viewport = await instance.cdp.getViewportMetrics()
-      const captured = await this.capturePageWithRecovery(instance, {
-        mode,
-        errorPrefix: 'screenshot',
-      })
-
-      if (captured.warnings.length > 0) {
-        warnings.push(...captured.warnings)
-      }
-
-      return {
-        png: captured.png,
-        metadata: {
-          mode: 'agent',
-          viewport,
-          targets: geometries.map((g) => ({
-            ref: g.ref,
-            role: g.role,
-            name: g.name,
-            box: g.box,
-            clickPoint: g.clickPoint,
-          })),
-          action: instance.lastAction
+        return {
+          png: captured.png,
+          metadata: options?.includeMetadata
             ? {
-              tool: instance.lastAction.tool,
-              ref: instance.lastAction.ref,
-              status: instance.lastAction.status,
-              timestamp: instance.lastAction.timestamp,
+              mode: 'raw',
+              warnings: captured.warnings.length > 0 ? captured.warnings : undefined,
             }
             : undefined,
-          annotationPartial,
-          warnings: warnings.length > 0 ? warnings : undefined,
-        },
+        }
+      }
+
+      const warnings: string[] = []
+      const geometries: ElementGeometry[] = []
+
+      const refs = options?.refs ?? []
+      for (const ref of refs) {
+        try {
+          geometries.push(await instance.cdp.getElementGeometry(ref))
+        } catch (error) {
+          warnings.push(`Could not resolve ref ${ref}: ${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+
+      if (options?.includeLastAction && instance.lastAction?.geometry) {
+        geometries.push(instance.lastAction.geometry)
+      }
+
+      const metadataText = instance.lastAction
+        ? `${instance.lastAction.tool} • ${instance.lastAction.status} • ${new Date(instance.lastAction.timestamp).toISOString()}`
+        : `browser_screenshot • ${new Date().toISOString()}`
+
+      let annotationPartial = false
+
+      try {
+        if (geometries.length > 0 || options?.includeMetadata) {
+          await instance.cdp.renderTemporaryOverlay({
+            geometries,
+            includeMetadata: !!options?.includeMetadata,
+            metadataText,
+            includeClickPoints: true,
+          })
+        }
+      } catch (error) {
+        annotationPartial = true
+        warnings.push(`Annotation overlay failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+
+      try {
+        const viewport = await instance.cdp.getViewportMetrics()
+        const captured = await this.capturePageWithRecovery(instance, {
+          mode,
+          errorPrefix: 'screenshot',
+        })
+
+        if (captured.warnings.length > 0) {
+          warnings.push(...captured.warnings)
+        }
+
+        return {
+          png: captured.png,
+          metadata: {
+            mode: 'agent',
+            viewport,
+            targets: geometries.map((g) => ({
+              ref: g.ref,
+              role: g.role,
+              name: g.name,
+              box: g.box,
+              clickPoint: g.clickPoint,
+            })),
+            action: instance.lastAction
+              ? {
+                tool: instance.lastAction.tool,
+                ref: instance.lastAction.ref,
+                status: instance.lastAction.status,
+                timestamp: instance.lastAction.timestamp,
+              }
+              : undefined,
+            annotationPartial,
+            warnings: warnings.length > 0 ? warnings : undefined,
+          },
+        }
+      } finally {
+        try {
+          await instance.cdp.clearTemporaryOverlay()
+        } catch {
+          // ignore cleanup errors
+        }
       }
     } finally {
-      try {
-        await instance.cdp.clearTemporaryOverlay()
-      } catch {
-        // ignore cleanup errors
+      if (hadAgentOverlay) {
+        await instance.cdp.setAgentOverlayVisibility(true).catch(() => {})
       }
     }
   }
@@ -960,69 +972,81 @@ export class BrowserPaneManager {
       throw new Error('Region screenshot target is ambiguous. Provide only one of coordinates, ref, or selector')
     }
 
-    let box: { x: number; y: number; width: number; height: number }
+    // Hide the agent control overlay so it doesn't appear in captures
+    const hadAgentOverlay = !!instance.agentControl?.active
+    if (hadAgentOverlay) {
+      await instance.cdp.setAgentOverlayVisibility(false).catch(() => {})
+    }
 
-    if (hasRef) {
-      const geometry = await instance.cdp.getElementGeometry(String(target.ref))
-      box = { ...geometry.box }
-    } else if (hasSelector) {
-      const geometry = await instance.cdp.getElementGeometryBySelector(String(target.selector))
-      box = { ...geometry.box }
-    } else {
-      box = {
-        x: Number(target.x),
-        y: Number(target.y),
-        width: Number(target.width),
-        height: Number(target.height),
+    try {
+      let box: { x: number; y: number; width: number; height: number }
+
+      if (hasRef) {
+        const geometry = await instance.cdp.getElementGeometry(String(target.ref))
+        box = { ...geometry.box }
+      } else if (hasSelector) {
+        const geometry = await instance.cdp.getElementGeometryBySelector(String(target.selector))
+        box = { ...geometry.box }
+      } else {
+        box = {
+          x: Number(target.x),
+          y: Number(target.y),
+          width: Number(target.width),
+          height: Number(target.height),
+        }
       }
-    }
 
-    const padding = Math.max(0, Number(target.padding ?? 0))
-    box = {
-      x: box.x - padding,
-      y: box.y - padding,
-      width: box.width + padding * 2,
-      height: box.height + padding * 2,
-    }
+      const padding = Math.max(0, Number(target.padding ?? 0))
+      box = {
+        x: box.x - padding,
+        y: box.y - padding,
+        width: box.width + padding * 2,
+        height: box.height + padding * 2,
+      }
 
-    const viewport = await instance.cdp.getViewportMetrics()
+      const viewport = await instance.cdp.getViewportMetrics()
 
-    const clippedX = Math.max(0, Math.floor(box.x))
-    const clippedY = Math.max(0, Math.floor(box.y))
-    const maxWidth = Math.max(0, Math.floor(viewport.width - clippedX))
-    const maxHeight = Math.max(0, Math.floor(viewport.height - clippedY))
-    const clippedWidth = Math.min(Math.max(1, Math.floor(box.width)), maxWidth)
-    const clippedHeight = Math.min(Math.max(1, Math.floor(box.height)), maxHeight)
+      const clippedX = Math.max(0, Math.floor(box.x))
+      const clippedY = Math.max(0, Math.floor(box.y))
+      const maxWidth = Math.max(0, Math.floor(viewport.width - clippedX))
+      const maxHeight = Math.max(0, Math.floor(viewport.height - clippedY))
+      const clippedWidth = Math.min(Math.max(1, Math.floor(box.width)), maxWidth)
+      const clippedHeight = Math.min(Math.max(1, Math.floor(box.height)), maxHeight)
 
-    if (maxWidth <= 0 || maxHeight <= 0 || clippedWidth <= 0 || clippedHeight <= 0) {
-      throw new Error('Resolved screenshot region is outside the current viewport')
-    }
+      if (maxWidth <= 0 || maxHeight <= 0 || clippedWidth <= 0 || clippedHeight <= 0) {
+        throw new Error('Resolved screenshot region is outside the current viewport')
+      }
 
-    const captured = await this.capturePageWithRecovery(instance, {
-      mode: 'region',
-      errorPrefix: 'region screenshot',
-      rect: {
-        x: clippedX,
-        y: clippedY,
-        width: clippedWidth,
-        height: clippedHeight,
-      },
-    })
-
-    return {
-      png: captured.png,
-      metadata: {
-        mode: 'raw',
-        viewport,
-        region: {
+      const captured = await this.capturePageWithRecovery(instance, {
+        mode: 'region',
+        errorPrefix: 'region screenshot',
+        rect: {
           x: clippedX,
           y: clippedY,
           width: clippedWidth,
           height: clippedHeight,
         },
-        targetMode: hasRef ? 'ref' : hasSelector ? 'selector' : 'coords',
-        warnings: captured.warnings.length > 0 ? captured.warnings : undefined,
-      },
+      })
+
+      return {
+        png: captured.png,
+        metadata: {
+          mode: 'raw',
+          viewport,
+          region: {
+            x: clippedX,
+            y: clippedY,
+            width: clippedWidth,
+            height: clippedHeight,
+          },
+          targetMode: hasRef ? 'ref' : hasSelector ? 'selector' : 'coords',
+          warnings: captured.warnings.length > 0 ? captured.warnings : undefined,
+        },
+      }
+    } finally {
+      if (hadAgentOverlay) {
+        await instance.cdp.setAgentOverlayVisibility(true).catch(() => {})
+      }
     }
   }
 

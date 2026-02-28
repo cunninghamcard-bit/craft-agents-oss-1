@@ -32,7 +32,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { isDeveloperFeedbackEnabled } from '@craft-agent/shared/feature-flags';
 // Import from session-tools-core
 import {
   type SessionToolContext,
@@ -61,29 +61,6 @@ interface SessionConfig {
 }
 
 const CALLBACK_TOOL_TIMEOUT_MS = 120000;
-
-function parseBooleanEnv(value: string | undefined): boolean | undefined {
-  if (value == null) return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
-  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
-  return undefined;
-}
-
-function isDeveloperFeedbackEnabled(): boolean {
-  const explicit = parseBooleanEnv(process.env.CRAFT_FEATURE_DEVELOPER_FEEDBACK);
-  if (explicit !== undefined) {
-    return explicit;
-  }
-
-  const nodeEnv = (process.env.NODE_ENV || '').toLowerCase();
-  const isDevRuntime = nodeEnv === 'development' || nodeEnv === 'dev' || process.env.CRAFT_DEBUG === '1';
-  return isDevRuntime;
-}
-
-function getConfigRootDir(): string {
-  return process.env.CRAFT_CONFIG_DIR || join(homedir(), '.craft-agent');
-}
 
 // ============================================================
 // Callback Communication
@@ -265,7 +242,8 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
 
     // Developer feedback: write one JSON file per entry to {configDir}/feedback/
     submitFeedback: (feedback) => {
-      const feedbackDir = join(getConfigRootDir(), 'feedback');
+      const configDir = process.env.CRAFT_CONFIG_DIR || join(workspaceRootPath, '..', '..');
+      const feedbackDir = join(configDir, 'feedback');
       mkdirSync(feedbackDir, { recursive: true });
       const filePath = join(feedbackDir, `${feedback.id}.json`);
       writeFileSync(filePath, JSON.stringify(feedback, null, 2), 'utf-8');

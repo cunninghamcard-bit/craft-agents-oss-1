@@ -545,6 +545,16 @@ export class BrowserCDP {
     await this.setAgentVisualState({ active: false })
   }
 
+  /** Hide or show the agent control overlay without destroying it. */
+  async setAgentOverlayVisibility(visible: boolean): Promise<void> {
+    await this.send('Runtime.evaluate', {
+      expression: `(() => {
+        const el = document.getElementById('__craft_agent_live_fx__');
+        if (el) el.style.display = ${visible ? "''" : "'none'"};
+      })()`,
+    })
+  }
+
   // ---------------------------------------------------------------------------
   // Element Interaction
   // ---------------------------------------------------------------------------

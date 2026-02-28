@@ -48,6 +48,7 @@
     "./validation": "./src/validation/index.ts",
     "./version": "./src/version/index.ts",
     "./branding": "./src/branding.ts",
+    "./feature-flags": "./src/feature-flags.ts",
     "./interceptor": "./src/interceptor-common.ts",
     "./search": "./src/search/index.ts",
     "./tools": "./src/tools/index.ts",
