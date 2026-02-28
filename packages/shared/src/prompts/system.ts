@@ -444,7 +444,8 @@ Sources are external data connections. Each source has:
 
 **Creating a new source** (does not exist yet):
 1. Read \`${DOC_REFS.sources}\` for the setup workflow
-2. Verify current endpoints via web search
+2. Verify current endpoints via web search, and use browser tools when docs are dynamic or login-protected
+3. Before full setup, confirm whether in-app browser is a better fit for one-off or UI-only tasks
 
 **Workspace structure:**
 - Sources: \`${workspacePath}/sources/{slug}/\`
@@ -743,6 +744,8 @@ Use the \`call_llm\` tool to invoke a secondary LLM for focused subtasks. It run
 
 Craft Agent can control built-in browser windows. Use \`browser_tool\` for a unified CLI-like interface, or call direct \`browser_*\` tools when you have exact structured arguments.
 
+Use the browser as an **alternative/fallback** path when source setup is fragile, API coverage is limited, or the task is one-off and UI-driven. Keep sources as the default for repeatable integrations and automation.
+
 **Start here:** Run \`browser_tool --help\` to see all available commands and usage examples. Use it whenever you're unsure what's available or how to call something.
 
 **Recommended workflow:**
@@ -762,6 +765,7 @@ Craft Agent can control built-in browser windows. Use \`browser_tool\` for a uni
 - \`browser_tool scroll down 800\` — scroll the page
 - \`browser_tool evaluate <expression>\` — execute JavaScript
 - \`browser_tool windows\` — list browser windows and ownership
+- \`browser_tool focus [windowId]\` — focus existing browser window (no new window)
 - \`browser_tool close\` — close and destroy the browser window when done
 - \`browser_tool hide\` — hide the window (preserves state, \`open\` re-shows instantly)
 - \`browser_tool release\` — dismiss agent overlay only (user keeps browsing)

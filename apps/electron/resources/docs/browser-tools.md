@@ -12,6 +12,35 @@ Use browser tools to control built-in **browser windows** (Chromium) inside Craf
 
 ---
 
+## Browser as an Alternative to Source Setup
+
+Use browser workflows when creating a source would add unnecessary overhead for the current task.
+
+**Good fit for browser-first:**
+- One-off tasks that don’t need reusable integration
+- UI-only workflows where API/MCP coverage is poor
+- Known fragile auth/setup cases where user needs results now
+
+**Still prefer sources when:**
+- Work is repeatable and automation/reporting is needed
+- Team-wide reuse and stable tooling matter
+
+### Quick recipes
+
+1. **One-off operational task**
+   - `open` → `navigate` → `snapshot` → `click/fill/select` → `extract/evaluate`
+   - Complete task without adding long-term source maintenance
+
+2. **API/UI capability gap**
+   - Use browser interactions for the missing capability
+   - Note the API limitation in guidance if a source exists
+
+3. **Source setup fallback**
+   - If source auth/setup is blocked, switch to browser to unblock the user
+   - Offer optional source setup later if recurring workflows emerge
+
+---
+
 ## Core workflow
 
 If you're unsure which window to use, run `browser_tool({ command: "windows" })` first.
@@ -50,6 +79,8 @@ browser_tool({ command: "wait network-idle 8000" })
 browser_tool({ command: "key Enter" })
 browser_tool({ command: "key k meta" })
 browser_tool({ command: "downloads wait 15000" })
+browser_tool({ command: "focus" })
+browser_tool({ command: "focus browser-1" })
 browser_tool({ command: "windows" })
 browser_tool({ command: "release" })
 browser_tool({ command: "close" })
@@ -57,6 +88,19 @@ browser_tool({ command: "hide" })
 ```
 
 The wrapper validates commands and returns actionable errors when arguments are missing or invalid.
+
+### `browser_tool focus [windowId]`
+Focus an existing browser window and bring it to the foreground.
+
+**Use when:**
+- you want explicit foreground behavior without implying "open"
+- re-showing a hidden browser window for the current session
+- targeting a specific window by id (from `windows` output)
+
+**Behavior:**
+- `focus` (no id): focuses the current session-bound window
+- `focus <windowId>`: focuses that window if it is available to the session
+- does **not** create a new window
 
 ### `browser_tool windows`
 List currently known browser windows and ownership state.
@@ -347,6 +391,7 @@ Hide the browser window but keep it alive in memory.
 ## Behavior notes
 
 - Browser tools are allowed in **Explore/Safe mode** by default.
+- For browser-first one-offs, avoid destructive UI actions unless explicitly requested, and never expose secrets in outputs.
 - Before first browser tool usage, the agent must read this guide (`~/.craft-agent/docs/browser-tools.md`).
 - Closing a browser window UI (via OS close button) **hides** it (keeps session/browser context alive).
 - Use `browser_tool close` for explicit full teardown/reset.

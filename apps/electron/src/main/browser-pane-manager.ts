@@ -7,8 +7,9 @@
  */
 
 import { join } from 'path'
-import { BrowserView, BrowserWindow, Menu, ipcMain, nativeTheme, session, type Session as ElectronSession } from 'electron'
+import { BrowserView, BrowserWindow, Menu, ipcMain, nativeTheme, session, shell, type Session as ElectronSession } from 'electron'
 import { mainLog } from './logger'
+import type { WindowManager } from './window-manager'
 import { BrowserCDP, type AccessibilitySnapshot, type ElementGeometry } from './browser-cdp'
 import type { BrowserInstanceInfo } from '../shared/types'
 
@@ -27,6 +28,8 @@ const THEME_COLOR_SIGNAL_PREFIX = '__craft_theme_color__:'
 const THEME_COLOR_NULL_SENTINEL = '__NULL__'
 const THEME_OBSERVER_MIN_INTERVAL_MS = 120
 const EARLY_THEME_EXTRACTION_DELAY_MS = 100
+const BROWSER_EMPTY_STATE_PAGE = 'browser-empty-state.html'
+const CRAFT_DEEPLINK_SCHEME_PREFIX = `${process.env.CRAFT_DEEPLINK_SCHEME || 'craftagents'}://`
 
 const THEME_COLOR_EXTRACTOR_FN = String.raw`
 () => {
@@ -134,6 +137,7 @@ interface BrowserInstance {
   consoleLogs: BrowserConsoleEntry[]
   networkLogs: BrowserNetworkEntry[]
   downloads: BrowserDownloadEntry[]
+  lastLaunchToken: string | null
 }
 
 interface CreateBrowserInstanceOptions {
@@ -280,6 +284,11 @@ export class BrowserPaneManager {
   private partitionObserversInitialized = false
   private inFlightRequestsByWebContentsId = new Map<number, number>()
   private lastNetworkActivityByWebContentsId = new Map<number, number>()
+  private windowManager: WindowManager | null = null
+
+  setWindowManager(windowManager: WindowManager): void {
+    this.windowManager = windowManager
+  }
 
   onStateChange(callback: (info: BrowserInstanceInfo) => void): void {
     this.stateChangeCallback = callback
@@ -374,6 +383,7 @@ export class BrowserPaneManager {
       consoleLogs: [],
       networkLogs: [],
       downloads: [],
+      lastLaunchToken: null,
     }
 
     const defaultUa = pageView.webContents.userAgent || ''
@@ -403,7 +413,10 @@ export class BrowserPaneManager {
           this.markToolbarReady(instance, 'toolbar-load-finalized')
         }
       })
-    void pageView.webContents.loadURL('about:blank')
+    void this.loadEmptyStatePage(instance).catch((error) => {
+      mainLog.warn(`[browser-pane] empty-state load failed id=${instance.id}: ${error instanceof Error ? error.message : String(error)}`)
+      void pageView.webContents.loadURL('about:blank')
+    })
 
     return instanceId
   }
@@ -1162,6 +1175,94 @@ export class BrowserPaneManager {
     instance.pageView.setAutoResize({ width: true, height: true })
   }
 
+  private isBrowserEmptyStateUrl(url: string): boolean {
+    if (!url) return false
+    return url.includes(`/${BROWSER_EMPTY_STATE_PAGE}`) || url.includes(`\\${BROWSER_EMPTY_STATE_PAGE}`)
+  }
+
+  private normalizePageState(url: string, title: string): { url: string; title: string } {
+    if (this.isBrowserEmptyStateUrl(url)) {
+      return { url: 'about:blank', title: 'New Tab' }
+    }
+    return { url, title }
+  }
+
+  private async loadEmptyStatePage(instance: BrowserInstance): Promise<void> {
+    if (VITE_DEV_SERVER_URL) {
+      await instance.pageView.webContents.loadURL(`${VITE_DEV_SERVER_URL}/${BROWSER_EMPTY_STATE_PAGE}`)
+      return
+    }
+
+    await instance.pageView.webContents.loadFile(join(__dirname, `renderer/${BROWSER_EMPTY_STATE_PAGE}`))
+  }
+
+  private async handleDeepLinkUrl(url: string): Promise<void> {
+    if (!url.startsWith(CRAFT_DEEPLINK_SCHEME_PREFIX)) return
+
+    try {
+      if (!this.windowManager) {
+        mainLog.warn('[browser-pane] window manager unavailable for deep-link handling, falling back to shell.openExternal')
+        await shell.openExternal(url)
+        return
+      }
+
+      const { handleDeepLink } = await import('./deep-link')
+      const result = await handleDeepLink(url, this.windowManager)
+      if (!result.success) {
+        mainLog.warn(`[browser-pane] deep-link handling failed: ${result.error ?? 'unknown error'} url=${url}`)
+      }
+    } catch (error) {
+      mainLog.warn(`[browser-pane] deep-link handling threw, falling back to shell.openExternal: ${error instanceof Error ? error.message : String(error)}`)
+      await shell.openExternal(url)
+    }
+  }
+
+  private async maybeHandleEmptyStateLaunch(instance: BrowserInstance, url: string): Promise<boolean> {
+    if (!this.isBrowserEmptyStateUrl(url) || !url.includes('#launch=')) {
+      return false
+    }
+
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return false
+    }
+
+    const hash = parsed.hash.startsWith('#') ? parsed.hash.slice(1) : parsed.hash
+    const launchPayload = hash.startsWith('launch=') ? hash.slice('launch='.length) : hash
+    if (!launchPayload) return false
+
+    const params = new URLSearchParams(launchPayload)
+    const route = params.get('route')
+    const token = params.get('ts') ?? route ?? null
+
+    if (!route) {
+      mainLog.warn(`[browser-pane] empty-state launch missing route id=${instance.id}`)
+      return false
+    }
+
+    if (token && instance.lastLaunchToken === token) {
+      return true
+    }
+
+    instance.lastLaunchToken = token
+    const deepLink = `${CRAFT_DEEPLINK_SCHEME_PREFIX}${route}`
+    mainLog.info(`[browser-pane] handling empty-state launch id=${instance.id} route=${route}`)
+
+    await this.handleDeepLinkUrl(deepLink)
+
+    try {
+      await instance.pageView.webContents.executeJavaScript(
+        "if (window.location.hash.includes('launch=')) history.replaceState(null, '', window.location.pathname + window.location.search);",
+      )
+    } catch {
+      // Best effort cleanup only
+    }
+
+    return true
+  }
+
   private async loadToolbarPage(instance: BrowserInstance): Promise<void> {
     const query = `instanceId=${encodeURIComponent(instance.id)}`
     let lastError: unknown = null
@@ -1748,8 +1849,9 @@ export class BrowserPaneManager {
       }
       instance.themeObserverToken = null
       instance.themeColor = null // reset for new page (batched with state push below)
-      instance.currentUrl = url
-      instance.title = pageWc.getTitle()
+      const normalized = this.normalizePageState(url, pageWc.getTitle())
+      instance.currentUrl = normalized.url
+      instance.title = normalized.title
       instance.canGoBack = pageWc.canGoBack()
       instance.canGoForward = pageWc.canGoForward()
       // Drain in-flight count — prior page's requests are cancelled on navigation
@@ -1762,22 +1864,36 @@ export class BrowserPaneManager {
     })
 
     pageWc.on('did-navigate-in-page', (_event, url) => {
-      instance.currentUrl = url
+      const normalized = this.normalizePageState(url, instance.title)
+      instance.currentUrl = normalized.url
+      instance.title = normalized.title
       instance.canGoBack = pageWc.canGoBack()
       instance.canGoForward = pageWc.canGoForward()
-      // SPA route change — re-extract theme color (debounced)
-      if (instance.inPageThemeTimer) clearTimeout(instance.inPageThemeTimer)
-      instance.themeObserverToken = null
-      instance.themeColor = null
-      this.emitStateChange(instance)
-      void this.pushToolbarState(instance)
-      this.installThemeObserver(instance)
-      instance.inPageThemeTimer = setTimeout(() => { void this.extractThemeColor(instance) }, 300)
-      this.reapplyAgentControlVisual(instance)
+
+      void this.maybeHandleEmptyStateLaunch(instance, url).then((handled) => {
+        if (handled) {
+          this.emitStateChange(instance)
+          void this.pushToolbarState(instance)
+          return
+        }
+
+        // SPA route change — re-extract theme color (debounced)
+        if (instance.inPageThemeTimer) clearTimeout(instance.inPageThemeTimer)
+        instance.themeObserverToken = null
+        instance.themeColor = null
+        this.emitStateChange(instance)
+        void this.pushToolbarState(instance)
+        this.installThemeObserver(instance)
+        instance.inPageThemeTimer = setTimeout(() => { void this.extractThemeColor(instance) }, 300)
+        this.reapplyAgentControlVisual(instance)
+      }).catch((error) => {
+        mainLog.warn(`[browser-pane] empty-state launch handling failed id=${instance.id}: ${error instanceof Error ? error.message : String(error)}`)
+      })
     })
 
     pageWc.on('page-title-updated', (_event, title) => {
-      instance.title = title
+      const normalized = this.normalizePageState(pageWc.getURL(), title)
+      instance.title = normalized.title
       this.emitStateChange(instance)
       void this.pushToolbarState(instance)
     })
@@ -1828,8 +1944,19 @@ export class BrowserPaneManager {
       }
     })
 
-    // Keep popups in the same browser window
+    pageWc.on('will-navigate', (event, url) => {
+      if (url.startsWith(CRAFT_DEEPLINK_SCHEME_PREFIX)) {
+        event.preventDefault()
+        void this.handleDeepLinkUrl(url)
+      }
+    })
+
+    // Keep popups in the same browser window unless they are app deep links.
     pageWc.setWindowOpenHandler((details) => {
+      if (details.url.startsWith(CRAFT_DEEPLINK_SCHEME_PREFIX)) {
+        void this.handleDeepLinkUrl(details.url)
+        return { action: 'deny' }
+      }
       void pageWc.loadURL(details.url)
       return { action: 'deny' }
     })

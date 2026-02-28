@@ -95,6 +95,7 @@ export {
   StyledDropdownMenuSubContent,
   BrowserShader,
   BrowserControls,
+  BrowserEmptyStateCard,
   type SpinnerProps,
   type SimpleDropdownProps,
   type SimpleDropdownItemProps,
@@ -103,6 +104,8 @@ export {
   type PreviewBadgeVariant,
   type BrowserShaderProps,
   type BrowserControlsProps,
+  type BrowserEmptyStateCardProps,
+  type BrowserEmptyPromptSample,
 } from './components/ui'
 
 // Tooltip

@@ -54,6 +54,7 @@ import {
   type StoredMessage,
   type SessionMetadata,
   type SessionStatus,
+  type SessionHeader,
   pickSessionFields,
 } from '@craft-agent/shared/sessions'
 import { loadWorkspaceSources, loadAllSources, getSourcesBySlugs, isSourceUsable, type LoadedSource, type McpServerConfig, getSourcesNeedingAuth, getSourceCredentialManager, getSourceServerBuilder, type SourceWithCredential, isApiOAuthProvider, SERVER_BUILD_ERRORS, TokenRefreshManager, createTokenGetter } from '@craft-agent/shared/sources'
@@ -77,7 +78,7 @@ import { AutomationSystem, AUTOMATIONS_HISTORY_FILE, type AutomationSystemMetada
 
 // Import and re-export (extracted to avoid Electron dependency in tests)
 import { sanitizeForTitle } from './title-sanitizer'
-import { shouldActivateBrowserOverlay } from './browser-tool-detection'
+import { shouldActivateBrowserOverlay, normalizeBrowserToolName } from './browser-tool-detection'
 import { rollbackFailedBranchCreation } from './session-branch-cleanup'
 import { resizeImageForAPI } from './image-utils'
 export { sanitizeForTitle }
@@ -333,6 +334,41 @@ function resizeIconBuffer(buffer: Buffer, targetSize: number): Buffer | undefine
   return resized.toPNG()
 }
 
+const BROWSER_TOOL_ICON_FILENAME = 'chrome.svg'
+let browserToolIconDataUrlCache: string | null | undefined
+
+function getBrowserToolIconDataUrl(): string | undefined {
+  // Cache miss sentinel: undefined means "not computed yet"
+  if (browserToolIconDataUrlCache !== undefined) {
+    return browserToolIconDataUrlCache ?? undefined
+  }
+
+  try {
+    const iconCandidates = [
+      join(getToolIconsDir(), BROWSER_TOOL_ICON_FILENAME),
+      // Dev fallback (before sync to ~/.craft-agent/tool-icons)
+      join(process.cwd(), 'apps', 'electron', 'resources', 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
+      // Packaged fallback (app resources)
+      join(process.resourcesPath, 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
+    ]
+
+    for (const iconPath of iconCandidates) {
+      if (!existsSync(iconPath)) continue
+      const encoded = encodeIconToDataUrl(iconPath, { resize: resizeIconBuffer })
+      if (encoded) {
+        browserToolIconDataUrlCache = encoded
+        return encoded
+      }
+    }
+
+    browserToolIconDataUrlCache = null
+  } catch {
+    browserToolIconDataUrlCache = null
+  }
+
+  return browserToolIconDataUrlCache ?? undefined
+}
+
 function resolveToolDisplayMeta(
   toolName: string,
   toolInput: Record<string, unknown> | undefined,
@@ -391,8 +427,10 @@ function resolveToolDisplayMeta(
       if (internalServer) {
         const displayName = internalServer[toolSlug]
         if (displayName) {
+          const normalizedBrowserTool = normalizeBrowserToolName(toolSlug)
           return {
             displayName,
+            iconDataUrl: normalizedBrowserTool ? getBrowserToolIconDataUrl() : undefined,
             category: 'native' as const,
           }
         }
@@ -472,6 +510,22 @@ function resolveToolDisplayMeta(
       }
     } catch {
       // Icon resolution is best-effort — never crash the session for it
+    }
+  }
+
+  // Native browser tool names (with Chrome icon)
+  const normalizedBrowserToolName = normalizeBrowserToolName(toolName)
+  if (normalizedBrowserToolName) {
+    const browserDisplayName = normalizedBrowserToolName
+      .split('_')
+      .map((part, index) => (index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
+      .join(' ')
+      .replace(/^browser\s+/i, 'Browser ')
+
+    return {
+      displayName: browserDisplayName,
+      iconDataUrl: getBrowserToolIconDataUrl(),
+      category: 'native' as const,
     }
   }
 
@@ -592,6 +646,8 @@ interface ManagedSession {
   lastFinalMessageId?: string
   // Turn baseline: last final assistant message ID at turn start (runtime-only, not persisted)
   turnStartFinalMessageId?: string
+  // External session metadata updates seen while processing (applied after turn stop)
+  pendingExternalMetadata?: SessionHeader
   // Whether an async operation is ongoing (sharing, updating share, revoking, title regeneration)
   // Used for shimmer effect on session title
   isAsyncOperationOngoing?: boolean
@@ -800,6 +856,72 @@ export class SessionManager {
   }
 
   /**
+   * Apply external session header metadata to in-memory state and emit UI events.
+   * Returns true if any in-memory metadata field changed.
+   */
+  private applyExternalSessionMetadata(managed: ManagedSession, header: SessionHeader): boolean {
+    const sessionId = managed.id
+    let changed = false
+
+    // Labels
+    const oldLabels = JSON.stringify(managed.labels ?? [])
+    const newLabels = JSON.stringify(header.labels ?? [])
+    if (oldLabels !== newLabels) {
+      managed.labels = header.labels
+      this.sendEvent({ type: 'labels_changed', sessionId, labels: header.labels ?? [] }, managed.workspace.id)
+      changed = true
+    }
+
+    // Flagged
+    if ((managed.isFlagged ?? false) !== (header.isFlagged ?? false)) {
+      managed.isFlagged = header.isFlagged ?? false
+      this.sendEvent(
+        { type: header.isFlagged ? 'session_flagged' : 'session_unflagged', sessionId },
+        managed.workspace.id
+      )
+      changed = true
+    }
+
+    // Session status
+    if (managed.sessionStatus !== header.sessionStatus) {
+      managed.sessionStatus = header.sessionStatus
+      this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus: header.sessionStatus ?? '' }, managed.workspace.id)
+      changed = true
+    }
+
+    // Name
+    if (managed.name !== header.name) {
+      managed.name = header.name
+      this.sendEvent({ type: 'name_changed', sessionId, name: header.name }, managed.workspace.id)
+      changed = true
+    }
+
+    if (changed) {
+      sessionLog.info(`External metadata change detected for session ${sessionId}`)
+
+      // Prevent stale pending writes from reverting externally-updated metadata.
+      sessionPersistenceQueue.cancel(sessionId)
+      this.persistSession(managed)
+    }
+
+    // Update session metadata via AutomationSystem (handles diffing and event emission internally)
+    const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
+    if (automationSystem) {
+      automationSystem.updateSessionMetadata(sessionId, {
+        permissionMode: header.permissionMode,
+        labels: header.labels,
+        isFlagged: header.isFlagged,
+        sessionStatus: header.sessionStatus,
+        sessionName: header.name,
+      }).catch((error) => {
+        sessionLog.error(`[Automations] Failed to update session metadata:`, error)
+      })
+    }
+
+    return changed
+  }
+
+  /**
    * Set up ConfigWatcher for a workspace to broadcast live updates
    * (sources added/removed, guide.md changes, etc.)
    * Called during window init (GET_WINDOW_WORKSPACE) and workspace switch.
@@ -892,72 +1014,18 @@ export class SessionManager {
 
       // Session metadata changes (external edits to session.jsonl headers).
       // Detects label/flag/name/sessionStatus changes made by other instances or scripts.
-      // Compares with in-memory state and only emits events for actual differences.
+      // If a session is actively processing, defer applying metadata until processing stops.
       onSessionMetadataChange: (sessionId, header) => {
         const managed = this.sessions.get(sessionId)
         if (!managed) return
 
-        // Skip if session is currently processing — in-memory state is authoritative during streaming
-        if (managed.isProcessing) return
-
-        let changed = false
-
-        // Labels
-        const oldLabels = JSON.stringify(managed.labels ?? [])
-        const newLabels = JSON.stringify(header.labels ?? [])
-        if (oldLabels !== newLabels) {
-          managed.labels = header.labels
-          this.sendEvent({ type: 'labels_changed', sessionId, labels: header.labels ?? [] }, managed.workspace.id)
-          changed = true
+        if (managed.isProcessing) {
+          managed.pendingExternalMetadata = header
+          sessionLog.info(`Deferred external metadata update for session ${sessionId} (processing active)`)
+          return
         }
 
-        // Flagged
-        if ((managed.isFlagged ?? false) !== (header.isFlagged ?? false)) {
-          managed.isFlagged = header.isFlagged ?? false
-          this.sendEvent(
-            { type: header.isFlagged ? 'session_flagged' : 'session_unflagged', sessionId },
-            managed.workspace.id
-          )
-          changed = true
-        }
-
-        // Session status
-        if (managed.sessionStatus !== header.sessionStatus) {
-          managed.sessionStatus = header.sessionStatus
-          this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus: header.sessionStatus ?? '' }, managed.workspace.id)
-          changed = true
-        }
-
-        // Name
-        if (managed.name !== header.name) {
-          managed.name = header.name
-          this.sendEvent({ type: 'name_changed', sessionId, name: header.name }, managed.workspace.id)
-          changed = true
-        }
-
-        if (changed) {
-          sessionLog.info(`External metadata change detected for session ${sessionId}`)
-
-          // Prevent stale pending writes from reverting externally-updated metadata.
-          // Cancel any queued write created before this watcher update, then persist
-          // the refreshed in-memory state so queue + file converge to the same values.
-          sessionPersistenceQueue.cancel(sessionId)
-          this.persistSession(managed)
-        }
-
-        // Update session metadata via AutomationSystem (handles diffing and event emission internally)
-        const automationSystem = this.automationSystems.get(workspaceRootPath)
-        if (automationSystem) {
-          automationSystem.updateSessionMetadata(sessionId, {
-            permissionMode: header.permissionMode,
-            labels: header.labels,
-            isFlagged: header.isFlagged,
-            sessionStatus: header.sessionStatus,
-            sessionName: header.name,
-          }).catch((error) => {
-            sessionLog.error(`[Automations] Failed to update session metadata:`, error)
-          })
-        }
+        this.applyExternalSessionMetadata(managed, header)
       },
     }
 
@@ -2388,6 +2456,40 @@ export class SessionManager {
             evaluate: (expression) => {
               const instanceId = resolveSessionBrowserInstance('browser_evaluate')
               return bpm.evaluate(instanceId, expression)
+            },
+            focusWindow: async (targetInstanceId) => {
+              const windows = bpm.listInstances()
+              if (windows.length === 0) {
+                throw new Error('No browser windows available to focus. Use "open" first.')
+              }
+
+              const target = targetInstanceId
+                ? windows.find(w => w.id === targetInstanceId)
+                : windows.find(w => w.boundSessionId === sid || w.ownerSessionId === sid)
+
+              if (!target) {
+                if (targetInstanceId) {
+                  throw new Error(`Browser window "${targetInstanceId}" not found. Use "windows" to list available windows.`)
+                }
+                throw new Error('No browser window is currently bound to this session. Use "open --foreground" to create or reuse one.')
+              }
+
+              const availableToSession = !target.boundSessionId || target.boundSessionId === sid
+              if (!availableToSession) {
+                throw new Error(`Browser window "${target.id}" is locked to session ${target.boundSessionId}.`)
+              }
+
+              if (!target.boundSessionId) {
+                bpm.bindSession(target.id, sid)
+              }
+
+              bpm.focus(target.id)
+              const focused = bpm.getInstance(target.id)
+              return {
+                instanceId: target.id,
+                title: focused?.title ?? target.title,
+                url: focused?.currentUrl ?? target.url,
+              }
             },
             releaseControl: async () => {
               bpm.clearAgentControl(sid)
@@ -4186,7 +4288,15 @@ export class SessionManager {
       await this.setSessionStatus(sessionId, 'done')
     }
 
-    // 4. Check queue and process or complete
+    // 4. Apply deferred external metadata updates captured while processing.
+    if (managed.pendingExternalMetadata) {
+      const pendingHeader = managed.pendingExternalMetadata
+      managed.pendingExternalMetadata = undefined
+      sessionLog.info(`Applying deferred external metadata for session ${sessionId} after processing stop`)
+      this.applyExternalSessionMetadata(managed, pendingHeader)
+    }
+
+    // 5. Check queue and process or complete
     if (managed.messageQueue.length > 0) {
       // Has queued messages - process next
       this.processNextQueuedMessage(sessionId)
@@ -4200,7 +4310,7 @@ export class SessionManager {
       }, managed.workspace.id)
     }
 
-    // 5. Always persist
+    // 6. Always persist
     this.persistSession(managed)
   }
 
@@ -4601,7 +4711,7 @@ To view this task's output:
           managed.lastFinalMessageId = assistantMessage.id
         }
 
-        this.sendEvent({ type: 'text_complete', sessionId, text: event.text, isIntermediate: event.isIntermediate, turnId: event.turnId, parentToolUseId: event.parentToolUseId, timestamp: assistantMessage.timestamp }, workspaceId)
+        this.sendEvent({ type: 'text_complete', sessionId, text: event.text, isIntermediate: event.isIntermediate, turnId: event.turnId, parentToolUseId: event.parentToolUseId, timestamp: assistantMessage.timestamp, messageId: assistantMessage.id }, workspaceId)
 
         // Persist session after complete message to prevent data loss on quit
         this.persistSession(managed)

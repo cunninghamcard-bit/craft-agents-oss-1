@@ -45,6 +45,7 @@ function createMockFns(): BrowserPaneFns {
     goBack: async () => {},
     goForward: async () => {},
     evaluate: async (expr: string) => eval(expr),
+    focusWindow: async (instanceId?: string) => ({ instanceId: instanceId ?? 'browser-1', title: 'Example Domain', url: 'https://example.com' }),
     releaseControl: async () => {},
     closeWindow: async () => {},
     hideWindow: async () => {},
@@ -290,6 +291,7 @@ describe('createBrowserTools', () => {
       const result = await executeTool(tools, 'browser_tool', { command: '--help' })
       expect(result.content[0].text).toContain('browser_tool command help')
       expect(result.content[0].text).toContain('navigate <url>')
+      expect(result.content[0].text).toContain('focus [windowId]')
       expect(result.content[0].text).toContain('windows')
       expect(result.content[0].text).not.toContain('When you are done using the browser')
     })
@@ -308,6 +310,20 @@ describe('createBrowserTools', () => {
     it('routes navigate command and appends release hint', async () => {
       const result = await executeTool(tools, 'browser_tool', { command: 'navigate example.com' })
       expect(result.content[0].text).toContain('Navigated to')
+      expect(result.content[0].text).toContain('When you are done using the browser')
+    })
+
+    it('routes focus command and calls focusWindow', async () => {
+      let focusedId: string | undefined
+      mockFns.focusWindow = async (instanceId?: string) => {
+        focusedId = instanceId
+        return { instanceId: instanceId ?? 'browser-1', title: 'Focused Tab', url: 'https://focused.example' }
+      }
+
+      const result = await executeTool(tools, 'browser_tool', { command: 'focus browser-1' })
+
+      expect(focusedId).toBe('browser-1')
+      expect(result.content[0].text).toContain('Focused browser window browser-1')
       expect(result.content[0].text).toContain('When you are done using the browser')
     })
 

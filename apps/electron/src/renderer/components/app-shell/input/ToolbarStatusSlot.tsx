@@ -122,6 +122,12 @@ function BrowserStatusBar({
     ? (isDarkTheme ? 'text-white/90' : 'text-black/80')
     : ''
 
+  const [faviconFailed, setFaviconFailed] = React.useState(false)
+
+  React.useEffect(() => {
+    setFaviconFailed(false)
+  }, [instance.favicon])
+
   return (
     <motion.button
       type="button"
@@ -142,11 +148,27 @@ function BrowserStatusBar({
       } as React.CSSProperties}
       onClick={onClick}
     >
-      <span className="shrink-0 h-3.5 w-3.5 flex items-center justify-center">
+      <span className={`shrink-0 flex items-center justify-center ${isDarkTheme ? 'h-4 w-4' : 'h-3.5 w-3.5'}`}>
         {instance.isLoading ? (
           <Spinner className="text-[10px] leading-none" />
-        ) : instance.favicon ? (
-          <img src={instance.favicon} alt="" className="h-3.5 w-3.5 rounded-sm block" />
+        ) : instance.favicon && !faviconFailed ? (
+          isDarkTheme ? (
+            <span className="inline-flex h-4 w-4 items-center justify-center rounded-[5px] bg-white/90 p-[1px] leading-none">
+              <img
+                src={instance.favicon}
+                alt=""
+                className="h-3.5 w-3.5 aspect-square rounded-none object-cover block"
+                onError={() => setFaviconFailed(true)}
+              />
+            </span>
+          ) : (
+            <img
+              src={instance.favicon}
+              alt=""
+              className="h-3.5 w-3.5 rounded-sm block"
+              onError={() => setFaviconFailed(true)}
+            />
+          )
         ) : (
           <Globe className="h-3.5 w-3.5" />
         )}

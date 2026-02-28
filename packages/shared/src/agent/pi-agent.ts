@@ -1261,6 +1261,7 @@ export class PiAgent extends BaseAgent {
               '  back',
               '  forward',
               '  evaluate <expression>',
+              '  focus [windowId]',
               '  windows',
               '  release',
             ].join('\n');
@@ -1541,6 +1542,15 @@ export class PiAgent extends BaseAgent {
               const result = await browserFns.evaluate(expression);
               const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
               return { content: text || 'null', isError: false };
+            }
+
+            if (cmd === 'focus') {
+              const instanceId = parts[1];
+              const result = await browserFns.focusWindow(instanceId);
+              return {
+                content: `Focused browser window ${result.instanceId}\nTitle: ${result.title || 'New Tab'}\nURL: ${result.url || 'about:blank'}`,
+                isError: false,
+              };
             }
 
             if (cmd === 'windows') {

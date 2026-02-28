@@ -154,6 +154,7 @@ export interface BrowserPaneFns {
   goBack: () => Promise<void>;
   goForward: () => Promise<void>;
   evaluate: (expression: string) => Promise<unknown>;
+  focusWindow: (instanceId?: string) => Promise<{ instanceId: string; title: string; url: string }>;
   releaseControl: () => Promise<void>;
   closeWindow: () => Promise<void>;
   hideWindow: () => Promise<void>;
@@ -315,6 +316,7 @@ Examples:
 - \`key Enter\`
 - \`key k meta\`
 - \`downloads wait 15000\`
+- \`focus [windowId]\` — focus existing browser window (no new window)
 - \`windows\` — list current browser windows and ownership state
 - \`release\` — dismiss the agent control overlay when done
 
@@ -360,6 +362,7 @@ export function createBrowserTools(options: BrowserToolsOptions) {
       '  back',
       '  forward',
       '  evaluate <expression>',
+      '  focus [windowId]                               focus existing browser window (no new window)',
       '  windows',
       '  release                                        dismiss agent overlay (user keeps browsing)',
       '  close                                          close & destroy the browser window',
@@ -379,6 +382,8 @@ export function createBrowserTools(options: BrowserToolsOptions) {
       '  wait network-idle 8000',
       '  key Enter',
       '  downloads wait 15000',
+      '  focus',
+      '  focus browser-1',
       '  windows',
     ].join('\n');
   }
@@ -660,6 +665,15 @@ export function createBrowserTools(options: BrowserToolsOptions) {
       const result = await fns.evaluate(expression);
       return {
         output: typeof result === 'string' ? result : JSON.stringify(result, null, 2),
+        appendReleaseHint: true,
+      };
+    }
+
+    if (cmd === 'focus') {
+      const instanceId = parts[1];
+      const result = await fns.focusWindow(instanceId);
+      return {
+        output: `Focused browser window ${result.instanceId}\nTitle: ${result.title || 'New Tab'}\nURL: ${result.url || 'about:blank'}`,
         appendReleaseHint: true,
       };
     }

@@ -33,6 +33,7 @@ describe('session-scoped tool callback merge', () => {
       goBack: async () => {},
       goForward: async () => {},
       evaluate: async () => 'ok',
+      focusWindow: async () => ({ instanceId: 'browser-1', title: 'Example', url: 'https://example.com' }),
       releaseControl: async () => {},
       closeWindow: async () => {},
       hideWindow: async () => {},

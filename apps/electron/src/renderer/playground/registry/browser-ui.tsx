@@ -1,11 +1,19 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import * as Icons from 'lucide-react'
 import type { ComponentEntry } from './types'
-import { BrowserControls, TurnCard, type ActivityItem, type ResponseContent } from '@craft-agent/ui'
+import {
+  BrowserControls,
+  BrowserEmptyStateCard,
+  TurnCard,
+  type ActivityItem,
+  type ResponseContent,
+} from '@craft-agent/ui'
 import { AnimatePresence, motion } from 'motion/react'
 import { BrowserTabStrip } from '@/components/browser/BrowserTabStrip'
+import { EMPTY_STATE_PROMPT_SAMPLES } from '@/components/browser/empty-state-prompts'
 import type { BrowserInstanceInfo } from '../../../shared/types'
 import { BROWSER_LIVE_FX_BORDER, getBrowserLiveFxCornerRadii } from '../../../shared/browser-live-fx'
+import { routes } from '../../../shared/routes'
 
 interface BrowserTraceSidebarSampleProps {
   scenario: 'core' | 'all-native-tools' | 'browser-tool-wrapper' | 'full-matrix'
@@ -174,7 +182,7 @@ function getLiveFxPayload(scenario: Scenario, runState: RunState): { active: boo
 
     return {
       active: true,
-      label: 'Craft Agent is working…',
+      label: 'Craft Agents are working…',
       cursor: cursorByScenario[scenario],
     }
   }
@@ -212,62 +220,41 @@ function BrowserAgentEmptyState({
   showExamplePrompts: boolean
   showSafetyHint: boolean
 }) {
+  const handlePromptSelect = useCallback(async (prompt: string) => {
+    const deepLinkRoute = routes.action.newSession({ input: prompt, send: true })
+    const deepLinkUrl = `craftagents://${deepLinkRoute}`
+
+    try {
+      if (typeof window !== 'undefined' && window.electronAPI?.openUrl) {
+        await window.electronAPI.openUrl(deepLinkUrl)
+        return
+      }
+
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(prompt)
+      }
+      console.info('[BrowserEmptyState] Prompt copied (Electron API unavailable):', prompt)
+    } catch (error) {
+      console.warn('[BrowserEmptyState] Failed to open prompt deep link:', error)
+    }
+  }, [])
+
   return (
-    <div className="w-full h-full flex items-center justify-center p-8">
-      <div className="w-full max-w-[700px] bg-background shadow-minimal rounded-[8px] overflow-hidden border border-border/30">
-        <div className="px-4 py-2.5 border-b border-border/30 flex items-center bg-muted/20 select-none">
-          <h3 className="text-[13px] font-medium text-foreground tracking-tight">
-            {title}
-          </h3>
-        </div>
-
-        <div className="pl-[22px] pr-[16px] py-3 text-sm">
-          <p className="text-foreground/65 leading-relaxed">
-            {description}
-          </p>
-
-          {showExamplePrompts && (
-            <div className="mt-3.5 flex flex-wrap gap-1.5">
-              {[
-                'Open https://news.ycombinator.com and summarize the top 10 stories in a table.',
-                'Go to https://www.producthunt.com and compare today\'s top 5 launches.',
-                'Open https://www.datadoghq.com/pricing, https://newrelic.com/pricing, and https://grafana.com/pricing; build a pricing matrix.',
-                'Navigate to https://docs.github.com/en and summarize recent GitHub Actions updates.',
-                'Go to https://www.gov.uk/search/news-and-communications and collect 5 latest policy announcements.',
-                'Open https://www.booking.com and find top-rated Budapest hotels for next weekend.',
-                'Open https://www.kaggle.com/datasets, search customer churn, and shortlist 8 datasets.',
-                'Visit https://status.openai.com, https://www.githubstatus.com, and https://www.cloudflarestatus.com and create a status snapshot.',
-                'Go to https://www.figma.com/community and summarize trending design system files.',
-                'Open https://developers.google.com/search/docs and extract Core Web Vitals checklists.',
-              ].map((prompt) => (
-                <div
-                  key={prompt}
-                  className="inline-flex items-center h-[22px] px-2 rounded-[5px] bg-foreground/5 text-[12px] text-foreground/70"
-                >
-                  {prompt}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {showSafetyHint && (
-          <div className="px-4 py-2 border-t border-border/30 flex items-center gap-2 bg-muted/20 text-[13px] text-foreground/55">
-            <Icons.Info className="h-3 w-3 shrink-0" strokeWidth={1.9} />
-            <p>
-              Craft Agent only controls browser windows when you ask it to.
-            </p>
-          </div>
-        )}
-      </div>
-    </div>
+    <BrowserEmptyStateCard
+      title={title}
+      description={description}
+      prompts={EMPTY_STATE_PROMPT_SAMPLES}
+      showExamplePrompts={showExamplePrompts}
+      showSafetyHint={showSafetyHint}
+      onPromptSelect={(sample) => void handlePromptSelect(sample.full)}
+    />
   )
 }
 
 function BrowserMockPageSurface({
   className,
   mode = 'content',
-  emptyStateTitle = 'This browser is ready for Craft Agent',
+  emptyStateTitle = 'This browser is ready for your Agents - and you ;)',
   emptyStateDescription = 'Ask any session to use this browser (or open another one) to complete tasks like research, form filling, QA checks, or data extraction.',
   showExamplePrompts = true,
   showSafetyHint = true,
@@ -991,7 +978,7 @@ export const browserUiComponents: ComponentEntry[] = [
         name: 'emptyStateTitle',
         description: 'Main heading shown in the browser empty state.',
         control: { type: 'string' },
-        defaultValue: 'This browser is ready for Craft Agent',
+        defaultValue: 'This browser is ready for your Agents - and you ;)',
       },
       {
         name: 'emptyStateDescription',
@@ -1026,7 +1013,7 @@ export const browserUiComponents: ComponentEntry[] = [
         name: 'title',
         description: 'Main heading for the empty state card.',
         control: { type: 'string' },
-        defaultValue: 'This browser is ready for Craft Agent',
+        defaultValue: 'This browser is ready for your Agents - and you ;)',
       },
       {
         name: 'description',

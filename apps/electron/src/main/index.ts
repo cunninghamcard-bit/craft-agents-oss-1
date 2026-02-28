@@ -372,6 +372,7 @@ app.whenReady().then(async () => {
 
     // Initialize browser pane manager
     browserPaneManager = new BrowserPaneManager()
+    browserPaneManager.setWindowManager(windowManager)
     browserPaneManager.registerToolbarIpc()
     sessionManager.setBrowserPaneManager(browserPaneManager)
 
