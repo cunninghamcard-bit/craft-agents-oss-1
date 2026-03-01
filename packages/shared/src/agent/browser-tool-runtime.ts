@@ -28,6 +28,7 @@ export function getBrowserToolHelp(): string {
     '  open [--foreground|-f]                         open browser (background by default)',
     '  navigate <url>',
     '  snapshot',
+    '  find <query>                                   search elements by keyword (matches role, name, value)',
     '  click <ref> [none|navigation|network-idle] [timeoutMs]',
     '  click-at <x> <y>                               click at pixel coordinates (canvas elements)',
     '  fill <ref> <value>',
@@ -36,10 +37,10 @@ export function getBrowserToolHelp(): string {
     '  set-clipboard <text>                           write text to page clipboard',
     '  get-clipboard                                  read clipboard text content',
     '  paste <text>                                   set clipboard + trigger Ctrl/Cmd+V',
-    '  screenshot',
-    '  screenshot-region <x> <y> <width> <height>',
-    '  screenshot-region --ref <@eN> [--padding <px>]',
-    '  screenshot-region --selector <css-selector> [--padding <px>]',
+    '  screenshot [--annotated|-a] [--png]            capture screenshot (JPEG default, --png for lossless)',
+    '  screenshot-region <x> <y> <width> <height> [--png]',
+    '  screenshot-region --ref <@eN> [--padding <px>] [--png]',
+    '  screenshot-region --selector <css-selector> [--padding <px>] [--png]',
     '  console [limit] [level]',
     '  window-resize <width> <height>',
     '  network [limit] [status]',
@@ -56,6 +57,9 @@ export function getBrowserToolHelp(): string {
     '  close                                          close & destroy the browser window',
     '  hide                                           hide the window (keeps state, "open" re-shows)',
     '',
+    'Batching (semicolon-separated, stops after navigation commands):',
+    '  fill @e1 user@example.com; fill @e2 password123; click @e3',
+    '',
     'Examples:',
     '  navigate https://example.com',
     '  click @e12',
@@ -67,6 +71,8 @@ export function getBrowserToolHelp(): string {
     '  paste Name\\tAge\\nAlice\\t30',
     '  scroll down 800',
     '  evaluate document.title',
+    '  screenshot --annotated',
+    '  screenshot --png',
     '  screenshot-region --ref @e9 --padding 12',
     '  screenshot-region --selector div[data-testid="chart"]',
     '  console 100 warn',
@@ -81,6 +87,37 @@ export function getBrowserToolHelp(): string {
   ].join('\n');
 }
 
+function formatNodeLine(
+  node: {
+    ref: string;
+    role: string;
+    name: string;
+    value?: string;
+    description?: string;
+    focused?: boolean;
+    checked?: boolean;
+    disabled?: boolean;
+  },
+  options?: { includeState?: boolean },
+): string {
+  let line = `  ${node.ref} [${node.role}] "${node.name}"`;
+  if (node.value !== undefined) line += ` value="${node.value}"`;
+  if (options?.includeState !== false) {
+    if (node.focused) line += ' (focused)';
+    if (node.checked) line += ' (checked)';
+    if (node.disabled) line += ' (disabled)';
+  }
+  if (node.description) line += ` — ${node.description}`;
+  return line;
+}
+
+const NAVIGATION_COMMANDS = new Set([
+  'navigate',
+  'click',
+  'back',
+  'forward',
+]);
+
 export async function executeBrowserToolCommand(args: {
   command: string;
   fns: BrowserPaneFns;
@@ -92,6 +129,53 @@ export async function executeBrowserToolCommand(args: {
     throw new Error('Missing command. Use "--help" to see supported browser_tool commands.');
   }
 
+  const commands = trimmed.split(/\s*;\s*/).filter(Boolean);
+  if (commands.length > 1) {
+    return executeBatchCommands({ ...args, commands });
+  }
+
+  return executeSingleCommand(args);
+}
+
+async function executeBatchCommands(args: {
+  commands: string[];
+  fns: BrowserPaneFns;
+  sessionId: string;
+  platform?: NodeJS.Platform;
+}): Promise<BrowserCommandResult> {
+  const outputs: string[] = [];
+  let lastImage: BrowserCommandImage | undefined;
+  let appendReleaseHint = false;
+
+  for (let i = 0; i < args.commands.length; i++) {
+    const command = args.commands[i]!;
+    const result = await executeSingleCommand({ ...args, command });
+
+    outputs.push(result.output);
+    if (result.image) lastImage = result.image;
+    if (result.appendReleaseHint) appendReleaseHint = true;
+
+    const batchCmd = command.trim().split(/\s+/)[0]?.toLowerCase();
+    if (batchCmd && NAVIGATION_COMMANDS.has(batchCmd) && i < args.commands.length - 1) {
+      outputs.push(`(stopped batch after "${batchCmd}" — page may have changed, re-snapshot before continuing)`);
+      break;
+    }
+  }
+
+  return {
+    output: outputs.join('\n'),
+    appendReleaseHint,
+    image: lastImage,
+  };
+}
+
+async function executeSingleCommand(args: {
+  command: string;
+  fns: BrowserPaneFns;
+  sessionId: string;
+  platform?: NodeJS.Platform;
+}): Promise<BrowserCommandResult> {
+  const trimmed = args.command.trim();
   const parts = trimmed.split(/\s+/);
   const cmd = parts[0]?.toLowerCase();
 
@@ -124,13 +208,40 @@ export async function executeBrowserToolCommand(args: {
       `Elements (${snapshot.nodes.length}):`,
     ];
     for (const node of snapshot.nodes) {
-      let line = `  ${node.ref} [${node.role}] "${node.name}"`;
-      if (node.value !== undefined) line += ` value="${node.value}"`;
-      if (node.focused) line += ' (focused)';
-      if (node.checked) line += ' (checked)';
-      if (node.disabled) line += ' (disabled)';
-      if (node.description) line += ` — ${node.description}`;
-      lines.push(line);
+      lines.push(formatNodeLine(node));
+    }
+    return { output: lines.join('\n'), appendReleaseHint: true };
+  }
+
+  if (cmd === 'find') {
+    const query = parts.slice(1).join(' ').trim();
+    if (!query) throw new Error('find requires a search query. Example: find login button');
+
+    const snapshot = await fns.snapshot();
+    const queryLower = query.toLowerCase();
+    const keywords = queryLower.split(/\s+/).filter(Boolean);
+
+    const matches = snapshot.nodes.filter((node) => {
+      const haystack = [node.role, node.name, node.value, node.description]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+      return keywords.every((kw) => haystack.includes(kw));
+    });
+
+    if (matches.length === 0) {
+      return {
+        output: `No elements found matching "${query}" (searched ${snapshot.nodes.length} elements).\nTry a broader search or run "snapshot" to see all elements.`,
+        appendReleaseHint: true,
+      };
+    }
+
+    const lines: string[] = [`Found ${matches.length} element(s) matching "${query}":`];
+    for (const node of matches.slice(0, 20)) {
+      lines.push(formatNodeLine(node, { includeState: false }));
+    }
+    if (matches.length > 20) {
+      lines.push(`  ... and ${matches.length - 20} more. Narrow your search.`);
     }
     return { output: lines.join('\n'), appendReleaseHint: true };
   }
@@ -213,9 +324,11 @@ export async function executeBrowserToolCommand(args: {
   }
 
   if (cmd === 'screenshot') {
-    const useJpeg = parts.includes('--jpeg') || parts.includes('--jpg');
-    const format = useJpeg ? 'jpeg' as const : 'png' as const;
-    const result = await fns.screenshot({ format });
+    const annotate = parts.includes('--annotated') || parts.includes('-a');
+    const usePng = parts.includes('--png');
+    const format = usePng ? 'png' as const : 'jpeg' as const;
+
+    const result = await fns.screenshot({ annotate, format });
     const buf = result.imageBuffer;
     const base64 = buf.toString('base64');
     if (!buf || buf.length === 0 || !base64) {
@@ -224,7 +337,11 @@ export async function executeBrowserToolCommand(args: {
 
     const ext = result.imageFormat === 'jpeg' ? 'JPG' : 'PNG';
     const mimeType = result.imageFormat === 'jpeg' ? 'image/jpeg' as const : 'image/png' as const;
-    const lines = [`Screenshot captured (${Math.round(buf.length / 1024)}KB ${ext})`];
+    const lines = [
+      annotate
+        ? `Annotated screenshot captured (${Math.round(buf.length / 1024)}KB ${ext}) — element refs (@eN) are overlaid on interactive elements`
+        : `Screenshot captured (${Math.round(buf.length / 1024)}KB ${ext})`,
+    ];
     if (result.metadata) {
       lines.push('', 'Metadata:', JSON.stringify(result.metadata, null, 2));
     }
@@ -246,10 +363,10 @@ export async function executeBrowserToolCommand(args: {
       throw new Error('screenshot-region requires either coordinates, --ref, or --selector.');
     }
 
-    const useJpeg = rest.includes('--jpeg') || rest.includes('--jpg');
-    const format = useJpeg ? 'jpeg' as const : 'png' as const;
-    // Strip --jpeg/--jpg flags before parsing other args
-    const filteredRest = rest.filter((t) => t !== '--jpeg' && t !== '--jpg');
+    const usePng = rest.includes('--png');
+    const format = usePng ? 'png' as const : 'jpeg' as const;
+    // Strip format flags before parsing other args
+    const filteredRest = rest.filter((t) => t !== '--png');
 
     const parsePadding = (tokens: string[]) => {
       const idx = tokens.findIndex((t) => t === '--padding');

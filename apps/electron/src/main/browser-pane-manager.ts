@@ -157,6 +157,8 @@ export interface BrowserScreenshotOptions {
   refs?: string[]
   includeLastAction?: boolean
   includeMetadata?: boolean
+  /** Annotate screenshot with @eN labels on all interactive elements from accessibility tree */
+  annotate?: boolean
   format?: 'png' | 'jpeg'
   jpegQuality?: number
 }
@@ -858,7 +860,9 @@ export class BrowserPaneManager {
     }
 
     try {
-      const mode = options?.mode === 'agent' ? 'agent' : 'raw'
+      // When annotating, force agent mode and gather refs from accessibility tree
+      const annotate = !!options?.annotate
+      const mode = (annotate || options?.mode === 'agent') ? 'agent' : 'raw'
 
       if (mode === 'raw') {
         const viewport = await instance.cdp.getViewportMetrics()
@@ -885,12 +889,33 @@ export class BrowserPaneManager {
       const warnings: string[] = []
       const geometries: ElementGeometry[] = []
 
-      const refs = options?.refs ?? []
-      for (const ref of refs) {
+      const MAX_ANNOTATED_REFS = 100
+      let refs = options?.refs ?? []
+
+      if (annotate) {
         try {
-          geometries.push(await instance.cdp.getElementGeometry(ref))
+          const snapshot = await instance.cdp.getAccessibilitySnapshot()
+          refs = snapshot.nodes.map((node) => node.ref).slice(0, MAX_ANNOTATED_REFS)
+          if (snapshot.nodes.length > MAX_ANNOTATED_REFS) {
+            warnings.push(`Annotation capped at ${MAX_ANNOTATED_REFS} of ${snapshot.nodes.length} elements`)
+          }
         } catch (error) {
-          warnings.push(`Could not resolve ref ${ref}: ${error instanceof Error ? error.message : String(error)}`)
+          warnings.push(`Accessibility snapshot for annotation failed: ${error instanceof Error ? error.message : String(error)}`)
+          refs = []
+        }
+      }
+
+      const settled = await Promise.allSettled(
+        refs.map((ref) => instance.cdp.getElementGeometry(ref)),
+      )
+
+      for (let i = 0; i < settled.length; i++) {
+        const result = settled[i]!
+        if (result.status === 'fulfilled') {
+          geometries.push(result.value)
+        } else if (!annotate) {
+          const reason = result.reason instanceof Error ? result.reason.message : String(result.reason)
+          warnings.push(`Could not resolve ref ${refs[i]}: ${reason}`)
         }
       }
 
@@ -1186,7 +1211,7 @@ export class BrowserPaneManager {
       })
     }
 
-    const fmt = options.format ?? 'png'
+    const fmt = options.format ?? 'jpeg'
     const encoded = fmt === 'jpeg'
       ? image.toJPEG(options.jpegQuality ?? 80)
       : image.toPNG()
