@@ -24,6 +24,9 @@ export const browserInstanceCountAtom = atom<number>(
 /** Currently active browser instance ID (selected/focused by user interactions) */
 export const activeBrowserInstanceIdAtom = atom<string | null>(null)
 
+/** Tombstones for instances removed from renderer state (guards against late out-of-order updates) */
+export const removedBrowserInstanceIdsAtom = atom<Set<string>>(new Set<string>())
+
 /** Derived: currently active browser instance info */
 export const activeBrowserInstanceAtom = atom<BrowserInstanceInfo | null>((get) => {
   const activeId = get(activeBrowserInstanceIdAtom)
@@ -35,6 +38,11 @@ export const activeBrowserInstanceAtom = atom<BrowserInstanceInfo | null>((get) 
 export const updateBrowserInstanceAtom = atom(
   null,
   (get, set, info: BrowserInstanceInfo) => {
+    const removedIds = get(removedBrowserInstanceIdsAtom)
+    if (removedIds.has(info.id)) {
+      return
+    }
+
     const map = new Map(get(browserInstancesMapAtom))
     map.set(info.id, info)
     set(browserInstancesMapAtom, map)
@@ -48,17 +56,27 @@ export const removeBrowserInstanceAtom = atom(
     const map = new Map(get(browserInstancesMapAtom))
     map.delete(id)
     set(browserInstancesMapAtom, map)
+
+    const removedIds = new Set(get(removedBrowserInstanceIdsAtom))
+    removedIds.add(id)
+    set(removedBrowserInstanceIdsAtom, removedIds)
   }
 )
 
 /** Set all browser instances at once (from list query) */
 export const setBrowserInstancesAtom = atom(
   null,
-  (_get, set, instances: BrowserInstanceInfo[]) => {
+  (get, set, instances: BrowserInstanceInfo[]) => {
     const map = new Map<string, BrowserInstanceInfo>()
     for (const info of instances) {
       map.set(info.id, info)
     }
     set(browserInstancesMapAtom, map)
+
+    const removedIds = new Set(get(removedBrowserInstanceIdsAtom))
+    for (const info of instances) {
+      removedIds.delete(info.id)
+    }
+    set(removedBrowserInstanceIdsAtom, removedIds)
   }
 )

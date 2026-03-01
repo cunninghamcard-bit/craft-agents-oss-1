@@ -51,6 +51,7 @@ export function BrowserTabStrip({
   const [activeInstanceId, setActiveInstanceId] = useAtom(activeBrowserInstanceIdAtom)
   const effectiveInstances = instancesOverride ?? instances
   const instancesRef = useRef(effectiveInstances)
+  const removeReconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const orderedInstances = useMemo(() => {
     const items = [...effectiveInstances]
@@ -118,6 +119,25 @@ export function BrowserTabStrip({
         const remaining = instancesRef.current.filter((item) => item.id !== id)
         return remaining[0]?.id ?? null
       })
+
+      if (removeReconcileTimerRef.current) {
+        clearTimeout(removeReconcileTimerRef.current)
+      }
+
+      removeReconcileTimerRef.current = setTimeout(() => {
+        removeReconcileTimerRef.current = null
+        void browserPaneApi.list()
+          .then((items) => {
+            setInstances(items)
+            setActiveInstanceId((prev) => {
+              if (!prev) return items[0]?.id ?? null
+              return items.some((item) => item.id === prev) ? prev : (items[0]?.id ?? null)
+            })
+          })
+          .catch((error) => {
+            console.warn('[BrowserTabStrip] Reconcile list failed after remove:', error)
+          })
+      }, 75)
     })
 
     const cleanupInteracted = browserPaneApi.onInteracted((id: string) => {
@@ -128,8 +148,12 @@ export function BrowserTabStrip({
       cleanupState()
       cleanupRemoved()
       cleanupInteracted()
+      if (removeReconcileTimerRef.current) {
+        clearTimeout(removeReconcileTimerRef.current)
+        removeReconcileTimerRef.current = null
+      }
     }
-  }, [instancesOverride, updateInstance, removeInstance, setActiveInstanceId])
+  }, [instancesOverride, updateInstance, removeInstance, setActiveInstanceId, setInstances])
 
   useEffect(() => {
     if (orderedInstances.length === 0) {

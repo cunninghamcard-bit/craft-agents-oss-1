@@ -51,9 +51,9 @@ function createMockFns(): BrowserPaneFns {
     goForward: async () => {},
     evaluate: async (expr: string) => eval(expr),
     focusWindow: async (instanceId?: string) => ({ instanceId: instanceId ?? 'browser-1', title: 'Example Domain', url: 'https://example.com' }),
-    releaseControl: async () => {},
-    closeWindow: async () => {},
-    hideWindow: async () => {},
+    releaseControl: async (_instanceId?: string) => ({ action: 'released' as const, resolvedInstanceId: 'browser-1', affectedIds: ['browser-1'] }),
+    closeWindow: async (_instanceId?: string) => ({ action: 'closed' as const, resolvedInstanceId: 'browser-1', affectedIds: ['browser-1'] }),
+    hideWindow: async (_instanceId?: string) => ({ action: 'hidden' as const, resolvedInstanceId: 'browser-1', affectedIds: ['browser-1'] }),
     listWindows: async () => ([
       {
         id: 'browser-1',
@@ -580,36 +580,74 @@ describe('createBrowserTools', () => {
     })
 
     it('routes release command and calls releaseControl without hint', async () => {
-      let released = false
-      mockFns.releaseControl = async () => { released = true }
+      let requestedId: string | undefined
+      mockFns.releaseControl = async (instanceId?: string) => {
+        requestedId = instanceId
+        return { action: 'released' as const, resolvedInstanceId: 'browser-1', affectedIds: ['browser-1'] }
+      }
 
       const result = await executeTool(tools, 'browser_tool', { command: 'release' })
 
-      expect(released).toBe(true)
+      expect(requestedId).toBeUndefined()
       expect(result.content[0].text).toContain('Browser control released')
       expect(result.content[0].text).not.toContain('When you are done using the browser')
     })
 
     it('routes close command and calls closeWindow without hint', async () => {
-      let closed = false
-      mockFns.closeWindow = async () => { closed = true }
+      let requestedId: string | undefined
+      mockFns.closeWindow = async (instanceId?: string) => {
+        requestedId = instanceId
+        return { action: 'closed' as const, resolvedInstanceId: 'browser-1', affectedIds: ['browser-1'] }
+      }
 
       const result = await executeTool(tools, 'browser_tool', { command: 'close' })
 
-      expect(closed).toBe(true)
+      expect(requestedId).toBeUndefined()
       expect(result.content[0].text).toContain('Browser window closed and destroyed')
       expect(result.content[0].text).not.toContain('When you are done using the browser')
     })
 
     it('routes hide command and calls hideWindow without hint', async () => {
-      let hidden = false
-      mockFns.hideWindow = async () => { hidden = true }
+      let requestedId: string | undefined
+      mockFns.hideWindow = async (instanceId?: string) => {
+        requestedId = instanceId
+        return { action: 'hidden' as const, resolvedInstanceId: 'browser-1', affectedIds: ['browser-1'] }
+      }
 
       const result = await executeTool(tools, 'browser_tool', { command: 'hide' })
 
-      expect(hidden).toBe(true)
+      expect(requestedId).toBeUndefined()
       expect(result.content[0].text).toContain('Browser window hidden')
       expect(result.content[0].text).not.toContain('When you are done using the browser')
+    })
+
+    it('routes close command with explicit window id', async () => {
+      let requestedId: string | undefined
+      mockFns.closeWindow = async (instanceId?: string) => {
+        requestedId = instanceId
+        return { action: 'closed' as const, requestedInstanceId: instanceId, resolvedInstanceId: instanceId, affectedIds: instanceId ? [instanceId] : [] }
+      }
+
+      const result = await executeTool(tools, 'browser_tool', { command: 'close browser-9' })
+
+      expect(requestedId).toBe('browser-9')
+      expect(result.content[0].text).toContain('Browser window closed and destroyed')
+      expect(result.content[0].text).toContain('requested=browser-9')
+    })
+
+    it('reports close no-op explicitly', async () => {
+      mockFns.closeWindow = async (instanceId?: string) => ({
+        action: 'noop' as const,
+        requestedInstanceId: instanceId,
+        affectedIds: [],
+        reason: 'No close target is currently associated with this session.',
+      })
+
+      const result = await executeTool(tools, 'browser_tool', { command: 'close' })
+
+      expect(result.content[0].text).toContain('No browser window was closed')
+      expect(result.content[0].text).toContain('No window state changed')
+      expect(result.content[0].text).toContain('No close target is currently associated with this session')
     })
 
     it('returns validation feedback for invalid command', async () => {

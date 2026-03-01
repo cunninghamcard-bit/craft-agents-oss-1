@@ -39,9 +39,9 @@ describe('session-scoped tool callback merge', () => {
       goForward: async () => {},
       evaluate: async () => 'ok',
       focusWindow: async () => ({ instanceId: 'browser-1', title: 'Example', url: 'https://example.com' }),
-      releaseControl: async () => {},
-      closeWindow: async () => {},
-      hideWindow: async () => {},
+      releaseControl: async () => ({ action: 'released' as const, affectedIds: [] }),
+      closeWindow: async () => ({ action: 'closed' as const, affectedIds: [] }),
+      hideWindow: async () => ({ action: 'hidden' as const, affectedIds: [] }),
       listWindows: async () => [],
     };
 

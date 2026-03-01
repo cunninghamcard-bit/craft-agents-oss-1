@@ -2394,6 +2394,52 @@ export class SessionManager {
           return instanceId
         }
 
+        const resolveLifecycleWindowTarget = (command: 'release' | 'close' | 'hide', requestedInstanceId?: string) => {
+          const windows = bpm.listInstances()
+
+          if (windows.length === 0) {
+            return { windows, reason: 'No browser windows are available. Use "open" first.' }
+          }
+
+          const validateTarget = (target: (typeof windows)[number] | undefined) => {
+            if (!target) {
+              return { ok: false as const, reason: `Browser window "${requestedInstanceId}" not found. Use "windows" to list available windows.` }
+            }
+
+            if (target.boundSessionId && target.boundSessionId !== sid) {
+              return { ok: false as const, reason: `Browser window "${target.id}" is locked to session ${target.boundSessionId}.` }
+            }
+
+            if (!target.boundSessionId && target.ownerSessionId && target.ownerSessionId !== sid) {
+              return { ok: false as const, reason: `Browser window "${target.id}" is currently owned by session ${target.ownerSessionId}.` }
+            }
+
+            return { ok: true as const, target }
+          }
+
+          if (requestedInstanceId) {
+            const validated = validateTarget(windows.find((w) => w.id === requestedInstanceId))
+            if (!validated.ok) {
+              return { windows, reason: validated.reason }
+            }
+            return { windows, target: validated.target }
+          }
+
+          const fallbackTarget = windows.find((w) => w.boundSessionId === sid)
+            ?? windows.find((w) => w.ownerSessionId === sid)
+
+          if (!fallbackTarget) {
+            return { windows, reason: `No ${command} target is currently associated with this session. Use "windows", then "${command} <id>".` }
+          }
+
+          const validated = validateTarget(fallbackTarget)
+          if (!validated.ok) {
+            return { windows, reason: validated.reason }
+          }
+
+          return { windows, target: validated.target }
+        }
+
         mergeSessionScopedToolCallbacks(sid, {
           browserPaneFns: {
             openPanel: async (options) => {
@@ -2526,15 +2572,91 @@ export class SessionManager {
                 url: focused?.currentUrl ?? target.url,
               }
             },
-            releaseControl: async () => {
-              bpm.clearAgentControl(sid)
+            releaseControl: async (requestedInstanceId) => {
+              if (requestedInstanceId === 'all') {
+                const before = bpm.listInstances()
+                const beforeActive = before.filter((w) => !!w.agentControlActive).length
+                bpm.clearAgentControl(sid)
+                const after = bpm.listInstances()
+                const afterActive = after.filter((w) => !!w.agentControlActive).length
+                const released = afterActive < beforeActive
+
+                sessionLog.info(`[browser-pane] lifecycle release-all session=${sid} overlays=${beforeActive}->${afterActive}`)
+
+                return {
+                  action: released ? 'released' : 'noop',
+                  requestedInstanceId,
+                  affectedIds: released ? before.filter((w) => !!w.agentControlActive).map((w) => w.id) : [],
+                  reason: released ? undefined : 'No active overlay was found for this session.',
+                }
+              }
+
+              const resolution = resolveLifecycleWindowTarget('release', requestedInstanceId)
+              if (!resolution.target) {
+                sessionLog.info(`[browser-pane] lifecycle release session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
+                return {
+                  action: 'noop',
+                  requestedInstanceId,
+                  affectedIds: [],
+                  reason: resolution.reason,
+                }
+              }
+
+              const result = bpm.clearAgentControlForInstance(resolution.target.id, sid)
+              const action = result.released ? 'released' : 'noop'
+              sessionLog.info(`[browser-pane] lifecycle release session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=${action} reason=${result.reason ?? 'none'}`)
+
+              return {
+                action,
+                requestedInstanceId,
+                resolvedInstanceId: resolution.target.id,
+                affectedIds: result.released ? [resolution.target.id] : [],
+                reason: result.reason,
+              }
             },
-            closeWindow: async () => {
-              bpm.destroyForSession(sid)
+            closeWindow: async (requestedInstanceId) => {
+              const resolution = resolveLifecycleWindowTarget('close', requestedInstanceId)
+              if (!resolution.target) {
+                sessionLog.info(`[browser-pane] lifecycle close session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
+                return {
+                  action: 'noop',
+                  requestedInstanceId,
+                  affectedIds: [],
+                  reason: resolution.reason,
+                }
+              }
+
+              bpm.destroyInstance(resolution.target.id)
+              sessionLog.info(`[browser-pane] lifecycle close session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=closed`)
+
+              return {
+                action: 'closed',
+                requestedInstanceId,
+                resolvedInstanceId: resolution.target.id,
+                affectedIds: [resolution.target.id],
+              }
             },
-            hideWindow: async () => {
-              const instanceId = bpm.getBoundInstanceId(sid)
-              if (instanceId) bpm.hide(instanceId)
+            hideWindow: async (requestedInstanceId) => {
+              const resolution = resolveLifecycleWindowTarget('hide', requestedInstanceId)
+              if (!resolution.target) {
+                sessionLog.info(`[browser-pane] lifecycle hide session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
+                return {
+                  action: 'noop',
+                  requestedInstanceId,
+                  affectedIds: [],
+                  reason: resolution.reason,
+                }
+              }
+
+              bpm.hide(resolution.target.id)
+              sessionLog.info(`[browser-pane] lifecycle hide session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=hidden`)
+
+              return {
+                action: 'hidden',
+                requestedInstanceId,
+                resolvedInstanceId: resolution.target.id,
+                affectedIds: [resolution.target.id],
+              }
             },
             listWindows: async () => {
               return bpm.listInstances()

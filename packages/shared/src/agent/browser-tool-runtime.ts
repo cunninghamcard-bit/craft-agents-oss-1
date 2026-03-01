@@ -1,6 +1,7 @@
 import type {
   BrowserConsoleArgs,
   BrowserDownloadsArgs,
+  BrowserLifecycleActionResult,
   BrowserNetworkArgs,
   BrowserPaneFns,
   BrowserScreenshotRegionArgs,
@@ -71,9 +72,9 @@ export function getBrowserToolHelp(): string {
     '  evaluate <expression>',
     '  focus [windowId]                               focus existing browser window (no new window)',
     '  windows',
-    '  release                                        dismiss agent overlay (user keeps browsing)',
-    '  close                                          close & destroy the browser window',
-    '  hide                                           hide the window (keeps state, "open" re-shows)',
+    '  release [windowId|all]                         dismiss agent overlay (user keeps browsing)',
+    '  close [windowId]                               close & destroy the browser window',
+    '  hide [windowId]                                hide the window (keeps state, "open" re-shows)',
     '',
     'Batching (string mode, semicolon-separated, stops after navigation commands):',
     '  fill @e1 user@example.com; fill @e2 password123; click @e3',
@@ -221,6 +222,25 @@ function summarizeWindows(windows: Awaited<ReturnType<BrowserPaneFns['listWindow
   const locked = windows.filter((w) => !!w.boundSessionId).length;
   const withOverlay = windows.filter((w) => !!w.agentControlActive).length;
   return `total=${windows.length}, visible=${visible}, locked=${locked}, overlays=${withOverlay}`;
+}
+
+function formatLifecycleResultLine(result: BrowserLifecycleActionResult): string {
+  if (result.action === 'noop') {
+    return [
+      'No window state changed.',
+      result.reason ? `Reason: ${result.reason}` : undefined,
+      result.requestedInstanceId ? `Requested window: ${result.requestedInstanceId}` : undefined,
+    ].filter(Boolean).join(' ');
+  }
+
+  const affected = result.affectedIds.length > 0 ? result.affectedIds.join(', ') : 'none';
+  const resolved = result.resolvedInstanceId ?? 'none';
+  return [
+    `Action: ${result.action}`,
+    `resolved=${resolved}`,
+    `affected=[${affected}]`,
+    result.requestedInstanceId ? `requested=${result.requestedInstanceId}` : undefined,
+  ].filter(Boolean).join(', ');
 }
 
 const NAVIGATION_COMMANDS = new Set([
@@ -1240,15 +1260,25 @@ async function executeSingleCommand(args: {
   }
 
   if (cmd === 'release') {
+    const targetArg = parts[1];
+    if (parts.length > 2) {
+      throw new Error('release accepts at most one optional argument: [windowId|all]');
+    }
+
     const before = await fns.listWindows();
     const activeOverlays = before.filter((w) => !!w.agentControlActive).length;
-    await fns.releaseControl();
+    const lifecycle = await fns.releaseControl(targetArg);
     const after = await fns.listWindows();
     const activeAfter = after.filter((w) => !!w.agentControlActive).length;
 
+    const title = lifecycle.action === 'released'
+      ? 'Browser control released. Agent overlay dismissed.'
+      : 'No browser overlay was released.';
+
     return {
       output: [
-        'Browser control released. Agent overlay dismissed.',
+        title,
+        formatLifecycleResultLine(lifecycle),
         `Overlays active: ${activeOverlays} → ${activeAfter}`,
       ].join('\n'),
       appendReleaseHint: false,
@@ -1256,12 +1286,23 @@ async function executeSingleCommand(args: {
   }
 
   if (cmd === 'close') {
+    const targetArg = parts[1];
+    if (parts.length > 2) {
+      throw new Error('close accepts at most one optional argument: [windowId]');
+    }
+
     const before = await fns.listWindows();
-    await fns.closeWindow();
+    const lifecycle = await fns.closeWindow(targetArg);
     const after = await fns.listWindows();
+
+    const title = lifecycle.action === 'closed'
+      ? 'Browser window closed and destroyed.'
+      : 'No browser window was closed.';
+
     return {
       output: [
-        'Browser window closed and destroyed.',
+        title,
+        formatLifecycleResultLine(lifecycle),
         `Session windows: ${summarizeWindows(before)} → ${summarizeWindows(after)}`,
       ].join('\n'),
       appendReleaseHint: false,
@@ -1269,12 +1310,23 @@ async function executeSingleCommand(args: {
   }
 
   if (cmd === 'hide') {
+    const targetArg = parts[1];
+    if (parts.length > 2) {
+      throw new Error('hide accepts at most one optional argument: [windowId]');
+    }
+
     const before = await fns.listWindows();
-    await fns.hideWindow();
+    const lifecycle = await fns.hideWindow(targetArg);
     const after = await fns.listWindows();
+
+    const title = lifecycle.action === 'hidden'
+      ? 'Browser window hidden. Use "open" to show it again.'
+      : 'No browser window was hidden.';
+
     return {
       output: [
-        'Browser window hidden. Use "open" to show it again.',
+        title,
+        formatLifecycleResultLine(lifecycle),
         `Session windows: ${summarizeWindows(before)} → ${summarizeWindows(after)}`,
       ].join('\n'),
       appendReleaseHint: false,

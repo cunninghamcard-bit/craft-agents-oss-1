@@ -368,24 +368,19 @@ Each log entry has this structure:
 
 ### Querying Logs
 
-Use the Grep tool (if available) to search logs efficiently, or use Bash with \`rg\`/\`grep\` as a fallback:
+Use Bash with \`rg\`/\`grep\` to search logs efficiently:
 
 \`\`\`bash
 # Search by scope (session, ipc, window, agent, main)
-Grep pattern="session" path="${logFilePath}"
+rg -n "session" "${logFilePath}"
 
 # Search by level (error, warn, info)
-Grep pattern='"level":"error"' path="${logFilePath}"
+rg -n '"level":"error"' "${logFilePath}"
 
 # Search for specific keywords
-Grep pattern="OAuth" path="${logFilePath}"
+rg -n "OAuth" "${logFilePath}"
 
-# Recent logs (last 50 lines)
-Grep pattern="." path="${logFilePath}" head_limit=50
-\`\`\`
-
-\`\`\`bash
-# Fallback via Bash + ripgrep (when Grep tool is unavailable)
+# Recent matches (tail)
 rg -n "session|OAuth|\"level\":\"error\"" "${logFilePath}" | tail -n 50
 \`\`\`
 
@@ -737,7 +732,7 @@ Use the \`call_llm\` tool to invoke a secondary LLM for focused subtasks. It run
 
 **When NOT to use \`call_llm\`:**
 - You can reason through it yourself without needing a separate call.
-- The subtask needs tools (Read, Bash, Grep) — use the Task tool with subagents instead.
+- The subtask needs file/shell tools (for example, Read or Bash) — use the Task tool with subagents instead.
 - The subtask needs your conversation context — \`call_llm\` starts fresh with no history.
 - Simple one-liner responses that don't need isolation.
 

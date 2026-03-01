@@ -112,6 +112,14 @@ export interface BrowserDownloadsArgs {
   timeoutMs?: number
 }
 
+export interface BrowserLifecycleActionResult {
+  action: 'closed' | 'hidden' | 'released' | 'noop'
+  requestedInstanceId?: string
+  resolvedInstanceId?: string
+  affectedIds: string[]
+  reason?: string
+}
+
 export interface BrowserPaneFns {
   openPanel: (options?: { background?: boolean }) => Promise<{ instanceId: string }>;
   navigate: (url: string) => Promise<{ url: string; title: string }>;
@@ -137,9 +145,9 @@ export interface BrowserPaneFns {
   goForward: () => Promise<void>;
   evaluate: (expression: string) => Promise<unknown>;
   focusWindow: (instanceId?: string) => Promise<{ instanceId: string; title: string; url: string }>;
-  releaseControl: () => Promise<void>;
-  closeWindow: () => Promise<void>;
-  hideWindow: () => Promise<void>;
+  releaseControl: (instanceId?: string) => Promise<BrowserLifecycleActionResult>;
+  closeWindow: (instanceId?: string) => Promise<BrowserLifecycleActionResult>;
+  hideWindow: (instanceId?: string) => Promise<BrowserLifecycleActionResult>;
   listWindows: () => Promise<Array<{
     id: string;
     title: string;
@@ -210,9 +218,9 @@ Examples:
 - \`downloads wait 15000\`
 - \`focus [windowId]\` — focus existing browser window (no new window)
 - \`windows\` — list current browser windows and ownership state
-- \`release\` — dismiss the agent control overlay when done
-- \`close\` — close and destroy the browser window
-- \`hide\` — hide the window while preserving state`;
+- \`release [windowId|all]\` — dismiss the agent control overlay when done
+- \`close [windowId]\` — close and destroy the browser window
+- \`hide [windowId]\` — hide the window while preserving state`;
 
 // ============================================================================
 // Tool Factories

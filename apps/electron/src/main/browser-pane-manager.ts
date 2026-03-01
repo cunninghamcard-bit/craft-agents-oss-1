@@ -496,16 +496,8 @@ export class BrowserPaneManager {
       instance.window.destroy()
     }
 
-    // closed handler finalizes map cleanup; force cleanup if needed
-    if (this.instances.has(id)) {
-      instance.cdp.detach()
-      this.instances.delete(id)
-      this.removedCallback?.(id)
-    }
-
-    this.destroyingIds.delete(id)
-
-    mainLog.info(`[browser-pane] Destroyed instance: ${id}`)
+    // Finalize synchronously in case closed does not fire (or fires later).
+    this.finalizeDestroyedInstance(instance, 'destroy')
   }
 
   getInstance(id: string): BrowserInstance | undefined {
@@ -1496,7 +1488,7 @@ export class BrowserPaneManager {
     if (instance) {
       instance.boundSessionId = null
       instance.ownerType = 'manual'
-      instance.ownerSessionId = null
+      // Preserve ownerSessionId as last-known owner for lifecycle targeting.
       this.emitStateChange(instance)
     }
   }
@@ -1507,9 +1499,10 @@ export class BrowserPaneManager {
       if (instance.boundSessionId === sessionId) {
         instance.boundSessionId = null
         instance.ownerType = 'manual'
-        instance.ownerSessionId = null
+        // Keep ownerSessionId for post-turn lifecycle commands like `close` and `hide`.
+        instance.ownerSessionId = instance.ownerSessionId ?? sessionId
         this.emitStateChange(instance)
-        mainLog.info(`[browser-pane] Unbound instance ${instance.id} from session ${sessionId}`)
+        mainLog.info(`[browser-pane] Unbound instance ${instance.id} from session ${sessionId} (owner retained: ${instance.ownerSessionId ?? 'none'})`)
       }
     }
   }
@@ -1760,6 +1753,20 @@ export class BrowserPaneManager {
     for (const id of [...this.instances.keys()]) {
       this.destroyInstance(id)
     }
+  }
+
+  private finalizeDestroyedInstance(instance: BrowserInstance, source: 'destroy' | 'closed'): void {
+    if (!this.instances.has(instance.id)) {
+      return
+    }
+
+    this.destroyingIds.delete(instance.id)
+    this.applyAgentControlLock(instance, false)
+    this.updateNativeOverlayState(instance)
+    instance.cdp.detach()
+    this.instances.delete(instance.id)
+    this.removedCallback?.(instance.id)
+    mainLog.info(`[browser-pane] Destroyed instance: ${instance.id} (${source})`)
   }
 
   private layoutPageView(instance: BrowserInstance): void {
@@ -2058,6 +2065,35 @@ export class BrowserPaneManager {
         mainLog.info(`[browser-pane] agent control released session=${sessionId}`)
       }
     }
+  }
+
+  clearAgentControlForInstance(instanceId: string, sessionId?: string): { released: boolean; reason?: string } {
+    const instance = this.instances.get(instanceId)
+    if (!instance) {
+      return { released: false, reason: `Browser window "${instanceId}" not found.` }
+    }
+
+    if (sessionId) {
+      if (instance.boundSessionId && instance.boundSessionId !== sessionId) {
+        return { released: false, reason: `Browser window "${instanceId}" is locked to session ${instance.boundSessionId}.` }
+      }
+
+      if (!instance.boundSessionId && instance.ownerSessionId && instance.ownerSessionId !== sessionId) {
+        return { released: false, reason: `Browser window "${instanceId}" is currently owned by session ${instance.ownerSessionId}.` }
+      }
+    }
+
+    if (!instance.agentControl?.active) {
+      return { released: false, reason: 'No active agent overlay on the target window.' }
+    }
+
+    instance.agentControl = null
+    this.applyAgentControlLock(instance, false)
+    this.updateNativeOverlayState(instance)
+    this.emitStateChange(instance)
+    mainLog.info(`[browser-pane] agent control released instance=${instanceId}${sessionId ? ` session=${sessionId}` : ''}`)
+
+    return { released: true }
   }
 
   /**
@@ -2601,14 +2637,7 @@ export class BrowserPaneManager {
     })
 
     instance.window.on('closed', () => {
-      if (!this.instances.has(instance.id)) return
-      this.destroyingIds.delete(instance.id)
-      this.applyAgentControlLock(instance, false)
-      this.updateNativeOverlayState(instance)
-      instance.cdp.detach()
-      this.instances.delete(instance.id)
-      this.removedCallback?.(instance.id)
-      mainLog.info(`[browser-pane] Destroyed instance: ${instance.id}`)
+      this.finalizeDestroyedInstance(instance, 'closed')
     })
   }
 
@@ -2631,6 +2660,9 @@ export class BrowserPaneManager {
   }
 
   private emitStateChange(instance: BrowserInstance): void {
+    if (!this.instances.has(instance.id)) {
+      return
+    }
     this.stateChangeCallback?.(this.toInfo(instance))
   }
 }

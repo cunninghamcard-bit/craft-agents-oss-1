@@ -254,6 +254,34 @@ describe('BrowserPaneManager', () => {
     expect(manager.listInstances()).toHaveLength(0)
   })
 
+  it('emits removed callback exactly once when destroy triggers closed', () => {
+    const removed: string[] = []
+    manager.onRemoved((id) => removed.push(id))
+
+    manager.createInstance('d-removed-once')
+    manager.destroyInstance('d-removed-once')
+
+    expect(removed).toEqual(['d-removed-once'])
+    expect(manager.listInstances()).toHaveLength(0)
+  })
+
+  it('ignores late state events after instance was removed', () => {
+    const states: string[] = []
+    manager.onStateChange((info) => states.push(info.id))
+
+    manager.createInstance('d-late-state')
+    const instance = (manager as any).instances.get('d-late-state')
+    states.length = 0
+
+    manager.destroyInstance('d-late-state')
+    const countAfterDestroy = states.length
+
+    instance.window._emit('hide')
+    instance.window._emit('show')
+
+    expect(states.length).toBe(countAfterDestroy)
+  })
+
   it('binds and unbinds sessions', () => {
     manager.createInstance('b1')
     manager.bindSession('b1', 'session-abc')
@@ -738,25 +766,19 @@ describe('BrowserPaneManager', () => {
         sessionId: 'sess-1',
         displayName: 'Navigate Page',
         intent: 'Loading example.com',
-        exclusive: true,
-        lockResize: true,
-        lockUserInput: true,
       })
       expect(instance.nativeOverlayView.webContents.executeJavaScript).toHaveBeenCalled()
       expect(instance.nativeOverlayView.webContents.focus).not.toHaveBeenCalled()
       expect(manager.listInstances().find(i => i.id === 'ac-1')?.agentControlActive).toBe(true)
     })
 
-    it('keeps native overlay visible for non-exclusive session control', async () => {
+    it('keeps native overlay visible for active session control', async () => {
       manager.createInstance('ac-idle')
       manager.bindSession('ac-idle', 'sess-idle')
 
       manager.setAgentControl('sess-idle', {
         displayName: 'Browser',
         intent: 'Session controls this window',
-        exclusive: false,
-        lockResize: false,
-        lockUserInput: false,
       })
       await Promise.resolve()
 
