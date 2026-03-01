@@ -12,6 +12,7 @@ import { mainLog } from './logger'
 import type { WindowManager } from './window-manager'
 import { BrowserCDP, type AccessibilitySnapshot, type ElementGeometry } from './browser-cdp'
 import type { BrowserEmptyStateLaunchPayload, BrowserEmptyStateLaunchResult, BrowserInstanceInfo } from '../shared/types'
+import { DEFAULT_THEME, loadAppTheme } from '@craft-agent/shared/config'
 
 export type { BrowserInstanceInfo }
 
@@ -156,6 +157,8 @@ export interface BrowserScreenshotOptions {
   refs?: string[]
   includeLastAction?: boolean
   includeMetadata?: boolean
+  format?: 'png' | 'jpeg'
+  jpegQuality?: number
 }
 
 export interface BrowserConsoleEntry {
@@ -177,6 +180,8 @@ export interface BrowserScreenshotRegionTarget {
   ref?: string
   selector?: string
   padding?: number
+  format?: 'png' | 'jpeg'
+  jpegQuality?: number
 }
 
 export interface BrowserNetworkEntry {
@@ -234,7 +239,8 @@ export interface BrowserDownloadOptions {
 }
 
 export interface BrowserScreenshotResult {
-  png: Buffer
+  imageBuffer: Buffer
+  imageFormat: 'png' | 'jpeg'
   metadata?: {
     mode: 'raw' | 'agent'
     viewport?: {
@@ -855,13 +861,18 @@ export class BrowserPaneManager {
       const mode = options?.mode === 'agent' ? 'agent' : 'raw'
 
       if (mode === 'raw') {
+        const viewport = await instance.cdp.getViewportMetrics()
         const captured = await this.capturePageWithRecovery(instance, {
           mode,
           errorPrefix: 'screenshot',
+          dpr: viewport.dpr,
+          format: options?.format,
+          jpegQuality: options?.jpegQuality,
         })
 
         return {
-          png: captured.png,
+          imageBuffer: captured.imageBuffer,
+          imageFormat: captured.imageFormat,
           metadata: options?.includeMetadata
             ? {
               mode: 'raw',
@@ -912,6 +923,9 @@ export class BrowserPaneManager {
         const captured = await this.capturePageWithRecovery(instance, {
           mode,
           errorPrefix: 'screenshot',
+          dpr: viewport.dpr,
+          format: options?.format,
+          jpegQuality: options?.jpegQuality,
         })
 
         if (captured.warnings.length > 0) {
@@ -919,7 +933,8 @@ export class BrowserPaneManager {
         }
 
         return {
-          png: captured.png,
+          imageBuffer: captured.imageBuffer,
+          imageFormat: captured.imageFormat,
           metadata: {
             mode: 'agent',
             viewport,
@@ -1026,10 +1041,14 @@ export class BrowserPaneManager {
           width: clippedWidth,
           height: clippedHeight,
         },
+        dpr: viewport.dpr,
+        format: target.format,
+        jpegQuality: target.jpegQuality,
       })
 
       return {
-        png: captured.png,
+        imageBuffer: captured.imageBuffer,
+        imageFormat: captured.imageFormat,
         metadata: {
           mode: 'raw',
           viewport,
@@ -1056,22 +1075,27 @@ export class BrowserPaneManager {
       mode: 'raw' | 'agent' | 'region'
       errorPrefix: 'screenshot' | 'region screenshot'
       rect?: { x: number; y: number; width: number; height: number }
+      dpr?: number
+      format?: 'png' | 'jpeg'
+      jpegQuality?: number
     },
-  ): Promise<{ png: Buffer; warnings: string[] }> {
+  ): Promise<{ imageBuffer: Buffer; imageFormat: 'png' | 'jpeg'; warnings: string[] }> {
     let rescueUsed = false
     const warnings: string[] = []
+    const imageOpts = { dpr: options.dpr, format: options.format, jpegQuality: options.jpegQuality }
 
     for (let attempt = 1; attempt <= SCREENSHOT_HIDDEN_CAPTURE_ATTEMPTS; attempt += 1) {
-      const png = await this.capturePagePng(instance, {
+      const result = await this.capturePageImage(instance, {
         rect: options.rect,
         useHiddenCaptureOptions: true,
+        ...imageOpts,
       })
 
-      if (png) {
+      if (result) {
         if (attempt > 1) {
           warnings.push(`Capture recovered after ${attempt} hidden attempt${attempt === 1 ? '' : 's'}.`)
         }
-        return { png, warnings }
+        return { imageBuffer: result.buffer, imageFormat: result.format, warnings }
       }
 
       mainLog.warn(
@@ -1100,16 +1124,17 @@ export class BrowserPaneManager {
           await this.waitForScreenshotReadiness(instance.id)
         }
 
-        const rescuePng = await this.capturePagePng(instance, {
+        const rescueResult = await this.capturePageImage(instance, {
           rect: options.rect,
           useHiddenCaptureOptions: false,
+          ...imageOpts,
         })
 
-        if (rescuePng) {
+        if (rescueResult) {
           if (rescueUsed) {
             warnings.push('Capture required temporary inactive reveal for rendering; browser visibility was restored immediately.')
           }
-          return { png: rescuePng, warnings }
+          return { imageBuffer: rescueResult.buffer, imageFormat: rescueResult.format, warnings }
         }
       } finally {
         if (!wasVisible && !window.isDestroyed()) {
@@ -1127,18 +1152,21 @@ export class BrowserPaneManager {
     throw new Error(`Failed to capture ${options.errorPrefix}: empty image buffer`)
   }
 
-  private async capturePagePng(
+  private async capturePageImage(
     instance: BrowserInstance,
     options: {
       rect?: { x: number; y: number; width: number; height: number }
       useHiddenCaptureOptions: boolean
+      dpr?: number
+      format?: 'png' | 'jpeg'
+      jpegQuality?: number
     },
-  ): Promise<Buffer | null> {
+  ): Promise<{ buffer: Buffer; format: 'png' | 'jpeg' } | null> {
     const captureOpts = options.useHiddenCaptureOptions
       ? { stayHidden: true, stayAwake: true }
       : undefined
 
-    const image = options.rect
+    let image = options.rect
       ? await instance.pageView.webContents.capturePage(options.rect, captureOpts)
       : await instance.pageView.webContents.capturePage(undefined, captureOpts)
 
@@ -1146,12 +1174,28 @@ export class BrowserPaneManager {
       return null
     }
 
-    const png = image.toPNG()
-    if (!png || png.length === 0) {
+    // Downscale from device pixels to CSS pixels so screenshot coordinates
+    // match click-at viewport coordinates (uses Skia Lanczos via 'best')
+    const dpr = options.dpr ?? 1
+    if (dpr > 1) {
+      const size = image.getSize()
+      image = image.resize({
+        width: Math.round(size.width / dpr),
+        height: Math.round(size.height / dpr),
+        quality: 'best',
+      })
+    }
+
+    const fmt = options.format ?? 'png'
+    const encoded = fmt === 'jpeg'
+      ? image.toJPEG(options.jpegQuality ?? 80)
+      : image.toPNG()
+
+    if (!encoded || encoded.length === 0) {
       return null
     }
 
-    return png
+    return { buffer: encoded, format: fmt }
   }
 
   private async waitForScreenshotReadiness(instanceId: string): Promise<void> {
@@ -1465,7 +1509,18 @@ export class BrowserPaneManager {
       active: true,
       label: this.getAgentControlLabel(instance.agentControl),
       cursor: null,
+      accentColor: this.getResolvedAccentColor(),
     }).catch(() => {})
+  }
+
+  /** Resolve the app's current accent color as a concrete CSS value (not a var reference). */
+  private getResolvedAccentColor(): string {
+    const isDark = nativeTheme.shouldUseDarkColors
+    const userTheme = loadAppTheme()
+    const accent = isDark
+      ? (userTheme?.dark?.accent ?? userTheme?.accent ?? DEFAULT_THEME.dark!.accent!)
+      : (userTheme?.accent ?? DEFAULT_THEME.accent!)
+    return accent
   }
 
   destroyAll(): void {

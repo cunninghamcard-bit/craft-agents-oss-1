@@ -1099,7 +1099,8 @@ export class PiAgent extends BaseAgent {
           if (result.image) {
             const sessionPath = getSessionPath(this.config.workspace.rootPath, this._sessionId);
             const imageBuffer = Buffer.from(result.image.data, 'base64');
-            const saved = saveBinaryResponse(sessionPath, 'browser-screenshot.png', imageBuffer, result.image.mimeType);
+            const ext = result.image.mimeType === 'image/jpeg' ? 'jpg' : 'png';
+            const saved = saveBinaryResponse(sessionPath, `browser-screenshot.${ext}`, imageBuffer, result.image.mimeType);
 
             if (saved.type === 'file_download') {
               content += [

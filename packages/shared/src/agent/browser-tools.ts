@@ -52,10 +52,13 @@ export interface BrowserScreenshotArgs {
   refs?: string[]
   includeLastAction?: boolean
   includeMetadata?: boolean
+  format?: 'png' | 'jpeg'
+  jpegQuality?: number
 }
 
 export interface BrowserScreenshotResult {
-  png: Buffer
+  imageBuffer: Buffer
+  imageFormat: 'png' | 'jpeg'
   metadata?: Record<string, unknown>
 }
 
@@ -72,6 +75,8 @@ export interface BrowserScreenshotRegionArgs {
   ref?: string
   selector?: string
   padding?: number
+  format?: 'png' | 'jpeg'
+  jpegQuality?: number
 }
 
 export interface BrowserWindowResizeArgs {

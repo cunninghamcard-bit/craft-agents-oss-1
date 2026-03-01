@@ -3350,7 +3350,8 @@ export function registerIpcHandlers(sessionManager: SessionManager, windowManage
       try {
         const result = await browserPaneManager.screenshot(id, options)
         return {
-          base64: result.png.toString('base64'),
+          base64: result.imageBuffer.toString('base64'),
+          imageFormat: result.imageFormat,
           metadata: result.metadata,
         }
       } catch (err) {

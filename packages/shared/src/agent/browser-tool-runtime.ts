@@ -9,7 +9,7 @@ import type {
 
 export interface BrowserCommandImage {
   data: string;
-  mimeType: 'image/png';
+  mimeType: 'image/png' | 'image/jpeg';
   sizeBytes: number;
 }
 
@@ -213,14 +213,18 @@ export async function executeBrowserToolCommand(args: {
   }
 
   if (cmd === 'screenshot') {
-    const result = await fns.screenshot();
-    const png = result.png;
-    const base64 = png.toString('base64');
-    if (!png || png.length === 0 || !base64) {
+    const useJpeg = parts.includes('--jpeg') || parts.includes('--jpg');
+    const format = useJpeg ? 'jpeg' as const : 'png' as const;
+    const result = await fns.screenshot({ format });
+    const buf = result.imageBuffer;
+    const base64 = buf.toString('base64');
+    if (!buf || buf.length === 0 || !base64) {
       throw new Error('Screenshot capture returned empty image data. Try waiting for page load (browser_tool wait network-idle), then retry browser_tool screenshot.');
     }
 
-    const lines = [`Screenshot captured (${Math.round(png.length / 1024)}KB PNG)`];
+    const ext = result.imageFormat === 'jpeg' ? 'JPG' : 'PNG';
+    const mimeType = result.imageFormat === 'jpeg' ? 'image/jpeg' as const : 'image/png' as const;
+    const lines = [`Screenshot captured (${Math.round(buf.length / 1024)}KB ${ext})`];
     if (result.metadata) {
       lines.push('', 'Metadata:', JSON.stringify(result.metadata, null, 2));
     }
@@ -230,8 +234,8 @@ export async function executeBrowserToolCommand(args: {
       appendReleaseHint: true,
       image: {
         data: base64,
-        mimeType: 'image/png',
-        sizeBytes: png.length,
+        mimeType,
+        sizeBytes: buf.length,
       },
     };
   }
@@ -241,6 +245,11 @@ export async function executeBrowserToolCommand(args: {
     if (rest.length === 0) {
       throw new Error('screenshot-region requires either coordinates, --ref, or --selector.');
     }
+
+    const useJpeg = rest.includes('--jpeg') || rest.includes('--jpg');
+    const format = useJpeg ? 'jpeg' as const : 'png' as const;
+    // Strip --jpeg/--jpg flags before parsing other args
+    const filteredRest = rest.filter((t) => t !== '--jpeg' && t !== '--jpg');
 
     const parsePadding = (tokens: string[]) => {
       const idx = tokens.findIndex((t) => t === '--padding');
@@ -253,17 +262,17 @@ export async function executeBrowserToolCommand(args: {
       return { padding, cleaned };
     };
 
-    const { padding, cleaned } = parsePadding(rest);
+    const { padding, cleaned } = parsePadding(filteredRest);
 
     let screenshotArgs: BrowserScreenshotRegionArgs;
     if (cleaned[0] === '--ref') {
       const ref = cleaned[1];
       if (!ref) throw new Error('screenshot-region --ref requires a ref value.');
-      screenshotArgs = { ref, padding };
+      screenshotArgs = { ref, padding, format };
     } else if (cleaned[0] === '--selector') {
       const selector = cleaned.slice(1).join(' ').trim();
       if (!selector) throw new Error('screenshot-region --selector requires a CSS selector value.');
-      screenshotArgs = { selector, padding };
+      screenshotArgs = { selector, padding, format };
     } else {
       if (cleaned.length < 4) {
         throw new Error('screenshot-region coordinates require: x y width height');
@@ -276,17 +285,19 @@ export async function executeBrowserToolCommand(args: {
       if ([x, y, width, height].some((n) => Number.isNaN(n))) {
         throw new Error('screenshot-region coordinates must be numbers.');
       }
-      screenshotArgs = { x, y, width, height, padding };
+      screenshotArgs = { x, y, width, height, padding, format };
     }
 
     const result = await fns.screenshotRegion(screenshotArgs);
-    const png = result.png;
-    const base64 = png.toString('base64');
-    if (!png || png.length === 0 || !base64) {
+    const buf = result.imageBuffer;
+    const base64 = buf.toString('base64');
+    if (!buf || buf.length === 0 || !base64) {
       throw new Error('Region screenshot capture returned empty image data. Try adjusting the region/selector or waiting for page load, then retry browser_tool screenshot-region.');
     }
 
-    const lines = [`Region screenshot captured (${Math.round(png.length / 1024)}KB PNG)`];
+    const ext = result.imageFormat === 'jpeg' ? 'JPG' : 'PNG';
+    const mimeType = result.imageFormat === 'jpeg' ? 'image/jpeg' as const : 'image/png' as const;
+    const lines = [`Region screenshot captured (${Math.round(buf.length / 1024)}KB ${ext})`];
     if (result.metadata) {
       lines.push('', 'Metadata:', JSON.stringify(result.metadata, null, 2));
     }
@@ -296,8 +307,8 @@ export async function executeBrowserToolCommand(args: {
       appendReleaseHint: true,
       image: {
         data: base64,
-        mimeType: 'image/png',
-        sizeBytes: png.length,
+        mimeType,
+        sizeBytes: buf.length,
       },
     };
   }

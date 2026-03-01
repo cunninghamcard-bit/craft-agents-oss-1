@@ -40,10 +40,16 @@ function createMockWebContents() {
     stop: mock(() => {}),
     setUserAgent: mock(() => {}),
     setBackgroundColor: mock(() => {}),
-    capturePage: mock(async () => ({
-      isEmpty: () => false,
-      toPNG: () => Buffer.from('fake-png'),
-    })),
+    capturePage: mock(async () => {
+      const img = {
+        isEmpty: () => false,
+        getSize: () => ({ width: 2400, height: 1800 }),
+        resize: (_opts: any) => img,
+        toPNG: () => Buffer.from('fake-png'),
+        toJPEG: (_quality: number) => Buffer.from('fake-jpeg'),
+      }
+      return img
+    }),
     executeJavaScript: mock(async (expr: string) => eval(expr)),
     setWindowOpenHandler: mock((_handler: any) => {}),
     send: mock((_channel: string, _payload?: unknown) => {}),
@@ -565,7 +571,10 @@ describe('BrowserPaneManager', () => {
     const instance = (manager as any).instances.get('screenshot-empty-image')
     instance.pageView.webContents.capturePage = mock(async () => ({
       isEmpty: () => true,
+      getSize: () => ({ width: 0, height: 0 }),
+      resize: function() { return this },
       toPNG: () => Buffer.from('ignored'),
+      toJPEG: () => Buffer.from('ignored'),
     }))
 
     await expect(manager.screenshot('screenshot-empty-image')).rejects.toThrow('Failed to capture screenshot: empty image buffer')
@@ -576,7 +585,10 @@ describe('BrowserPaneManager', () => {
     const instance = (manager as any).instances.get('screenshot-empty-png')
     instance.pageView.webContents.capturePage = mock(async () => ({
       isEmpty: () => false,
+      getSize: () => ({ width: 2400, height: 1800 }),
+      resize: function() { return this },
       toPNG: () => Buffer.alloc(0),
+      toJPEG: () => Buffer.alloc(0),
     }))
 
     await expect(manager.screenshot('screenshot-empty-png')).rejects.toThrow('Failed to capture screenshot: empty image buffer')
@@ -592,19 +604,26 @@ describe('BrowserPaneManager', () => {
       if (captureCalls <= 3) {
         return {
           isEmpty: () => true,
+          getSize: () => ({ width: 0, height: 0 }),
+          resize: function() { return this },
           toPNG: () => Buffer.alloc(0),
+          toJPEG: () => Buffer.alloc(0),
         }
       }
 
-      return {
+      const img = {
         isEmpty: () => false,
+        getSize: () => ({ width: 2400, height: 1800 }),
+        resize: () => img,
         toPNG: () => Buffer.from('rescued-png'),
+        toJPEG: (_q: number) => Buffer.from('rescued-jpeg'),
       }
+      return img
     })
 
     const result = await manager.screenshot('screenshot-rescue-success', { includeMetadata: true })
 
-    expect(result.png.toString()).toBe('rescued-png')
+    expect(result.imageBuffer.toString()).toBe('rescued-png')
     expect(instance.window.showInactive).toHaveBeenCalledTimes(1)
     expect(instance.window.focus).not.toHaveBeenCalled()
     expect(instance.window.hide).toHaveBeenCalled()
@@ -616,7 +635,10 @@ describe('BrowserPaneManager', () => {
     const instance = (manager as any).instances.get('region-empty-image')
     instance.pageView.webContents.capturePage = mock(async () => ({
       isEmpty: () => true,
+      getSize: () => ({ width: 0, height: 0 }),
+      resize: function() { return this },
       toPNG: () => Buffer.from('ignored'),
+      toJPEG: () => Buffer.from('ignored'),
     }))
 
     await expect(manager.screenshotRegion('region-empty-image', { x: 10, y: 20, width: 120, height: 80 })).rejects.toThrow(
@@ -629,7 +651,10 @@ describe('BrowserPaneManager', () => {
     const instance = (manager as any).instances.get('region-empty-png')
     instance.pageView.webContents.capturePage = mock(async () => ({
       isEmpty: () => false,
+      getSize: () => ({ width: 2400, height: 1800 }),
+      resize: function() { return this },
       toPNG: () => Buffer.alloc(0),
+      toJPEG: () => Buffer.alloc(0),
     }))
 
     await expect(manager.screenshotRegion('region-empty-png', { x: 10, y: 20, width: 120, height: 80 })).rejects.toThrow(
@@ -641,7 +666,7 @@ describe('BrowserPaneManager', () => {
     manager.createInstance('region-ref')
     const result = await manager.screenshotRegion('region-ref', { ref: '@e1' })
 
-    expect(result.png).toBeInstanceOf(Buffer)
+    expect(result.imageBuffer).toBeInstanceOf(Buffer)
     expect(result.metadata?.targetMode).toBe('ref')
   })
 
@@ -649,7 +674,7 @@ describe('BrowserPaneManager', () => {
     manager.createInstance('region-selector')
     const result = await manager.screenshotRegion('region-selector', { selector: 'div.card', padding: 4 })
 
-    expect(result.png).toBeInstanceOf(Buffer)
+    expect(result.imageBuffer).toBeInstanceOf(Buffer)
     expect(result.metadata?.targetMode).toBe('selector')
   })
 
@@ -716,6 +741,7 @@ describe('BrowserPaneManager', () => {
         active: true,
         label: 'Navigate Page — Loading example.com',
         cursor: null,
+        accentColor: expect.any(String),
       })
       expect(manager.listInstances().find(i => i.id === 'ac-1')?.agentControlActive).toBe(true)
     })
@@ -751,6 +777,7 @@ describe('BrowserPaneManager', () => {
         active: true,
         label: 'Navigate Page — Loading example.com',
         cursor: null,
+        accentColor: expect.any(String),
       })
     })
 
@@ -771,6 +798,7 @@ describe('BrowserPaneManager', () => {
         active: true,
         label: 'Click Button — Clicking submit',
         cursor: null,
+        accentColor: expect.any(String),
       })
     })
 
@@ -785,6 +813,7 @@ describe('BrowserPaneManager', () => {
         active: true,
         label: 'Browser Snapshot',
         cursor: null,
+        accentColor: expect.any(String),
       })
     })
 
@@ -799,6 +828,7 @@ describe('BrowserPaneManager', () => {
         active: true,
         label: 'Agent is working…',
         cursor: null,
+        accentColor: expect.any(String),
       })
     })
 

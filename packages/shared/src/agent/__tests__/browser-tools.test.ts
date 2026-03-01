@@ -31,8 +31,8 @@ function createMockFns(): BrowserPaneFns {
     select: async (_ref: string, _value: string) => {},
     setClipboard: async (_text: string) => {},
     getClipboard: async () => 'clipboard content',
-    screenshot: async () => ({ png: Buffer.from('fake-png-data') }),
-    screenshotRegion: async () => ({ png: Buffer.from('fake-png-data') }),
+    screenshot: async () => ({ imageBuffer: Buffer.from('fake-png-data'), imageFormat: 'png' as const }),
+    screenshotRegion: async () => ({ imageBuffer: Buffer.from('fake-png-data'), imageFormat: 'png' as const }),
     getConsoleLogs: async () => ([
       { timestamp: Date.now(), level: 'warn', message: 'Test warning' },
     ]),
@@ -290,14 +290,14 @@ describe('createBrowserTools', () => {
     })
 
     it('returns error for screenshot when PNG is empty', async () => {
-      mockFns.screenshot = async () => ({ png: Buffer.alloc(0) })
+      mockFns.screenshot = async () => ({ imageBuffer: Buffer.alloc(0), imageFormat: 'png' as const })
       const result = await executeTool(tools, 'browser_tool', { command: 'screenshot' })
       expect(result.isError).toBe(true)
       expect(result.content[0].text).toContain('empty image data')
     })
 
     it('returns error for screenshot-region when PNG is empty', async () => {
-      mockFns.screenshotRegion = async () => ({ png: Buffer.alloc(0) })
+      mockFns.screenshotRegion = async () => ({ imageBuffer: Buffer.alloc(0), imageFormat: 'png' as const })
       const result = await executeTool(tools, 'browser_tool', { command: 'screenshot-region 10 20 100 80' })
       expect(result.isError).toBe(true)
       expect(result.content[0].text).toContain('empty image data')
