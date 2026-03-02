@@ -226,6 +226,9 @@ function findSmallModel(connection: Pick<LlmConnection, 'models' | 'providerType
     keywords.push('haiku');
   } else if (isPiProvider(connection.providerType)) {
     keywords.push('mini', 'flash');
+  } else {
+    // Aggregator providers (copilot, etc.) — try all common small-model keywords
+    keywords.push('mini', 'haiku', 'flash');
   }
 
   if (keywords.length > 0) {
@@ -415,9 +418,11 @@ export function getModelsForProviderType(providerType: LlmProviderType, piAuthPr
  * Format: bare model IDs (without pi/ prefix). Matched against pi/{id} or pi/{id}-*.
  */
 export const PI_PREFERRED_DEFAULTS: Record<string, string[]> = {
-  anthropic: ['claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-sonnet-4-0', 'claude-haiku-4-5'],
+  anthropic: ['claude-opus-4-6', 'claude-sonnet-4-6', 'claude-haiku-4-5'],
   openai: ['gpt-5.2', 'gpt-5.1', 'gpt-5', 'o4-mini', 'o3', 'gpt-4o'],
+  'openai-codex': ['gpt-5.2', 'gpt-5.1', 'gpt-5', 'o4-mini', 'o3', 'gpt-4o'],
   google: ['gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
+  'github-copilot': ['claude-sonnet-4-6', 'gpt-5', 'o4-mini', 'claude-haiku-4-5'],
 };
 
 export function getDefaultModelsForConnection(providerType: LlmProviderType, piAuthProvider?: string): Array<ModelDefinition | string> {

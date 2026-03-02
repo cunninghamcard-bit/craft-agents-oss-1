@@ -244,7 +244,7 @@ function resolvePiModel(
   modelId: string,
   piAuthProvider?: string,
 ): PiModel<any> | undefined {
-  // Strip Craft's pi/ prefix — Pi SDK uses bare model IDs (e.g. "claude-sonnet-4-5")
+  // Strip Craft's pi/ prefix — Pi SDK uses bare model IDs (e.g. "claude-sonnet-4-6")
   const bareId = modelId.startsWith('pi/') ? modelId.slice(3) : modelId;
 
   // If we know the auth provider, do an exact provider+model lookup first.
