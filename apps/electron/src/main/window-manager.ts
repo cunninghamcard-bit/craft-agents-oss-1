@@ -3,7 +3,7 @@ import { windowLog } from './logger'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { release } from 'os'
-import { IPC_CHANNELS } from '../shared/types'
+import { IPC_CHANNELS, type BroadcastEventMap } from '../shared/types'
 import type { SavedWindow } from './window-state'
 
 // Vite dev server URL for hot reload
@@ -531,15 +531,56 @@ export class WindowManager {
   }
 
   /**
-   * Send IPC message to all windows
+   * Send typed IPC message to all windows (no try-catch — loop breaks on throw)
    */
-  broadcastToAll(channel: string, ...args: unknown[]): void {
+  broadcastToAll<K extends keyof BroadcastEventMap>(
+    channel: K,
+    ...args: BroadcastEventMap[K]
+  ): void {
     for (const managed of this.getAllWindows()) {
       // Check mainFrame - it becomes null when render frame is disposed
       if (!managed.window.isDestroyed() &&
           !managed.window.webContents.isDestroyed() &&
           managed.window.webContents.mainFrame) {
-        managed.window.webContents.send(channel, ...args)
+        managed.window.webContents.send(channel as string, ...args)
+      }
+    }
+  }
+
+  /**
+   * Send typed IPC message to all windows for a specific workspace.
+   * Try-catch per window so the loop continues if a window is closing.
+   */
+  broadcastToWorkspace<K extends keyof BroadcastEventMap>(
+    workspaceId: string,
+    channel: K,
+    ...args: BroadcastEventMap[K]
+  ): void {
+    for (const window of this.getAllWindowsForWorkspace(workspaceId)) {
+      if (!window.isDestroyed() && !window.webContents.isDestroyed() && window.webContents.mainFrame) {
+        try {
+          window.webContents.send(channel as string, ...args)
+        } catch {
+          // Expected during window closure race
+        }
+      }
+    }
+  }
+
+  /**
+   * Send typed IPC message to a single window.
+   * Try-catch so callers don't need to handle window closure races.
+   */
+  sendToWindow<K extends keyof BroadcastEventMap>(
+    window: BrowserWindow,
+    channel: K,
+    ...args: BroadcastEventMap[K]
+  ): void {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed() && window.webContents.mainFrame) {
+      try {
+        window.webContents.send(channel as string, ...args)
+      } catch {
+        // Expected during window closure race
       }
     }
   }
