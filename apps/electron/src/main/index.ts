@@ -414,40 +414,7 @@ app.whenReady().then(async () => {
       captureError: (err) => Sentry.captureException(err),
     }
 
-    // Create WS RPC server (local WebSocket transport)
-    const clientMap = new Map<number, string>()
-    const resolveClientId = (wcId: number) => clientMap.get(wcId)
-    const localToken = randomUUID()
-
-    const wsServer = new WsRpcServer({
-      host: '127.0.0.1',
-      port: 0,
-      requireAuth: true,
-      validateToken: async (t) => t === localToken,
-      serverId: 'local',
-      onClientConnected: ({ clientId, webContentsId }) => {
-        if (webContentsId != null) clientMap.set(webContentsId, clientId)
-      },
-      onClientDisconnected: (clientId) => {
-        for (const [wcId, cId] of clientMap) {
-          if (cId === clientId) { clientMap.delete(wcId); break }
-        }
-      },
-    })
-    await wsServer.listen()
-    const server: RpcServer = wsServer
-    mainLog.info(`WS RPC server listening on 127.0.0.1:${wsServer.port}`)
-
-    // Module-level EventSink — used by deep-link handlers defined before app.whenReady
-    moduleSink = server.push.bind(server)
-
-    // Bootstrap IPC handlers — renderer preload uses sendSync to get WS connection details
-    ipcMain.on('__get-ws-port', (e) => {
-      e.returnValue = wsServer.port
-    })
-    ipcMain.on('__get-ws-token', (e) => {
-      e.returnValue = localToken
-    })
+    // Bootstrap IPC handlers — preload uses sendSync for window-local details
     ipcMain.on('__get-web-contents-id', (e) => {
       e.returnValue = e.sender.id
     })
@@ -455,38 +422,93 @@ app.whenReady().then(async () => {
       e.returnValue = windowManager?.getWorkspaceForWindow(e.sender.id) ?? ''
     })
 
-    oauthFlowStore = new OAuthFlowStore()
+    // When CRAFT_SERVER_URL is set, this Electron instance is a thin client —
+    // it only creates windows whose preload connects to the remote server.
+    const isClientOnly = !!process.env.CRAFT_SERVER_URL
+    const isHeadless = !!process.env.CRAFT_HEADLESS
 
-    const deps: HandlerDeps = {
-      sessionManager,
-      platform,
-      windowManager,
-      browserPaneManager,
-      oauthFlowStore,
+    if (!isClientOnly) {
+      // Create WS RPC server (local WebSocket transport)
+      // CRAFT_RPC_HOST / CRAFT_RPC_PORT allow binding to a custom address for remote access.
+      const rpcHost = process.env.CRAFT_RPC_HOST ?? '127.0.0.1'
+      const rpcPort = process.env.CRAFT_RPC_PORT ? parseInt(process.env.CRAFT_RPC_PORT, 10) : 0
+
+      const clientMap = new Map<number, string>()
+      const resolveClientId = (wcId: number) => clientMap.get(wcId)
+      const localToken = randomUUID()
+
+      const wsServer = new WsRpcServer({
+        host: rpcHost,
+        port: rpcPort,
+        requireAuth: true,
+        validateToken: async (t) => t === localToken,
+        serverId: 'local',
+        onClientConnected: ({ clientId, webContentsId }) => {
+          if (webContentsId != null) clientMap.set(webContentsId, clientId)
+        },
+        onClientDisconnected: (clientId) => {
+          for (const [wcId, cId] of clientMap) {
+            if (cId === clientId) { clientMap.delete(wcId); break }
+          }
+        },
+      })
+      await wsServer.listen()
+      const server: RpcServer = wsServer
+      mainLog.info(`WS RPC server listening on ${rpcHost}:${wsServer.port}`)
+
+      // In headless mode, print connection details so a remote client can connect
+      if (isHeadless) {
+        console.log(`CRAFT_SERVER_URL=ws://${rpcHost}:${wsServer.port}`)
+        console.log(`CRAFT_SERVER_TOKEN=${localToken}`)
+      }
+
+      // Module-level EventSink — used by deep-link handlers defined before app.whenReady
+      moduleSink = server.push.bind(server)
+
+      // Bootstrap IPC handlers — preload uses sendSync to get WS connection details
+      ipcMain.on('__get-ws-port', (e) => {
+        e.returnValue = wsServer.port
+      })
+      ipcMain.on('__get-ws-token', (e) => {
+        e.returnValue = localToken
+      })
+
+      oauthFlowStore = new OAuthFlowStore()
+
+      const deps: HandlerDeps = {
+        sessionManager,
+        platform,
+        windowManager,
+        browserPaneManager,
+        oauthFlowStore,
+      }
+
+      // Register RPC handlers (must happen before window creation)
+      registerAllRpcHandlers(server, deps)
+
+      // Wire EventSink so SessionManager pushes events via the RPC server
+      sessionManager.setEventSink(server.push.bind(server))
+
+      // Wire EventSink to services that broadcast events to renderers
+      // Must happen BEFORE createInitialWindows() so event handlers use WS from the start
+      windowManager.setRpcEventSink(moduleSink!, resolveClientId)
+      const { setMenuEventSink } = await import('./menu')
+      setMenuEventSink(moduleSink!, resolveClientId)
+      const { setNotificationEventSink } = await import('./notifications')
+      setNotificationEventSink(moduleSink!)
+
+      // Initialize auth (must happen after window creation for error reporting)
+      await sessionManager.initialize()
+
+      // Start periodic model refresh after auth is initialized
+      modelRefreshService.startAll()
     }
 
-    // Register RPC handlers (must happen before window creation)
-    registerAllRpcHandlers(server, deps)
-
-    // Wire EventSink so SessionManager pushes events via the RPC server
-    sessionManager.setEventSink(server.push.bind(server))
-
-    // Wire EventSink to services that broadcast events to renderers
-    // Must happen BEFORE createInitialWindows() so event handlers use WS from the start
-    windowManager.setRpcEventSink(moduleSink!, resolveClientId)
-    const { setMenuEventSink } = await import('./menu')
-    setMenuEventSink(moduleSink!, resolveClientId)
-    const { setNotificationEventSink } = await import('./notifications')
-    setNotificationEventSink(moduleSink!)
-
     // Create initial windows (restores from saved state or opens first workspace)
-    await createInitialWindows()
-
-    // Initialize auth (must happen after window creation for error reporting)
-    await sessionManager.initialize()
-
-    // Start periodic model refresh after auth is initialized
-    modelRefreshService.startAll()
+    // In headless mode the server runs without any UI — skip window creation.
+    if (!isHeadless) {
+      await createInitialWindows()
+    }
 
     // Run credential health check at startup to detect issues early
     // (corruption, machine migration, missing credentials for default connection)
@@ -525,7 +547,7 @@ app.whenReady().then(async () => {
 
     // Initialize auto-update (check immediately on launch)
     // Skip in dev mode to avoid replacing /Applications app and launching it instead
-    setAutoUpdateEventSink(moduleSink!)
+    if (moduleSink) setAutoUpdateEventSink(moduleSink)
     if (app.isPackaged) {
       checkForUpdatesOnLaunch().catch(err => {
         mainLog.error('[auto-update] Launch check failed:', err)
@@ -570,6 +592,7 @@ app.whenReady().then(async () => {
 })
 
 app.on('window-all-closed', () => {
+  if (process.env.CRAFT_HEADLESS) return  // headless server stays alive
   // On macOS, apps typically stay active until explicitly quit
   if (process.platform !== 'darwin') {
     app.quit()

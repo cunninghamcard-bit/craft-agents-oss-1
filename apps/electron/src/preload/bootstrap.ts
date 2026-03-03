@@ -19,14 +19,28 @@ import { buildClientApi } from '../transport/build-api'
 import { CHANNEL_MAP } from '../transport/channel-map'
 import { createCallbackServer } from '@craft-agent/shared/auth/callback-server'
 
-// Get connection details from main process (synchronous — runs during preload eval)
-const wsPort: number = ipcRenderer.sendSync('__get-ws-port')
-const wsToken: string = ipcRenderer.sendSync('__get-ws-token')
-const webContentsId: number = ipcRenderer.sendSync('__get-web-contents-id')
-const workspaceId: string = ipcRenderer.sendSync('__get-workspace-id')
+// Connection details — from env (remote server) or main process (local)
+let wsUrl: string
+let wsToken: string
+let webContentsId: number
+let workspaceId: string
+
+if (process.env.CRAFT_SERVER_URL) {
+  // Remote mode — connect to an external server
+  wsUrl = process.env.CRAFT_SERVER_URL
+  wsToken = process.env.CRAFT_SERVER_TOKEN ?? ''
+  webContentsId = ipcRenderer.sendSync('__get-web-contents-id')
+  workspaceId = process.env.CRAFT_WORKSPACE_ID ?? ipcRenderer.sendSync('__get-workspace-id')
+} else {
+  // Local mode — get connection details from main process (synchronous, runs during preload eval)
+  wsUrl = `ws://127.0.0.1:${ipcRenderer.sendSync('__get-ws-port')}`
+  wsToken = ipcRenderer.sendSync('__get-ws-token')
+  webContentsId = ipcRenderer.sendSync('__get-web-contents-id')
+  workspaceId = ipcRenderer.sendSync('__get-workspace-id')
+}
 
 // Create WS client and connect immediately
-const client = new WsRpcClient(`ws://127.0.0.1:${wsPort}`, {
+const client = new WsRpcClient(wsUrl, {
   token: wsToken,
   workspaceId,
   webContentsId,
