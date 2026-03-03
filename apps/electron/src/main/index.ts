@@ -525,8 +525,13 @@ app.whenReady().then(async () => {
     }
 
     // Initialize power manager (loads setting, must happen after config is available)
-    const { initPowerManager } = await import('./power-manager')
-    await initPowerManager()
+    // Non-critical — powerSaveBlocker may not work on headless/xvfb setups
+    try {
+      const { initPowerManager } = await import('./power-manager')
+      await initPowerManager()
+    } catch (err) {
+      mainLog.warn('[power] Power manager init failed (non-critical):', err instanceof Error ? err.message : err)
+    }
 
     // Set Sentry context tags for error grouping (no PII — just config classification).
     // Runs after init so config and auth state are available.
@@ -568,7 +573,7 @@ app.whenReady().then(async () => {
       mainLog.info('Debug mode enabled - logs at:', getLogFilePath())
     }
   } catch (error) {
-    mainLog.error('Failed to initialize app:', error)
+    mainLog.error('Failed to initialize app:', error instanceof Error ? error.message : error, (error as any)?.stack)
     // Continue anyway - the app will show errors in the UI
   }
 
