@@ -979,7 +979,7 @@ function PlannerBoard() {
                 />
 
                 {/* Separator */}
-                <div className="border-t border-border/60 my-5" />
+                <div className="border-t border-border/60 mt-5 mb-1" />
 
                 {/* Attached Sessions */}
                 <div className="mb-1 text-sm font-semibold">Attached Sessions</div>

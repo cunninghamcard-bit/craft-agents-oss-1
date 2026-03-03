@@ -91,7 +91,7 @@ class ModelRefreshService {
       const result = await fetcher.fetchModels(connection, credentials)
       newModels = result.models
       serverDefault = result.serverDefault
-      ipcLog.info(`Model refresh [${slug}]: fetched ${newModels.length} models from provider`)
+      ipcLog.info(`Model refresh [${slug}]: resolved ${newModels.length} models from backend model source`)
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       ipcLog.info(`Model refresh [${slug}]: provider fetch failed: ${msg}`)

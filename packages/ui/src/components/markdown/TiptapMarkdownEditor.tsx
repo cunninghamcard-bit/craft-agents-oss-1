@@ -5,13 +5,58 @@ import Placeholder from '@tiptap/extension-placeholder'
 import { Mathematics } from '@tiptap/extension-mathematics'
 import { Markdown as OfficialMarkdown } from '@tiptap/markdown'
 import { Markdown as LegacyMarkdown } from 'tiptap-markdown'
+import { Extension } from '@tiptap/core'
+import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
+import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { tiptapCodeBlock } from './TiptapCodeBlockView'
-import { TiptapBubbleMenus } from './TiptapBubbleMenus'
+import { TiptapBubbleMenus, INLINE_MATH_EDIT_EVENT } from './TiptapBubbleMenus'
 import { cn } from '../../lib/utils'
 import 'katex/dist/katex.min.css'
 import './tiptap-editor.css'
 
 export type MarkdownEngine = 'legacy' | 'official'
+
+// Languages rendered as visual blocks (contentEditable={false} NodeViews)
+const VISUAL_LANGUAGES = new Set(['mermaid', 'latex', 'math', 'tex', 'katex'])
+
+/**
+ * Plugin that adds an `is-selected` class via Decoration.node() to visual
+ * code blocks (mermaid/latex) and inline math when they fall within a range
+ * selection (e.g. Cmd+A). This gives a unified block-level highlight instead
+ * of the browser highlighting individual text nodes inside SVGs / KaTeX.
+ */
+const SelectionHighlight = Extension.create({
+  name: 'selectionHighlight',
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        key: new PluginKey('selectionHighlight'),
+        props: {
+          decorations(state) {
+            const { from, to } = state.selection
+            if (from === to) return DecorationSet.empty
+            if (state.selection instanceof NodeSelection) return DecorationSet.empty
+
+            const decorations: Decoration[] = []
+            state.doc.nodesBetween(from, to, (node, pos) => {
+              if (node.type.name === 'codeBlock') {
+                const lang = (node.attrs.language as string | undefined)?.toLowerCase()
+                if (lang && VISUAL_LANGUAGES.has(lang)) {
+                  decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: 'is-selected' }))
+                }
+              }
+              if (node.type.name === 'inlineMath') {
+                decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: 'is-selected' }))
+              }
+            })
+
+            return decorations.length > 0 ? DecorationSet.create(state.doc, decorations) : DecorationSet.empty
+          },
+        },
+      }),
+    ]
+  },
+})
 
 function getLegacyMarkdown(editor: { storage: { markdown?: { getMarkdown?: () => string } } }): string {
   return editor.storage.markdown?.getMarkdown?.() ?? ''
@@ -118,8 +163,6 @@ export function TiptapMarkdownEditor({
   // Ref for the editor instance — used by the Mathematics onClick callback
   // which is created at extension-configure time (before useEditor returns).
   const editorRef = React.useRef<ReturnType<typeof useEditor>>(null!)
-  // Flag to distinguish click-initiated inline math selection from keyboard arrow navigation
-  const inlineMathClickedRef = React.useRef(false)
 
   const useOfficialMarkdown = markdownEngine === 'official'
 
@@ -133,6 +176,7 @@ export function TiptapMarkdownEditor({
         themes: { light: 'github-light', dark: 'github-dark' },
       }),
       Placeholder.configure({ placeholder }),
+      SelectionHighlight,
     ]
 
     if (useOfficialMarkdown) {
@@ -143,8 +187,9 @@ export function TiptapMarkdownEditor({
             onClick: (_node, pos) => {
               const e = editorRef.current
               if (!e) return
-              inlineMathClickedRef.current = true
               e.chain().focus().setNodeSelection(pos).run()
+              // Emit after selection so BubbleMenu mounts, then the event activates the input
+              queueMicrotask(() => (e as any).emit(INLINE_MATH_EDIT_EVENT))
             },
           },
           katexOptions: {
@@ -200,6 +245,23 @@ export function TiptapMarkdownEditor({
   // Keep editorRef in sync for the Mathematics onClick callback
   editorRef.current = editor
 
+  // Enter on a selected inline math node → open the edit popover
+  // Uses capture-phase DOM listener so it fires before ProseMirror's own keydown handler.
+  // Calling preventDefault() causes ProseMirror to skip processing the key entirely.
+  React.useEffect(() => {
+    if (!editor || !editable) return
+    const dom = editor.view.dom
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter') return
+      const { selection } = editor.state
+      if (!(selection instanceof NodeSelection) || selection.node.type.name !== 'inlineMath') return
+      e.preventDefault()
+      ;(editor as any).emit(INLINE_MATH_EDIT_EVENT)
+    }
+    dom.addEventListener('keydown', handler, true)
+    return () => dom.removeEventListener('keydown', handler, true)
+  }, [editor, editable])
+
   // Sync editable prop
   React.useEffect(() => {
     if (editor && editor.isEditable !== editable) {
@@ -238,7 +300,7 @@ export function TiptapMarkdownEditor({
   return (
     <div className={cn('tiptap-editor', className)}>
       <EditorContent editor={editor} />
-      {editor && editable && <TiptapBubbleMenus editor={editor} inlineMathClickedRef={inlineMathClickedRef} />}
+      {editor && editable && <TiptapBubbleMenus editor={editor} />}
     </div>
   )
 }

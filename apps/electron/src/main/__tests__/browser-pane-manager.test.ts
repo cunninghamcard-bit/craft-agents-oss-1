@@ -314,13 +314,17 @@ describe('BrowserPaneManager', () => {
     manager.createInstance('d-ipc-destroy')
     manager.registerToolbarIpc()
 
-    const destroyRegistration = mockIpcMainHandle.mock.calls.find(
-      (args: unknown[]) => args[0] === 'browser-toolbar:destroy',
-    )
+    const destroyRegistration = (
+      mockIpcMainHandle.mock.calls as unknown as Array<[
+        string,
+        (_event: unknown, instanceId: string) => Promise<void>,
+      ]>
+    ).find(([channel]) => channel === 'browser-toolbar:destroy')
 
     expect(destroyRegistration).toBeTruthy()
+    if (!destroyRegistration) throw new Error('Expected browser-toolbar:destroy IPC registration')
 
-    const destroyHandler = destroyRegistration[1] as (_event: unknown, instanceId: string) => Promise<void>
+    const [, destroyHandler] = destroyRegistration
     await destroyHandler({}, 'd-ipc-destroy')
 
     expect(manager.listInstances()).toHaveLength(0)

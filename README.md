@@ -135,7 +135,10 @@ bun run electron:dev
 # Build and run
 bun run electron:start
 
-# Type checking
+# High-signal validation (recommended before PRs)
+bun run validate:dev
+
+# Type checking only (core/shared/session-tools-core)
 bun run typecheck:all
 
 # Debug logging (writes to ~/Library/Logs/@craft-agent/electron/)

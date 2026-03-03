@@ -189,8 +189,6 @@
 
 .tiptap-editor .tiptap-mermaid-block {
   margin: 0.5rem 0;
-  border-radius: 0.5rem;
-  overflow: hidden;
 }
 
 /* ── LaTeX blocks ── */
@@ -320,4 +318,49 @@
 
 .tiptap-mathematics-render--editable:hover {
   background: color-mix(in oklch, var(--accent) 8%, transparent);
+}
+
+/* Highlight inline math when selected via keyboard (NodeSelection) */
+.tiptap-mathematics-render--editable.ProseMirror-selectednode {
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+}
+
+/* Suppress individual text selection inside rendered blocks.
+   The block-level highlight is handled by the SelectionHighlight decoration plugin.
+   SVG <text> ignores ::selection in Chromium, so user-select: none is required. */
+.tiptap-mermaid-block svg,
+.tiptap-mermaid-block svg * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+.tiptap-latex-block .katex *::selection,
+.tiptap-mathematics-render--editable .katex *::selection {
+  background: transparent !important;
+  color: inherit !important;
+}
+
+/* Match text selection color to the block-level highlight */
+.tiptap-editor .tiptap-prose ::selection {
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+}
+
+/* Block-level selection highlight for visual nodes (via SelectionHighlight plugin).
+   Applied when these nodes fall within a range selection (e.g. Cmd+A).
+   Decoration.node() may put .is-selected on the same element OR the outer wrapper. */
+.tiptap-mermaid-block.is-selected,
+.is-selected .tiptap-mermaid-block {
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+}
+
+.tiptap-latex-block.is-selected,
+.is-selected .tiptap-latex-block {
+  background: color-mix(in oklch, var(--accent) 12%, transparent);
+  border-radius: 0.5rem;
+}
+
+.tiptap-mathematics-render--editable.is-selected,
+.is-selected .tiptap-mathematics-render--editable {
+  background: color-mix(in oklch, var(--accent) 15%, transparent);
+  border-radius: 3px;
 }

@@ -33,7 +33,8 @@ bun install                  # Install deps
 bun run electron:dev         # Hot reload dev mode
 bun run electron:start       # Build & run Electron
 bun run viewer:dev           # Web viewer at http://localhost:5174
-bun run typecheck:all        # Type check all packages
+bun run validate:dev         # High-signal validation suite for dev/PR
+bun run typecheck:all        # Type check core/shared/session-tools-core
 ```
 
 ## Multi-Instance Development

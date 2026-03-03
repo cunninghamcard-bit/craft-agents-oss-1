@@ -1286,14 +1286,40 @@ function migrateCodexCopilotToPi(config: StoredConfig): boolean {
  * Ensures built-in connections (anthropic, openai) always have models populated,
  * not just compat connections.
  */
+export function shouldMigratePiOpenAiProvider(connection: Pick<LlmConnection, 'providerType' | 'piAuthProvider' | 'authType' | 'baseUrl'>): boolean {
+  // Legacy cleanup: old ChatGPT Plus OAuth connections may still be tagged as `openai`.
+  // Only migrate those to `openai-codex`.
+  //
+  // IMPORTANT: Do NOT migrate API-key or custom-endpoint connections:
+  // - `api_key` / `api_key_with_endpoint` with `openai` must remain regular OpenAI API auth.
+  // - forcing them to `openai-codex` routes requests to ChatGPT backend auth and breaks on restart.
+  if (!isPiProvider(connection.providerType)) return false;
+  if (connection.piAuthProvider !== 'openai') return false;
+  if (connection.authType !== 'oauth') return false;
+  if (typeof connection.baseUrl === 'string' && connection.baseUrl.trim().length > 0) return false;
+  return true;
+}
+
+export function shouldRepairPiApiKeyCodexProvider(connection: Pick<LlmConnection, 'providerType' | 'piAuthProvider' | 'authType'>): boolean {
+  // Repair broken state from previous startup migrations:
+  // API-key connections tagged as `openai-codex` try ChatGPT backend JWT auth and fail.
+  if (!isPiProvider(connection.providerType)) return false;
+  if (connection.piAuthProvider !== 'openai-codex') return false;
+  return connection.authType === 'api_key' || connection.authType === 'api_key_with_endpoint';
+}
+
 function backfillAllConnectionModels(config: StoredConfig): boolean {
   if (!config.llmConnections) return false;
   let changed = false;
   for (const connection of config.llmConnections) {
-    // Migrate pi-codex connections from 'openai' to 'openai-codex' provider.
-    // 'openai-codex' uses the ChatGPT Plus backend (chatgpt.com/backend-api),
-    // while 'openai' is for regular API key auth (api.openai.com).
-    if (isPiProvider(connection.providerType) && connection.piAuthProvider === 'openai') {
+    // Repair previously broken API-key migration first.
+    if (shouldRepairPiApiKeyCodexProvider(connection)) {
+      connection.piAuthProvider = 'openai';
+      changed = true;
+    }
+
+    // Migrate only legacy OAuth-backed Pi OpenAI connections to ChatGPT backend provider key.
+    if (shouldMigratePiOpenAiProvider(connection)) {
       connection.piAuthProvider = 'openai-codex';
       changed = true;
     }
