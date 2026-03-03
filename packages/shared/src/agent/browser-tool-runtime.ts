@@ -583,11 +583,20 @@ async function verifySelectResult(args: {
     }
 
     if (assertValue) {
-      assertValueMatched = !!selectedNode
+      const selectedNodeMatches = !!selectedNode
         && (
           includesNormalized(selectedNode.value, assertValue)
           || includesNormalized(selectedNode.name, assertValue)
+          || includesNormalized(selectedNode.description, assertValue)
         );
+
+      const anyNodeMatches = snapshot.nodes.some((n) =>
+        includesNormalized(n.value, assertValue)
+        || includesNormalized(n.name, assertValue)
+        || includesNormalized(n.description, assertValue)
+      );
+
+      assertValueMatched = selectedNodeMatches || anyNodeMatches;
     } else {
       assertValueMatched = true;
     }

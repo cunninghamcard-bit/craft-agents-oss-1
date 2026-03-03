@@ -198,3 +198,126 @@
   margin: 0.5rem 0;
   padding: 0.5rem 0;
 }
+
+/* ── Bubble menu toolbar ── */
+.tiptap-bubble-menu {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 6px;
+  background: var(--background);
+  border: none;
+  box-shadow: var(--shadow-modal-small);
+}
+
+.tiptap-bubble-menu--editing {
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 320px;
+  max-width: 480px;
+  padding: 6px;
+}
+
+.tiptap-bubble-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  background: transparent;
+  color: color-mix(in oklch, var(--foreground) 70%, transparent);
+  transition: background-color 0.1s, color 0.1s;
+}
+
+.tiptap-bubble-btn:hover {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.tiptap-bubble-btn.is-active {
+  background: color-mix(in oklch, var(--foreground) 10%, transparent);
+  color: var(--foreground);
+}
+
+.tiptap-bubble-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: color-mix(in oklch, var(--foreground) 55%, transparent);
+  padding: 0 6px;
+  user-select: none;
+}
+
+.tiptap-bubble-edit-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 2px 6px 2px;
+}
+
+.tiptap-bubble-done-btn {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--accent);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 4px;
+  transition: background-color 0.1s;
+}
+
+.tiptap-bubble-done-btn:hover {
+  background: color-mix(in oklch, var(--accent) 10%, transparent);
+}
+
+.tiptap-bubble-textarea {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--foreground);
+  background: color-mix(in oklch, var(--foreground) 4%, transparent);
+  border: 1px solid color-mix(in oklch, var(--foreground) 10%, transparent);
+  border-radius: 6px;
+  padding: 8px;
+  resize: vertical;
+  min-height: 80px;
+  max-height: 320px;
+  outline: none;
+  width: 100%;
+}
+
+.tiptap-bubble-textarea:focus {
+  border-color: color-mix(in oklch, var(--accent) 50%, transparent);
+}
+
+/* ── Inline math edit menu ── */
+.tiptap-bubble-menu--inline-math {
+  gap: 6px;
+  padding: 4px 6px;
+}
+
+.tiptap-bubble-math-input {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--foreground);
+  background: transparent;
+  border: none;
+  padding: 0;
+  outline: none;
+  min-width: 160px;
+}
+
+/* Clickable inline math nodes in editable mode */
+.tiptap-mathematics-render--editable {
+  cursor: pointer;
+  border-radius: 3px;
+  transition: background-color 0.1s;
+}
+
+.tiptap-mathematics-render--editable:hover {
+  background: color-mix(in oklch, var(--accent) 8%, transparent);
+}

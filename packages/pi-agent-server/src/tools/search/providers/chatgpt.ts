@@ -12,9 +12,34 @@
 import type { WebSearchProvider, WebSearchResult } from '../types.ts';
 import { parseResponsesApiResults, type ResponsesApiResponse } from './responses-api-parser.ts';
 
-const SEARCH_MODEL = 'gpt-4o-mini';
+/**
+ * Codex backend request contract (search path):
+ * - model: gpt-5.3-codex
+ * - store: false
+ * - stream: false (we parse JSON, not SSE)
+ * - instructions + tool_choice + text.verbosity
+ * - OpenAI-Beta: responses=experimental header
+ *
+ * If this payload changes, update:
+ *   - ./chatgpt.test.ts
+ *   - ../SEARCH_PAYLOAD_CONTRACT.md
+ */
+const DEFAULT_SEARCH_MODEL = 'gpt-5.3-codex';
 const API_BASE = 'https://chatgpt.com/backend-api/codex';
 const JWT_CLAIM_PATH = 'https://api.openai.com/auth';
+const ERROR_TEXT_LIMIT = 600;
+const SEARCH_INSTRUCTIONS = 'You are a web search assistant. Return concise, factual search results with source citations when available.';
+const SEARCH_TEXT_VERBOSITY = 'medium';
+
+interface SearchAttempt {
+  toolType: 'web_search' | 'web_search_preview';
+  label: string;
+}
+
+const SEARCH_ATTEMPTS: SearchAttempt[] = [
+  { toolType: 'web_search', label: 'web_search' },
+  { toolType: 'web_search_preview', label: 'web_search_preview' },
+];
 
 /**
  * Extract the `chatgpt_account_id` from a ChatGPT OAuth access token (JWT).
@@ -40,30 +65,142 @@ export class ChatGPTBackendSearchProvider implements WebSearchProvider {
   constructor(
     private accessToken: string,
     private accountId: string,
+    private options?: { model?: string },
   ) {}
 
   async search(query: string, count: number): Promise<WebSearchResult[]> {
-    const response = await fetch(`${API_BASE}/responses`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${this.accessToken}`,
-        'chatgpt-account-id': this.accountId,
-      },
-      body: JSON.stringify({
-        model: SEARCH_MODEL,
-        tools: [{ type: 'web_search' }],
-        input: `Search the web for: ${query}\n\nReturn the top ${count} results with title, URL, and a brief description.`,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const attemptErrors: string[] = [];
 
-    if (!response.ok) {
+    for (const attempt of SEARCH_ATTEMPTS) {
+      const requestBody = {
+        model: this.options?.model || DEFAULT_SEARCH_MODEL,
+        store: false,
+        stream: true,
+        instructions: SEARCH_INSTRUCTIONS,
+        tools: [{ type: attempt.toolType }],
+        tool_choice: 'auto',
+        parallel_tool_calls: true,
+        text: { verbosity: SEARCH_TEXT_VERBOSITY },
+        input: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'input_text',
+                text: `Search the web for: ${query}\n\nReturn the top ${count} results with title, URL, and a brief description.`,
+              },
+            ],
+          },
+        ],
+      };
+
+      const response = await fetch(`${API_BASE}/responses`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.accessToken}`,
+          'chatgpt-account-id': this.accountId,
+          'OpenAI-Beta': 'responses=experimental',
+        },
+        body: JSON.stringify(requestBody),
+        signal: AbortSignal.timeout(30_000),
+      });
+
+      if (response.ok) {
+        const data = await parseResponsePayload(response);
+        return parseResponsesApiResults(data, query, count);
+      }
+
       const errorText = await response.text();
-      throw new Error(`ChatGPT search failed (HTTP ${response.status}): ${errorText}`);
+      const compactError = compactErrorText(errorText);
+      const requestFingerprint = buildRequestFingerprint(requestBody);
+      const attemptError = `${attempt.label} failed (HTTP ${response.status}) [${requestFingerprint}]: ${compactError}`;
+      attemptErrors.push(attemptError);
+
+      // Retry only for likely schema/tool incompatibility (400).
+      const canRetry = response.status === 400;
+      const hasMoreAttempts = attempt !== SEARCH_ATTEMPTS[SEARCH_ATTEMPTS.length - 1];
+      if (!(canRetry && hasMoreAttempts)) {
+        throw new Error(`ChatGPT search failed: ${attemptErrors.join('; ')}`);
+      }
     }
 
-    const data = (await response.json()) as ResponsesApiResponse;
-    return parseResponsesApiResults(data, query, count);
+    throw new Error(`ChatGPT search failed: ${attemptErrors.join('; ')}`);
   }
+}
+
+async function parseResponsePayload(response: Response): Promise<ResponsesApiResponse> {
+  const contentType = response.headers.get('content-type') || '';
+  const raw = await response.text();
+
+  const looksLikeSse =
+    contentType.includes('text/event-stream') ||
+    raw.startsWith('event:') ||
+    raw.includes('\ndata:') ||
+    raw.includes('\n\nevent:');
+
+  if (looksLikeSse) {
+    return parseSseResponsePayload(raw);
+  }
+
+  try {
+    return JSON.parse(raw) as ResponsesApiResponse;
+  } catch {
+    throw new Error(`ChatGPT search response parse failed: expected JSON or SSE payload, got: ${compactErrorText(raw)}`);
+  }
+}
+
+function parseSseResponsePayload(sseText: string): ResponsesApiResponse {
+  let completed: ResponsesApiResponse | null = null;
+
+  for (const chunk of sseText.split('\n\n')) {
+    const dataLines = chunk
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trim())
+      .filter(Boolean);
+
+    for (const line of dataLines) {
+      if (line === '[DONE]') continue;
+      let event: any;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+
+      if (event?.type === 'response.completed' || event?.type === 'response.done') {
+        if (event.response && typeof event.response === 'object') {
+          completed = event.response as ResponsesApiResponse;
+        }
+      }
+    }
+  }
+
+  if (!completed) {
+    throw new Error('ChatGPT search stream returned no completed response payload');
+  }
+
+  return completed;
+}
+
+function buildRequestFingerprint(body: {
+  model: string;
+  store: boolean;
+  stream: boolean;
+  tools: Array<{ type: string }>;
+  tool_choice: string;
+  text?: { verbosity?: string };
+}): string {
+  const toolType = body.tools[0]?.type || 'unknown';
+  const verbosity = body.text?.verbosity || 'unset';
+
+  return `tool=${toolType}, model=${body.model}, store=${String(body.store)}, stream=${String(body.stream)}, tool_choice=${body.tool_choice}, text.verbosity=${verbosity}`;
+}
+
+function compactErrorText(text: string): string {
+  const normalized = text.replace(/\s+/g, ' ').trim();
+  if (!normalized) return 'Bad Request';
+  return normalized.slice(0, ERROR_TEXT_LIMIT);
 }

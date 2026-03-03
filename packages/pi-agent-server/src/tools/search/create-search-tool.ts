@@ -47,6 +47,12 @@ function formatResults(
   };
 }
 
+function formatErrorSnippet(message: string, max = 180): string {
+  const compact = message.replace(/\s+/g, ' ').trim();
+  if (!compact) return 'unknown error';
+  return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
+}
+
 export function createSearchTool(
   provider: WebSearchProvider,
   fallbackProvider: WebSearchProvider = new DDGSearchProvider(),
@@ -75,7 +81,7 @@ export function createSearchTool(
               query,
               fallbackProvider.name,
               fallbackResults,
-              `Primary search provider (${provider.name}) failed, automatically fell back to ${fallbackProvider.name}.`,
+              `Primary search provider (${provider.name}) failed (${formatErrorSnippet(primaryMsg)}), automatically fell back to ${fallbackProvider.name}.`,
             );
           } catch (fallbackErr) {
             const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);

@@ -95,10 +95,13 @@ export class BrowserCDP {
   private attached = false
   private detachListenerRegistered = false
   private idleDetachTimer: ReturnType<typeof setTimeout> | null = null
-  // Map from "@eN" refs to backend node IDs (refreshed on each snapshot)
+  // Map from "@eN" refs to backend node IDs for the current snapshot.
   private refMap: Map<string, number> = new Map()
-  // Map from "@eN" refs to semantic details captured during snapshot
+  // Map from "@eN" refs to semantic details captured during snapshot.
   private refDetails: Map<string, { role: string; name: string }> = new Map()
+  // Stable mapping for backend DOM nodes across snapshots.
+  private backendNodeRefMap: Map<number, string> = new Map()
+  private nextRefCounter = 0
 
   constructor(webContents: WebContents) {
     this.webContents = webContents
@@ -161,6 +164,24 @@ export class BrowserCDP {
     }
   }
 
+  private allocateRef(backendDOMNodeId?: number): string {
+    if (backendDOMNodeId !== undefined) {
+      const existing = this.backendNodeRefMap.get(backendDOMNodeId)
+      if (existing) {
+        return existing
+      }
+    }
+
+    this.nextRefCounter += 1
+    const ref = `@e${this.nextRefCounter}`
+
+    if (backendDOMNodeId !== undefined) {
+      this.backendNodeRefMap.set(backendDOMNodeId, ref)
+    }
+
+    return ref
+  }
+
   // ---------------------------------------------------------------------------
   // Accessibility Snapshot
   // ---------------------------------------------------------------------------
@@ -186,7 +207,7 @@ export class BrowserCDP {
     const rawRoleCounts = new Map<string, number>()
     const droppedReasonCounts = new Map<string, number>()
 
-    let refCounter = 0
+    const seenBackendNodeIds = new Set<number>()
 
     const pushAccessNode = (entry: {
       backendDOMNodeId?: number
@@ -198,15 +219,21 @@ export class BrowserCDP {
       checked?: boolean
       disabled?: boolean
     }): boolean => {
-      if (refCounter >= MAX_AX_SNAPSHOT_NODES) return false
+      if (result.length >= MAX_AX_SNAPSHOT_NODES) return false
 
-      refCounter++
-      const ref = `@e${refCounter}`
-
-      if (entry.backendDOMNodeId) {
-        this.refMap.set(ref, entry.backendDOMNodeId)
-        this.refDetails.set(ref, { role: entry.role, name: entry.name })
+      if (entry.backendDOMNodeId !== undefined) {
+        if (seenBackendNodeIds.has(entry.backendDOMNodeId)) {
+          return true
+        }
+        seenBackendNodeIds.add(entry.backendDOMNodeId)
       }
+
+      const ref = this.allocateRef(entry.backendDOMNodeId)
+
+      if (entry.backendDOMNodeId !== undefined) {
+        this.refMap.set(ref, entry.backendDOMNodeId)
+      }
+      this.refDetails.set(ref, { role: entry.role, name: entry.name })
 
       const accessNode: AccessibilityNode = {
         ref,
@@ -275,7 +302,7 @@ export class BrowserCDP {
           disabled,
         })
 
-        if (refCounter >= MAX_AX_SNAPSHOT_NODES) break
+        if (result.length >= MAX_AX_SNAPSHOT_NODES) break
         continue
       }
 

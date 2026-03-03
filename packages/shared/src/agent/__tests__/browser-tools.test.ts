@@ -524,6 +524,40 @@ describe('createBrowserTools', () => {
       expect(result.content[0].text).toContain('(verified)')
     })
 
+    it('accepts assert-value from downstream node when selected control metadata lags', async () => {
+      let snapshotCount = 0
+      mockFns.snapshot = async () => {
+        snapshotCount += 1
+        if (snapshotCount === 1) {
+          return {
+            url: 'https://example.com',
+            title: 'Example',
+            nodes: [
+              { ref: '@e75', role: 'combobox', name: 'Sort updated-newest', value: 'Sort' },
+              { ref: '@e80', role: 'status', name: 'Current sort', value: 'updated-newest' },
+            ],
+          }
+        }
+
+        return {
+          url: 'https://example.com',
+          title: 'Example',
+          nodes: [
+            { ref: '@e75', role: 'combobox', name: 'Sort updated-newest', value: 'Sort' },
+            { ref: '@e81', role: 'status', name: 'Current sort', value: 'updated-newest' },
+          ],
+        }
+      }
+
+      const result = await executeTool(tools, 'browser_tool', {
+        command: 'select @e75 updated-newest --assert-value updated-newest --timeout 500',
+      })
+
+      expect(result.content[0].text).toContain('(verified)')
+      expect(result.content[0].text).toContain('assertValueMatched=true')
+      expect(result.content[0].text).not.toContain('assert-value did not match')
+    })
+
     it('returns warning when select cannot be verified', async () => {
       mockFns.snapshot = async () => ({
         url: 'https://example.com',

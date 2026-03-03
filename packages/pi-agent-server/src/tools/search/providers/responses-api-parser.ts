@@ -111,12 +111,12 @@ export function parseResponsesApiResults(
     throw new Error('Search returned no content');
   }
 
-  // Fallback: return text summary as a single result.
+  // Fallback: return full text summary as a single result.
   return [
     {
       title: `Search results for "${query}"`,
       url: '',
-      description: text.slice(0, 500),
+      description: text,
     },
   ];
 }

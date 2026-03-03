@@ -15,6 +15,7 @@ import { useDynamicStack } from '@/hooks/useDynamicStack'
 import type { SessionStatus } from '@/config/session-status-config'
 import { getState } from '@/config/session-status-config'
 import { SessionStatusMenu } from '@/components/ui/session-status-menu'
+import { MetadataBadge } from '@/components/ui/metadata-badge'
 import { Input } from '@/components/ui/input'
 import { useAppShellContext, useSession } from '@/context/AppShellContext'
 import { SessionFilesSection } from '../right-sidebar/SessionFilesSection'
@@ -318,41 +319,18 @@ function LabelBadge({
       onValueChange={onValueChange}
       onRemove={onRemove}
     >
-      <button
-        type="button"
-        className={cn(
-          "h-[30px] pl-3 pr-2 text-xs font-medium rounded-[8px] flex items-center shrink-0",
-          "outline-none select-none transition-colors",
-          // Background: 97% background + 3% label color. Hover: 92% + 8%.
-          // Text: 80% foreground + 20% label color.
-          // All opaque — drop-shadow traces alpha, badge must stay solid.
-          "bg-[color-mix(in_srgb,var(--background)_97%,var(--badge-color))]",
-          "hover:bg-[color-mix(in_srgb,var(--background)_92%,var(--badge-color))]",
-          "text-[color-mix(in_srgb,var(--foreground)_80%,var(--badge-color))]",
-          "relative", // for z-index stacking when overlapped
-        )}
-        style={{ '--badge-color': resolvedColor } as React.CSSProperties}
-      >
-        <LabelIcon label={label} size="lg" />
-        <span className="whitespace-nowrap ml-2">{label.name}</span>
-        {/* Optional typed value: interpunkt separator + value, or placeholder icon if typed but no value set */}
-        {displayValue ? (
-          <>
-            <span className="opacity-30 mx-1">·</span>
-            <span className="opacity-60 whitespace-nowrap max-w-[100px] truncate">
-              {displayValue}
-            </span>
-          </>
-        ) : (
-          label.valueType && (
-            <>
-              <span className="opacity-30 mx-1">·</span>
-              <LabelValueTypeIcon valueType={label.valueType} />
-            </>
-          )
-        )}
-        <ChevronDown className="h-3 w-3 opacity-40 ml-1 shrink-0" />
-      </button>
+      <MetadataBadge
+        label={label.name}
+        value={displayValue}
+        icon={<LabelIcon label={label} size="lg" />}
+        valueHintIcon={label.valueType ? <LabelValueTypeIcon valueType={label.valueType} /> : undefined}
+        badgeColor={resolvedColor}
+        interactive
+        isActive={open}
+        showChevron
+        shadow="none"
+        className="relative"
+      />
     </LabelValuePopover>
   )
 }
@@ -389,27 +367,22 @@ function StateBadge({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          className={cn(
-            "h-[30px] pl-2.5 pr-2 text-xs font-medium rounded-[8px] flex items-center gap-1.5 shrink-0",
-            "outline-none select-none transition-colors shadow-minimal",
-            "bg-[color-mix(in_srgb,var(--background)_97%,var(--badge-color))]",
-            "hover:bg-[color-mix(in_srgb,var(--background)_92%,var(--badge-color))]",
-            "text-[color-mix(in_srgb,var(--foreground)_80%,var(--badge-color))]",
+        <MetadataBadge
+          label={state.label}
+          badgeColor={badgeColor}
+          interactive
+          isActive={open}
+          showChevron
+          icon={(
+            <span
+              className="shrink-0 flex items-center w-3.5 h-3.5 [&>svg]:w-full [&>svg]:h-full [&>img]:w-full [&>img]:h-full [&>span]:text-xs"
+              style={applyColor ? { color: state.resolvedColor } : undefined}
+            >
+              {state.icon}
+            </span>
           )}
-          style={{ '--badge-color': badgeColor } as React.CSSProperties}
-        >
-          {/* State icon with resolved color */}
-          <span
-            className="shrink-0 flex items-center w-3.5 h-3.5 [&>svg]:w-full [&>svg]:h-full [&>img]:w-full [&>img]:h-full [&>span]:text-xs"
-            style={applyColor ? { color: state.resolvedColor } : undefined}
-          >
-            {state.icon}
-          </span>
-          <span className="whitespace-nowrap">{state.label}</span>
-          <ChevronDown className="h-3.5 w-3.5 opacity-40" />
-        </button>
+          className="pl-2.5"
+        />
       </PopoverTrigger>
       <PopoverContent
         className="w-auto p-0 border-0 shadow-none bg-transparent"

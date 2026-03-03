@@ -6,6 +6,7 @@ import { Mathematics } from '@tiptap/extension-mathematics'
 import { Markdown as OfficialMarkdown } from '@tiptap/markdown'
 import { Markdown as LegacyMarkdown } from 'tiptap-markdown'
 import { tiptapCodeBlock } from './TiptapCodeBlockView'
+import { TiptapBubbleMenus } from './TiptapBubbleMenus'
 import { cn } from '../../lib/utils'
 import 'katex/dist/katex.min.css'
 import './tiptap-editor.css'
@@ -114,6 +115,12 @@ export function TiptapMarkdownEditor({
   const onUpdateRef = React.useRef(onUpdate)
   onUpdateRef.current = onUpdate
 
+  // Ref for the editor instance — used by the Mathematics onClick callback
+  // which is created at extension-configure time (before useEditor returns).
+  const editorRef = React.useRef<ReturnType<typeof useEditor>>(null!)
+  // Flag to distinguish click-initiated inline math selection from keyboard arrow navigation
+  const inlineMathClickedRef = React.useRef(false)
+
   const useOfficialMarkdown = markdownEngine === 'official'
 
   const extensions = React.useMemo(() => {
@@ -132,6 +139,14 @@ export function TiptapMarkdownEditor({
       return [
         ...base,
         Mathematics.configure({
+          inlineOptions: {
+            onClick: (_node, pos) => {
+              const e = editorRef.current
+              if (!e) return
+              inlineMathClickedRef.current = true
+              e.chain().focus().setNodeSelection(pos).run()
+            },
+          },
           katexOptions: {
             throwOnError: false,
             strict: false,
@@ -182,6 +197,9 @@ export function TiptapMarkdownEditor({
     },
   }, [useOfficialMarkdown, extensions])
 
+  // Keep editorRef in sync for the Mathematics onClick callback
+  editorRef.current = editor
+
   // Sync editable prop
   React.useEffect(() => {
     if (editor && editor.isEditable !== editable) {
@@ -220,6 +238,7 @@ export function TiptapMarkdownEditor({
   return (
     <div className={cn('tiptap-editor', className)}>
       <EditorContent editor={editor} />
+      {editor && editable && <TiptapBubbleMenus editor={editor} inlineMathClickedRef={inlineMathClickedRef} />}
     </div>
   )
 }

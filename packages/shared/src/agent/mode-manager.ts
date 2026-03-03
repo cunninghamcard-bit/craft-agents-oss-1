@@ -609,6 +609,8 @@ export type BashRejectionReason =
   | { type: 'redirect'; op: string; explanation: string }
   | { type: 'command_expansion'; explanation: string }
   | { type: 'process_substitution'; explanation: string }
+  | { type: 'parameter_expansion'; explanation: string }
+  | { type: 'env_assignment'; explanation: string }
   | { type: 'unsafe_command'; command: string; explanation: string }
   | { type: 'compound_partial_fail'; failedCommands: string[]; passedCommands: string[] };
 
@@ -1101,6 +1103,20 @@ export function getBashRejectionReason(command: string, config: ToolCheckConfig)
           explanation: reason.explanation,
         };
 
+      case 'parameter_expansion':
+        return {
+          type: 'dangerous_substitution',
+          pattern: '${} / $VAR',
+          explanation: reason.explanation,
+        };
+
+      case 'env_assignment':
+        return {
+          type: 'dangerous_substitution',
+          pattern: 'VAR=value',
+          explanation: reason.explanation,
+        };
+
       case 'unsafe_command': {
         // Find relevant patterns to help the agent understand what format is expected
         const relevantPatterns = findRelevantPatterns(reason.command, config.readOnlyBashPatterns);
@@ -1411,6 +1427,12 @@ export function formatBashRejectionMessage(reason: BashRejectionReason, config: 
 
     case 'process_substitution':
       return `Bash command blocked: contains process substitution. ${reason.explanation}. ${modeSwitchHint}`;
+
+    case 'parameter_expansion':
+      return `Bash command blocked: contains variable expansion (\${} / $VAR). ${reason.explanation}. ${modeSwitchHint}`;
+
+    case 'env_assignment':
+      return `Bash command blocked: contains environment variable assignment. ${reason.explanation}. ${modeSwitchHint}`;
 
     case 'unsafe_command': {
       const lines: string[] = [];

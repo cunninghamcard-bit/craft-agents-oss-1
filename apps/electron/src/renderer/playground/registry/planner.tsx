@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { MetadataBadge } from '@/components/ui/metadata-badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   DropdownMenu,
@@ -929,28 +930,42 @@ function PlannerBoard() {
                   contentEditable
                   suppressContentEditableWarning
                   onBlur={(e) => updateTaskTitle(selectedTask.id, e.currentTarget.textContent ?? '')}
-                  className="text-xl font-bold leading-snug outline-none mb-3"
+                  className="text-xl font-bold leading-snug outline-none mb-5"
                 >
                   {selectedTask.title}
                 </div>
 
-                {/* Props row */}
+                {/* Metadata badges under title */}
                 <div className="flex items-center gap-2 flex-wrap mb-5">
-                  <span className={cn('inline-flex items-center gap-1.5 rounded-md px-2 py-0.5 text-xs font-medium', stateStyles[selectedTask.state])}>
-                    {selectedTask.state === 'done' ? (
-                      <CheckCircle2 className="h-3.5 w-3.5" />
-                    ) : (
-                      <Circle className="h-3.5 w-3.5" />
-                    )}
-                    {stateLabels[selectedTask.state]}
-                  </span>
-                  <span className="inline-flex items-center gap-1.5 text-xs text-foreground/55">
-                    <CalendarDays className="h-3.5 w-3.5" />
-                    {selectedTask.due}
-                  </span>
+                  <MetadataBadge
+                    interactive={false}
+                    icon={selectedTask.state === 'done'
+                      ? <CheckCircle2 className={cn('h-3.5 w-3.5', stateStyles[selectedTask.state])} />
+                      : <Circle className={cn('h-3.5 w-3.5', stateStyles[selectedTask.state])} />}
+                    label={stateLabels[selectedTask.state]}
+                  />
+
+                  <MetadataBadge
+                    interactive={false}
+                    icon={<CalendarDays className="h-3.5 w-3.5 text-foreground/55" />}
+                    label="Due"
+                    value={selectedTask.due}
+                  />
+
                   {selectedHeading && (
-                    <span className="text-xs text-foreground/40">{selectedHeading.title}</span>
+                    <MetadataBadge
+                      interactive={false}
+                      label="Section"
+                      value={selectedHeading.title}
+                    />
                   )}
+
+                  <MetadataBadge
+                    interactive={false}
+                    icon={<Link2 className="h-3.5 w-3.5 text-foreground/55" />}
+                    label="Sessions"
+                    value={String(selectedLinks.length)}
+                  />
                 </div>
 
                 {/* Editable notes */}

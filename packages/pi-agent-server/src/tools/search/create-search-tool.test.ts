@@ -57,6 +57,7 @@ describe('createSearchTool', () => {
 
     expect(result.details?.isError).toBeUndefined();
     expect((result.content[0] as any).text).toContain('automatically fell back to DuckDuckGo');
+    expect((result.content[0] as any).text).toContain('401 missing scope');
     expect((result.content[0] as any).text).toContain('https://fallback.example');
   });
 

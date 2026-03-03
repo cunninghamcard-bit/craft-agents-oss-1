@@ -99,7 +99,13 @@ type OutboundAgentEvent = AgentSessionEvent | EnrichedToolExecutionStartEvent;
 /** Messages to main process (stdout) */
 interface OutboundReady { type: 'ready'; sessionId: string | null; callbackPort: number }
 interface OutboundEvent { type: 'event'; event: OutboundAgentEvent }
-interface OutboundPreToolUseReq { type: 'pre_tool_use_request'; requestId: string; toolName: string; input: Record<string, unknown> }
+interface OutboundPreToolUseReq {
+  type: 'pre_tool_use_request';
+  requestId: string;
+  toolName: string;
+  toolCallId?: string;
+  input: Record<string, unknown>;
+}
 interface OutboundToolExecReq { type: 'tool_execute_request'; requestId: string; toolName: string; args: Record<string, unknown> }
 interface OutboundSessionToolCompleted { type: 'session_tool_completed'; toolName: string; args: Record<string, unknown>; isError: boolean }
 interface OutboundMiniResult { type: 'mini_completion_result'; id: string; text: string | null }
@@ -493,6 +499,7 @@ async function ensureSession(): Promise<AgentSession> {
 async function requestPreToolUseApproval(
   sdkToolName: string,
   input: Record<string, unknown>,
+  toolCallId?: string,
 ): Promise<Record<string, unknown>> {
   const requestId = `pi-ptu-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -500,6 +507,7 @@ async function requestPreToolUseApproval(
     type: 'pre_tool_use_request',
     requestId,
     toolName: sdkToolName,
+    ...(toolCallId ? { toolCallId } : {}),
     input,
   });
 
@@ -547,7 +555,7 @@ function wrapSingleTool(tool: AgentTool<any>): AgentTool<any> {
     }
 
     // Send to main process for permission checking + transforms
-    inputObj = await requestPreToolUseApproval(sdkToolName, inputObj);
+    inputObj = await requestPreToolUseApproval(sdkToolName, inputObj, toolCallId);
 
     // Execute original tool with (potentially modified) input
     const result = await originalExecute(toolCallId, inputObj, signal, onUpdate);
@@ -622,7 +630,7 @@ function buildProxyTools(): AgentTool<any>[] {
       const inputObj = params as Record<string, unknown>;
 
       // Permission checking via main process
-      const approvedInput = await requestPreToolUseApproval(def.name, inputObj);
+      const approvedInput = await requestPreToolUseApproval(def.name, inputObj, toolCallId);
 
       // Execute via main process
       const requestId = `proxy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
