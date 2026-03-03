@@ -8,8 +8,8 @@
 import { IPC_CHANNELS } from '../shared/types'
 import type { ChannelMap } from './build-api'
 
-function invoke(channel: string) {
-  return { type: 'invoke' as const, channel }
+function invoke(channel: string, transform?: (result: any) => any) {
+  return { type: 'invoke' as const, channel, ...(transform && { transform }) }
 }
 
 function listener(channel: string) {
@@ -109,7 +109,7 @@ export const CHANNEL_MAP: ChannelMap = {
 
   // Onboarding
   getAuthState: invoke(IPC_CHANNELS.onboarding.GET_AUTH_STATE),
-  getSetupNeeds: invoke(IPC_CHANNELS.onboarding.GET_AUTH_STATE),
+  getSetupNeeds: invoke(IPC_CHANNELS.onboarding.GET_AUTH_STATE, r => r.setupNeeds),
   startWorkspaceMcpOAuth: invoke(IPC_CHANNELS.onboarding.START_MCP_OAUTH),
   startClaudeOAuth: invoke(IPC_CHANNELS.onboarding.START_CLAUDE_OAUTH),
   exchangeClaudeCode: invoke(IPC_CHANNELS.onboarding.EXCHANGE_CLAUDE_CODE),

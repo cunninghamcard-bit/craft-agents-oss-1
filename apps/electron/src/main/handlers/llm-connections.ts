@@ -124,10 +124,18 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       }
 
       if (isNewConnection) {
-        addLlmConnection(pendingConnection)
+        const added = addLlmConnection(pendingConnection)
+        if (!added) {
+          deps.platform.logger?.error(`Failed to persist LLM connection: ${setup.slug} (config may be inaccessible)`)
+          return { success: false, error: 'Failed to save connection. Check server logs for details.' }
+        }
         deps.platform.logger?.info(`Created LLM connection: ${setup.slug}`)
       } else if (Object.keys(updates).length > 0) {
-        updateLlmConnection(setup.slug, updates)
+        const updated = updateLlmConnection(setup.slug, updates)
+        if (!updated) {
+          deps.platform.logger?.error(`Failed to update LLM connection: ${setup.slug}`)
+          return { success: false, error: 'Failed to update connection. Check server logs for details.' }
+        }
         deps.platform.logger?.info(`Updated LLM connection settings: ${setup.slug}`)
       }
 
