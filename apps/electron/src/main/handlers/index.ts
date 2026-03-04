@@ -1,38 +1,15 @@
 import type { HandlerDeps } from './handler-deps'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 
-import { registerLabelsHandlers } from './labels'
-import { registerStatusesHandlers } from './statuses'
-import { registerSkillsHandlers } from './skills'
-import { registerFilesHandlers } from './files'
-import { registerSystemCoreHandlers, registerSystemGuiHandlers } from './system'
-import { registerAuthHandlers } from './auth'
-import { registerSettingsHandlers, registerSettingsGuiHandlers } from './settings'
-import { registerSourcesHandlers } from './sources'
-import { registerLlmConnectionsHandlers } from './llm-connections'
-import { registerAutomationsHandlers } from './automations'
-import { registerWorkspaceCoreHandlers, registerWorkspaceGuiHandlers } from './workspace'
-import { registerSessionsHandlers } from './sessions'
-import { registerBrowserHandlers } from './browser'
-import { registerOAuthHandlers } from './oauth'
-import { registerOnboardingHandlers } from '../onboarding'
+// Core handlers are now in server-core
+import { registerCoreRpcHandlers } from '@craft-agent/server-core/handlers/rpc'
+export { registerCoreRpcHandlers }
 
-export function registerCoreRpcHandlers(server: RpcServer, deps: HandlerDeps): void {
-  registerLabelsHandlers(server, deps)
-  registerStatusesHandlers(server, deps)
-  registerSkillsHandlers(server, deps)
-  registerFilesHandlers(server, deps)
-  registerSystemCoreHandlers(server, deps)
-  registerAuthHandlers(server, deps)
-  registerSettingsHandlers(server, deps)
-  registerSourcesHandlers(server, deps)
-  registerLlmConnectionsHandlers(server, deps)
-  registerAutomationsHandlers(server, deps)
-  registerWorkspaceCoreHandlers(server, deps)
-  registerSessionsHandlers(server, deps)
-  registerOAuthHandlers(server, deps)
-  registerOnboardingHandlers(server, deps)
-}
+// GUI-only handlers remain local (Electron-specific imports)
+import { registerSystemGuiHandlers } from './system'
+import { registerWorkspaceGuiHandlers } from './workspace'
+import { registerBrowserHandlers } from './browser'
+import { registerSettingsGuiHandlers } from './settings'
 
 export function registerGuiRpcHandlers(server: RpcServer, deps: HandlerDeps): void {
   registerSystemGuiHandlers(server, deps)
