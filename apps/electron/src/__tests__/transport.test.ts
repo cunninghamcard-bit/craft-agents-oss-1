@@ -33,6 +33,21 @@ async function waitConnected(client: WsRpcClient, timeoutMs = 2000): Promise<voi
   }
 }
 
+/** Wait for specific transport status. */
+async function waitForStatus(
+  client: WsRpcClient,
+  predicate: (status: ReturnType<WsRpcClient['getConnectionState']>['status']) => boolean,
+  timeoutMs = 2000,
+): Promise<void> {
+  const start = Date.now()
+  while (!predicate(client.getConnectionState().status)) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`Status wait timeout. Last status: ${client.getConnectionState().status}`)
+    }
+    await new Promise(r => setTimeout(r, 10))
+  }
+}
+
 /** Create a server + connected client pair. */
 async function createPair(
   serverOpts?: Partial<import('../transport/server').WsRpcServerOptions>,
@@ -394,6 +409,73 @@ describe('auth', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Connection state
+// ---------------------------------------------------------------------------
+
+describe('connection state', () => {
+  test('becomes connected after successful handshake', async () => {
+    const { client } = await createPair()
+
+    const state = client.getConnectionState()
+    expect(state.status).toBe('connected')
+    expect(state.mode).toBe('local')
+    expect(state.url.startsWith('ws://127.0.0.1:')).toBe(true)
+  })
+
+  test('classifies invalid token as auth failure', async () => {
+    const server = trackServer(new WsRpcServer({
+      host: '127.0.0.1',
+      port: 0,
+      requireAuth: true,
+      validateToken: async (t) => t === 'valid-token',
+    }))
+    await server.listen()
+
+    const client = trackClient(new WsRpcClient(`ws://127.0.0.1:${server.port}`, {
+      token: 'wrong-token',
+      autoReconnect: false,
+    }))
+
+    client.connect()
+    await waitForStatus(client, (s) => s === 'failed')
+
+    const state = client.getConnectionState()
+    expect(state.lastError?.kind).toBe('auth')
+  })
+
+  test('enters reconnecting after disconnect when autoReconnect is enabled', async () => {
+    const { server, client } = await createPair({}, { autoReconnect: true, maxReconnectDelay: 200 })
+
+    server.close()
+    await waitForStatus(client, (s) => s === 'reconnecting' || s === 'failed')
+
+    const state = client.getConnectionState()
+    expect(['reconnecting', 'failed']).toContain(state.status)
+    expect(state.attempt).toBeGreaterThanOrEqual(1)
+  })
+
+  test('captures websocket close code and reason for handshake failures', async () => {
+    const server = trackServer(new WsRpcServer({
+      host: '127.0.0.1',
+      port: 0,
+      requireAuth: true,
+      validateToken: async (t) => t === 'valid-token',
+    }))
+    await server.listen()
+
+    const client = trackClient(new WsRpcClient(`ws://127.0.0.1:${server.port}`, {
+      autoReconnect: false,
+    }))
+
+    client.connect()
+    await waitForStatus(client, (s) => s === 'failed')
+
+    const state = client.getConnectionState()
+    expect(state.lastClose?.code).toBe(4005)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Edge cases
 // ---------------------------------------------------------------------------
 
@@ -437,7 +519,9 @@ describe('edge cases', () => {
       await client.invoke('anything')
       throw new Error('Should have thrown')
     } catch (err: any) {
-      expect(err.message).toContain('Connection')
+      expect(
+        err.message.includes('Connection') || err.message.includes('WebSocket error during connection setup'),
+      ).toBe(true)
     }
   })
 

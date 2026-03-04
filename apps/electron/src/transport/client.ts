@@ -25,6 +25,51 @@ interface PendingRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Connection state model
+// ---------------------------------------------------------------------------
+
+export type TransportMode = 'local' | 'remote'
+
+export type TransportConnectionStatus =
+  | 'idle'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'disconnected'
+  | 'failed'
+
+export type TransportConnectionErrorKind =
+  | 'auth'
+  | 'protocol'
+  | 'timeout'
+  | 'network'
+  | 'server'
+  | 'unknown'
+
+export interface TransportConnectionError {
+  kind: TransportConnectionErrorKind
+  message: string
+  code?: string
+}
+
+export interface TransportCloseInfo {
+  code?: number
+  reason?: string
+  wasClean?: boolean
+}
+
+export interface TransportConnectionState {
+  mode: TransportMode
+  status: TransportConnectionStatus
+  url: string
+  attempt: number
+  nextRetryInMs?: number
+  lastError?: TransportConnectionError
+  lastClose?: TransportCloseInfo
+  updatedAt: number
+}
+
+// ---------------------------------------------------------------------------
 // Client options
 // ---------------------------------------------------------------------------
 
@@ -45,6 +90,8 @@ export interface WsRpcClientOptions {
   connectTimeout?: number
   /** Capabilities to advertise on handshake. Handlers must be registered via handleCapability(). */
   clientCapabilities?: string[]
+  /** Runtime mode — local embedded or remote thin-client connection. */
+  mode?: TransportMode
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +103,7 @@ export class WsRpcClient implements RpcClient {
   private pending = new Map<string, PendingRequest>()
   private listeners = new Map<string, Set<(...args: any[]) => void>>()
   private capabilityHandlers = new Map<string, (...args: any[]) => Promise<any> | any>()
+  private connectionStateListeners = new Set<(state: TransportConnectionState) => void>()
   private clientId: string | null = null
   private connected = false
   private reconnectAttempt = 0
@@ -67,6 +115,7 @@ export class WsRpcClient implements RpcClient {
   private readyPromise: Promise<void> | null = null
   private resolveReady: (() => void) | null = null
   private rejectReady: ((error: Error) => void) | null = null
+  private connectionState: TransportConnectionState
 
   private readonly url: string
   private readonly workspaceId: string | undefined
@@ -77,6 +126,7 @@ export class WsRpcClient implements RpcClient {
   private readonly maxReconnectDelay: number
   private readonly autoReconnect: boolean
   private readonly connectTimeout: number
+  private readonly mode: TransportMode
 
   constructor(url: string, opts?: WsRpcClientOptions) {
     this.url = url
@@ -88,6 +138,15 @@ export class WsRpcClient implements RpcClient {
     this.maxReconnectDelay = opts?.maxReconnectDelay ?? 30_000
     this.autoReconnect = opts?.autoReconnect ?? true
     this.connectTimeout = opts?.connectTimeout ?? 10_000
+    this.mode = opts?.mode ?? this.inferMode(url)
+
+    this.connectionState = {
+      mode: this.mode,
+      status: 'idle',
+      url: this.url,
+      attempt: 0,
+      updatedAt: Date.now(),
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -142,6 +201,50 @@ export class WsRpcClient implements RpcClient {
     this.capabilityHandlers.set(channel, handler)
   }
 
+  getConnectionState(): TransportConnectionState {
+    return {
+      ...this.connectionState,
+      lastError: this.connectionState.lastError ? { ...this.connectionState.lastError } : undefined,
+      lastClose: this.connectionState.lastClose ? { ...this.connectionState.lastClose } : undefined,
+    }
+  }
+
+  onConnectionStateChanged(callback: (state: TransportConnectionState) => void): () => void {
+    this.connectionStateListeners.add(callback)
+    callback(this.getConnectionState())
+    return () => {
+      this.connectionStateListeners.delete(callback)
+    }
+  }
+
+  reconnectNow(): void {
+    if (this.destroyed) return
+
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer)
+      this.reconnectTimer = null
+    }
+
+    try {
+      this.ws?.close()
+    } catch {
+      // best effort
+    }
+
+    this.connected = false
+    this.clientId = null
+    this.connectStarted = false
+    this.connectError = null
+
+    this.setConnectionState({
+      status: 'connecting',
+      attempt: this.reconnectAttempt,
+      nextRetryInMs: undefined,
+    })
+
+    this.connect()
+  }
+
   // -------------------------------------------------------------------------
   // Connection lifecycle
   // -------------------------------------------------------------------------
@@ -153,6 +256,14 @@ export class WsRpcClient implements RpcClient {
     this.connectError = null
     this.createReadyPromise()
 
+    const status: TransportConnectionStatus = this.reconnectAttempt > 0 ? 'reconnecting' : 'connecting'
+    this.setConnectionState({
+      status,
+      attempt: this.reconnectAttempt,
+      nextRetryInMs: undefined,
+      lastError: undefined,
+    })
+
     if (this.connectTimer) {
       clearTimeout(this.connectTimer)
       this.connectTimer = null
@@ -160,7 +271,14 @@ export class WsRpcClient implements RpcClient {
 
     this.connectTimer = setTimeout(() => {
       if (!this.connected) {
-        this.failReady(new Error(`Connection timeout after ${this.connectTimeout}ms`))
+        const err = this.createConnectionError('timeout', `Connection timeout after ${this.connectTimeout}ms`, 'HANDSHAKE_TIMEOUT')
+        this.connectError = err
+        this.setConnectionState({
+          status: 'failed',
+          lastError: this.toErrorState(err),
+          attempt: this.reconnectAttempt,
+        })
+        this.failReady(err)
         this.ws?.close()
       }
     }, this.connectTimeout)
@@ -185,12 +303,22 @@ export class WsRpcClient implements RpcClient {
       this.onMessage(typeof event.data === 'string' ? event.data : event.data.toString())
     }
 
-    this.ws.onclose = () => {
-      this.onDisconnect()
+    this.ws.onclose = (event) => {
+      this.onDisconnect(event)
     }
 
     this.ws.onerror = () => {
-      // Error is followed by close event, handled there
+      // Error is typically followed by close event, handled there.
+      // Capture this early for more actionable state while connecting.
+      if (!this.connected && !this.connectError) {
+        const err = this.createConnectionError('network', 'WebSocket error during connection setup', 'WS_ERROR')
+        this.connectError = err
+        this.setConnectionState({
+          status: 'failed',
+          lastError: this.toErrorState(err),
+          attempt: this.reconnectAttempt,
+        })
+      }
     }
   }
 
@@ -213,9 +341,20 @@ export class WsRpcClient implements RpcClient {
       req.reject(new Error('Client destroyed'))
     }
     this.pending.clear()
+
     this.ws?.close()
     this.ws = null
     this.connected = false
+
+    this.setConnectionState({
+      status: 'disconnected',
+      lastError: {
+        kind: 'unknown',
+        code: 'CLIENT_DESTROYED',
+        message: 'Client destroyed',
+      },
+      nextRetryInMs: undefined,
+    })
   }
 
   get isConnected(): boolean {
@@ -244,6 +383,13 @@ export class WsRpcClient implements RpcClient {
           clearTimeout(this.connectTimer)
           this.connectTimer = null
         }
+        this.setConnectionState({
+          status: 'connected',
+          attempt: 0,
+          nextRetryInMs: undefined,
+          lastError: undefined,
+          lastClose: undefined,
+        })
         this.resolveReady?.()
         this.resolveReady = null
         this.rejectReady = null
@@ -271,9 +417,14 @@ export class WsRpcClient implements RpcClient {
         // Protocol-level error (handshake rejection, version mismatch).
         // No pending request — connection is about to close.
         if (envelope.error?.message) {
-          const err = new Error(envelope.error.message)
-          ;(err as any).code = envelope.error.code
+          const kind = this.classifyErrorKindFromCode(envelope.error.code)
+          const err = this.createConnectionError(kind, envelope.error.message, envelope.error.code)
           this.connectError = err
+          this.setConnectionState({
+            status: 'failed',
+            lastError: this.toErrorState(err),
+            attempt: this.reconnectAttempt,
+          })
           this.failReady(err)
         }
         break
@@ -343,7 +494,7 @@ export class WsRpcClient implements RpcClient {
   // Reconnection
   // -------------------------------------------------------------------------
 
-  private onDisconnect(): void {
+  private onDisconnect(closeEvent?: { code?: number; reason?: string; wasClean?: boolean }): void {
     const wasConnected = this.connected
     this.connected = false
     this.clientId = null
@@ -354,6 +505,25 @@ export class WsRpcClient implements RpcClient {
       this.connectTimer = null
     }
 
+    const closeInfo: TransportCloseInfo | undefined = closeEvent
+      ? {
+          code: Number.isFinite(closeEvent.code) ? closeEvent.code : undefined,
+          reason: closeEvent.reason || undefined,
+          wasClean: closeEvent.wasClean,
+        }
+      : undefined
+
+    if (!this.connectError && closeInfo?.code) {
+      const closeKind = this.classifyErrorKindFromCloseCode(closeInfo.code)
+      if (closeKind !== 'unknown') {
+        this.connectError = this.createConnectionError(
+          closeKind,
+          closeInfo.reason || `Connection closed (${closeInfo.code})`,
+          `WS_CLOSE_${closeInfo.code}`,
+        )
+      }
+    }
+
     // Reject all pending requests
     if (wasConnected) {
       for (const [id, req] of this.pending) {
@@ -361,8 +531,22 @@ export class WsRpcClient implements RpcClient {
         req.reject(new Error('Connection lost'))
       }
       this.pending.clear()
+
+      this.setConnectionState({
+        status: 'disconnected',
+        lastClose: closeInfo,
+        attempt: this.reconnectAttempt,
+      })
     } else {
-      this.failReady(this.connectError ?? new Error('Connection lost before handshake'))
+      const err = this.connectError ?? new Error('Connection lost before handshake')
+      this.failReady(err)
+
+      this.setConnectionState({
+        status: 'failed',
+        lastError: this.toErrorState(err),
+        lastClose: closeInfo,
+        attempt: this.reconnectAttempt,
+      })
     }
 
     if (!this.destroyed && this.autoReconnect) {
@@ -375,7 +559,15 @@ export class WsRpcClient implements RpcClient {
       1000 * Math.pow(2, this.reconnectAttempt),
       this.maxReconnectDelay,
     )
+
     this.reconnectAttempt++
+
+    this.setConnectionState({
+      status: 'reconnecting',
+      attempt: this.reconnectAttempt,
+      nextRetryInMs: delay,
+    })
+
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null
       this.connect()
@@ -435,5 +627,87 @@ export class WsRpcClient implements RpcClient {
     if (!this.connected || !this.ws) {
       throw new Error(`Not connected (channel: ${channel})`)
     }
+  }
+
+  // -------------------------------------------------------------------------
+  // Internal helpers
+  // -------------------------------------------------------------------------
+
+  private inferMode(url: string): TransportMode {
+    if (url.startsWith('ws://127.0.0.1') || url.startsWith('ws://localhost')) {
+      return 'local'
+    }
+    return 'remote'
+  }
+
+  private setConnectionState(
+    partial: Omit<Partial<TransportConnectionState>, 'mode' | 'url' | 'updatedAt'>,
+  ): void {
+    this.connectionState = {
+      ...this.connectionState,
+      ...partial,
+      mode: this.mode,
+      url: this.url,
+      updatedAt: Date.now(),
+    }
+
+    const snapshot = this.getConnectionState()
+    for (const cb of this.connectionStateListeners) {
+      try {
+        cb(snapshot)
+      } catch {
+        // Listener failures must not break transport.
+      }
+    }
+  }
+
+  private createConnectionError(kind: TransportConnectionErrorKind, message: string, code?: string): Error {
+    const err = new Error(message)
+    ;(err as any).kind = kind
+    if (code) (err as any).code = code
+    return err
+  }
+
+  private toErrorState(err: Error): TransportConnectionError {
+    const code = (err as any).code ? String((err as any).code) : undefined
+    const kind = (err as any).kind as TransportConnectionErrorKind | undefined
+      ?? this.classifyErrorKindFromCode(code)
+
+    return {
+      kind,
+      message: err.message,
+      code,
+    }
+  }
+
+  private classifyErrorKindFromCode(code?: unknown): TransportConnectionErrorKind {
+    const normalized = typeof code === 'string' ? code.toUpperCase() : ''
+
+    if (normalized === 'AUTH_FAILED') return 'auth'
+    if (normalized === 'PROTOCOL_VERSION_UNSUPPORTED') return 'protocol'
+    if (normalized === 'HANDSHAKE_TIMEOUT' || normalized === 'REQUEST_TIMEOUT' || normalized === 'CLIENT_REQUEST_TIMEOUT') {
+      return 'timeout'
+    }
+    if (normalized.startsWith('WS_CLOSE_')) {
+      const closeCode = parseInt(normalized.slice('WS_CLOSE_'.length), 10)
+      return this.classifyErrorKindFromCloseCode(closeCode)
+    }
+    if (normalized === 'WS_ERROR') return 'network'
+    if (normalized === 'CHANNEL_NOT_FOUND' || normalized === 'HANDLER_ERROR') return 'server'
+
+    return 'unknown'
+  }
+
+  private classifyErrorKindFromCloseCode(code?: number): TransportConnectionErrorKind {
+    if (!code) return 'unknown'
+
+    if (code === 4005) return 'auth'
+    if (code === 4004) return 'protocol'
+    if (code === 4001) return 'timeout'
+
+    // 1006 = abnormal close / network interruption in browsers.
+    if (code === 1006 || code === 1001) return 'network'
+
+    return 'unknown'
   }
 }

@@ -10,7 +10,10 @@ type FunctionKeys<T> = {
 
 type BrowserPaneKeys = `browserPane.${FunctionKeys<ElectronAPI['browserPane']>}`
 
-type ApiToChannelMapKeys = Exclude<FunctionKeys<ElectronAPI>, 'performOAuth'> | BrowserPaneKeys
+type ApiToChannelMapKeys = Exclude<
+  FunctionKeys<ElectronAPI>,
+  'performOAuth' | 'getTransportConnectionState' | 'onTransportConnectionStateChanged' | 'reconnectTransport'
+> | BrowserPaneKeys
 type ChannelMapKeys = keyof typeof CHANNEL_MAP & string
 
 type AssertNever<T extends never> = true

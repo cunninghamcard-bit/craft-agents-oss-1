@@ -14,7 +14,7 @@
 
 import '@sentry/electron/preload'
 import { contextBridge, ipcRenderer, shell } from 'electron'
-import { WsRpcClient } from '../transport/client'
+import { WsRpcClient, type TransportConnectionState } from '../transport/client'
 import { buildClientApi } from '../transport/build-api'
 import { CHANNEL_MAP } from '../transport/channel-map'
 import { createCallbackServer } from '@craft-agent/shared/auth/callback-server'
@@ -34,15 +34,18 @@ let wsUrl: string
 let wsToken: string
 let webContentsId: number
 let workspaceId: string
+let wsMode: 'local' | 'remote'
 
 if (process.env.CRAFT_SERVER_URL) {
   // Remote mode — connect to an external server
+  wsMode = 'remote'
   wsUrl = process.env.CRAFT_SERVER_URL
   wsToken = process.env.CRAFT_SERVER_TOKEN ?? ''
   webContentsId = ipcRenderer.sendSync('__get-web-contents-id')
   workspaceId = process.env.CRAFT_WORKSPACE_ID ?? ipcRenderer.sendSync('__get-workspace-id')
 } else {
   // Local mode — get connection details from main process (synchronous, runs during preload eval)
+  wsMode = 'local'
   wsUrl = `ws://127.0.0.1:${ipcRenderer.sendSync('__get-ws-port')}`
   wsToken = ipcRenderer.sendSync('__get-ws-token')
   webContentsId = ipcRenderer.sendSync('__get-web-contents-id')
@@ -55,6 +58,7 @@ const client = new WsRpcClient(wsUrl, {
   workspaceId,
   webContentsId,
   autoReconnect: true,
+  mode: wsMode,
   clientCapabilities: [...LOCAL_CLIENT_CAPABILITIES],
 })
 
@@ -87,6 +91,48 @@ client.connect()
 // Build the full ElectronAPI proxy — identical shape to the IPC preload.
 // Methods return promises (via client.invoke), listeners return unsubscribe fns.
 const api = buildClientApi(client, CHANNEL_MAP)
+
+function formatTransportReason(state: TransportConnectionState): string {
+  const err = state.lastError
+  if (err) {
+    const codePart = err.code ? ` [${err.code}]` : ''
+    return `${err.kind}${codePart}: ${err.message}`
+  }
+
+  if (state.lastClose?.code != null) {
+    const reason = state.lastClose.reason ? ` (${state.lastClose.reason})` : ''
+    return `close ${state.lastClose.code}${reason}`
+  }
+
+  return 'no additional details'
+}
+
+if (wsMode === 'remote') {
+  client.onConnectionStateChanged((state) => {
+    if (state.status === 'connected') {
+      console.info(`[transport] connected to ${state.url}`)
+      return
+    }
+
+    if (state.status === 'reconnecting') {
+      const retry = state.nextRetryInMs != null ? ` retry in ${state.nextRetryInMs}ms` : ''
+      console.warn(`[transport] reconnecting (attempt ${state.attempt})${retry} — ${formatTransportReason(state)}`)
+      return
+    }
+
+    if (state.status === 'failed' || state.status === 'disconnected') {
+      console.error(`[transport] ${state.status} — ${formatTransportReason(state)}`)
+    }
+  })
+}
+
+;(api as any).getTransportConnectionState = async () => client.getConnectionState()
+;(api as any).onTransportConnectionStateChanged = (callback: (state: TransportConnectionState) => void) => {
+  return client.onConnectionStateChanged(callback)
+}
+;(api as any).reconnectTransport = async () => {
+  client.reconnectNow()
+}
 
 // ── performOAuth ─────────────────────────────────────────────────────────
 // Multi-step orchestration: callback server (local) → oauth:start (server) →
