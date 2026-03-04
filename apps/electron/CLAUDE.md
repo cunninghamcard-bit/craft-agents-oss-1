@@ -460,14 +460,14 @@ const config = loadSourcePermissionsConfig(workspaceId, sourceSlug)
 ✅ **Correct** (use RPC handlers in main + channel map in preload):
 ```tsx
 // 1. Add IPC channel to shared/types.ts
-export const IPC_CHANNELS = {
+export const RPC_CHANNELS = {
   SOURCES_GET_PERMISSIONS: 'sources:getPermissions',
   // ...
 }
 
 // 2. Add handler in the relevant domain file (e.g. main/handlers/sources.ts)
 export function registerSourcesHandlers(server: RpcServer, deps: HandlerDeps): void {
-  server.handle(IPC_CHANNELS.SOURCES_GET_PERMISSIONS, async (_ctx, workspaceId: string, sourceSlug: string) => {
+  server.handle(RPC_CHANNELS.SOURCES_GET_PERMISSIONS, async (_ctx, workspaceId: string, sourceSlug: string) => {
     const { loadSourcePermissionsConfig } = await import('@craft-agent/shared/agent')
     const workspace = getWorkspaceByNameOrId(workspaceId)
     return loadSourcePermissionsConfig(workspace.rootPath, sourceSlug)
@@ -539,7 +539,7 @@ const config = await window.electronAPI.getSourcePermissionsConfig(workspaceId, 
 
 ### WS RPC Communication
 
-The app uses a WebSocket RPC transport for main ↔ renderer communication (`WsRpcServer` in main, `WsRpcClient` in preload). Channel wire strings remain stable (same `IPC_CHANNELS` values), but transport is no longer `ipcRenderer.invoke`-driven.
+The app uses a WebSocket RPC transport for main ↔ renderer communication (`WsRpcServer` in main, `WsRpcClient` in preload). Channel wire strings remain stable (same `RPC_CHANNELS` values), but transport is no longer `ipcRenderer.invoke`-driven.
 
 | Channel | Direction | Purpose |
 |---------|-----------|---------|

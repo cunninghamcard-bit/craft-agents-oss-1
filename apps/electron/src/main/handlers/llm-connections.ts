@@ -1,4 +1,4 @@
-import { IPC_CHANNELS, type LlmConnectionSetup } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type LlmConnectionSetup } from '@craft-agent/shared/protocol'
 import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus } from '@craft-agent/shared/config'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import {
@@ -18,37 +18,37 @@ import { CLIENT_OPEN_EXTERNAL } from '@craft-agent/server-core/transport'
 let copilotOAuthAbort: AbortController | null = null
 
 export const HANDLED_CHANNELS = [
-  IPC_CHANNELS.llmConnections.LIST,
-  IPC_CHANNELS.llmConnections.LIST_WITH_STATUS,
-  IPC_CHANNELS.llmConnections.GET,
-  IPC_CHANNELS.llmConnections.GET_API_KEY,
-  IPC_CHANNELS.llmConnections.SAVE,
-  IPC_CHANNELS.llmConnections.DELETE,
-  IPC_CHANNELS.llmConnections.TEST,
-  IPC_CHANNELS.llmConnections.SET_DEFAULT,
-  IPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT,
-  IPC_CHANNELS.llmConnections.REFRESH_MODELS,
-  IPC_CHANNELS.chatgpt.START_OAUTH,
-  IPC_CHANNELS.chatgpt.COMPLETE_OAUTH,
-  IPC_CHANNELS.chatgpt.CANCEL_OAUTH,
-  IPC_CHANNELS.chatgpt.GET_AUTH_STATUS,
-  IPC_CHANNELS.chatgpt.LOGOUT,
-  IPC_CHANNELS.copilot.START_OAUTH,
-  IPC_CHANNELS.copilot.CANCEL_OAUTH,
-  IPC_CHANNELS.copilot.GET_AUTH_STATUS,
-  IPC_CHANNELS.copilot.LOGOUT,
-  IPC_CHANNELS.settings.SETUP_LLM_CONNECTION,
-  IPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP,
-  IPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,
-  IPC_CHANNELS.pi.GET_PROVIDER_BASE_URL,
-  IPC_CHANNELS.pi.GET_PROVIDER_MODELS,
+  RPC_CHANNELS.llmConnections.LIST,
+  RPC_CHANNELS.llmConnections.LIST_WITH_STATUS,
+  RPC_CHANNELS.llmConnections.GET,
+  RPC_CHANNELS.llmConnections.GET_API_KEY,
+  RPC_CHANNELS.llmConnections.SAVE,
+  RPC_CHANNELS.llmConnections.DELETE,
+  RPC_CHANNELS.llmConnections.TEST,
+  RPC_CHANNELS.llmConnections.SET_DEFAULT,
+  RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT,
+  RPC_CHANNELS.llmConnections.REFRESH_MODELS,
+  RPC_CHANNELS.chatgpt.START_OAUTH,
+  RPC_CHANNELS.chatgpt.COMPLETE_OAUTH,
+  RPC_CHANNELS.chatgpt.CANCEL_OAUTH,
+  RPC_CHANNELS.chatgpt.GET_AUTH_STATUS,
+  RPC_CHANNELS.chatgpt.LOGOUT,
+  RPC_CHANNELS.copilot.START_OAUTH,
+  RPC_CHANNELS.copilot.CANCEL_OAUTH,
+  RPC_CHANNELS.copilot.GET_AUTH_STATUS,
+  RPC_CHANNELS.copilot.LOGOUT,
+  RPC_CHANNELS.settings.SETUP_LLM_CONNECTION,
+  RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP,
+  RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS,
+  RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL,
+  RPC_CHANNELS.pi.GET_PROVIDER_MODELS,
 ] as const
 
 export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { sessionManager } = deps
 
   // Unified handler for LLM connection setup
-  server.handle(IPC_CHANNELS.settings.SETUP_LLM_CONNECTION, async (_ctx, setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.settings.SETUP_LLM_CONNECTION, async (_ctx, setup: LlmConnectionSetup): Promise<{ success: boolean; error?: string }> => {
     try {
       const manager = getCredentialManager()
 
@@ -182,7 +182,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
   // Unified connection test — uses the agent factory to spawn a real agent subprocess
   // and validate credentials via runMiniCompletion(). Same code path as actual chat.
-  server.handle(IPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP, async (_ctx, params: import('@craft-agent/shared/protocol').TestLlmConnectionParams): Promise<import('@craft-agent/shared/protocol').TestLlmConnectionResult> => {
+  server.handle(RPC_CHANNELS.settings.TEST_LLM_CONNECTION_SETUP, async (_ctx, params: import('@craft-agent/shared/protocol').TestLlmConnectionParams): Promise<import('@craft-agent/shared/protocol').TestLlmConnectionResult> => {
     const { provider, apiKey, baseUrl, model, piAuthProvider } = params
     const trimmedKey = apiKey?.trim()
 
@@ -219,17 +219,17 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // Pi Provider Discovery (main process only — Pi SDK can't run in renderer)
   // ============================================================
 
-  server.handle(IPC_CHANNELS.pi.GET_API_KEY_PROVIDERS, async () => {
+  server.handle(RPC_CHANNELS.pi.GET_API_KEY_PROVIDERS, async () => {
     const { getPiApiKeyProviders } = await import('@craft-agent/shared/config')
     return getPiApiKeyProviders()
   })
 
-  server.handle(IPC_CHANNELS.pi.GET_PROVIDER_BASE_URL, async (_ctx, provider: string) => {
+  server.handle(RPC_CHANNELS.pi.GET_PROVIDER_BASE_URL, async (_ctx, provider: string) => {
     const { getPiProviderBaseUrl } = await import('@craft-agent/shared/config')
     return getPiProviderBaseUrl(provider)
   })
 
-  server.handle(IPC_CHANNELS.pi.GET_PROVIDER_MODELS, async (_ctx, provider: string) => {
+  server.handle(RPC_CHANNELS.pi.GET_PROVIDER_MODELS, async (_ctx, provider: string) => {
     const { getModels } = await import('@mariozechner/pi-ai')
     try {
       const models = getModels(provider as Parameters<typeof getModels>[0])
@@ -255,12 +255,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // ============================================================
 
   // List all LLM connections (includes built-in and custom)
-  server.handle(IPC_CHANNELS.llmConnections.LIST, async (): Promise<LlmConnection[]> => {
+  server.handle(RPC_CHANNELS.llmConnections.LIST, async (): Promise<LlmConnection[]> => {
     return getLlmConnections()
   })
 
   // List all LLM connections with authentication status
-  server.handle(IPC_CHANNELS.llmConnections.LIST_WITH_STATUS, async (): Promise<LlmConnectionWithStatus[]> => {
+  server.handle(RPC_CHANNELS.llmConnections.LIST_WITH_STATUS, async (): Promise<LlmConnectionWithStatus[]> => {
     const connections = getLlmConnections()
     const credentialManager = getCredentialManager()
     const defaultSlug = getDefaultLlmConnection()
@@ -277,12 +277,12 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Get a specific LLM connection by slug
-  server.handle(IPC_CHANNELS.llmConnections.GET, async (_ctx, slug: string): Promise<LlmConnection | null> => {
+  server.handle(RPC_CHANNELS.llmConnections.GET, async (_ctx, slug: string): Promise<LlmConnection | null> => {
     return getLlmConnection(slug)
   })
 
   // Get stored API key for an LLM connection (masked — for edit form display only)
-  server.handle(IPC_CHANNELS.llmConnections.GET_API_KEY, async (_ctx, slug: string): Promise<string | null> => {
+  server.handle(RPC_CHANNELS.llmConnections.GET_API_KEY, async (_ctx, slug: string): Promise<string | null> => {
     const manager = getCredentialManager()
     const key = await manager.getLlmApiKey(slug)
     if (!key) return null
@@ -295,7 +295,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
 
   // Save (create or update) an LLM connection
   // If connection.slug exists and is found, updates it; otherwise creates new
-  server.handle(IPC_CHANNELS.llmConnections.SAVE, async (_ctx, connection: LlmConnection): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.llmConnections.SAVE, async (_ctx, connection: LlmConnection): Promise<{ success: boolean; error?: string }> => {
     try {
       // Check if this is an update or create
       const existing = getLlmConnection(connection.slug)
@@ -328,7 +328,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Delete an LLM connection (at least one connection must remain)
-  server.handle(IPC_CHANNELS.llmConnections.DELETE, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.llmConnections.DELETE, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const connection = getLlmConnection(slug)
       if (!connection) {
@@ -352,7 +352,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Test an LLM connection (validate credentials and connectivity with actual API call)
-  server.handle(IPC_CHANNELS.llmConnections.TEST, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.llmConnections.TEST, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const result = await validateStoredBackendConnection({
         slug,
@@ -382,7 +382,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Set global default LLM connection
-  server.handle(IPC_CHANNELS.llmConnections.SET_DEFAULT, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.llmConnections.SET_DEFAULT, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const success = setDefaultLlmConnection(slug)
       if (success) {
@@ -398,7 +398,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Set workspace default LLM connection
-  server.handle(IPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT, async (_ctx, workspaceId: string, slug: string | null): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT, async (_ctx, workspaceId: string, slug: string | null): Promise<{ success: boolean; error?: string }> => {
     try {
       const workspace = getWorkspaceOrThrow(workspaceId)
 
@@ -434,7 +434,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Refresh available models for a connection (dynamic model discovery)
-  server.handle(IPC_CHANNELS.llmConnections.REFRESH_MODELS, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
+  server.handle(RPC_CHANNELS.llmConnections.REFRESH_MODELS, async (_ctx, slug: string): Promise<{ success: boolean; error?: string }> => {
     try {
       const connection = getLlmConnection(slug)
       if (!connection) {
@@ -476,7 +476,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   }
 
   // chatgpt:startOAuth — prepare PKCE + auth URL, store flow, return to client
-  server.handle(IPC_CHANNELS.chatgpt.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
+  server.handle(RPC_CHANNELS.chatgpt.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
     authUrl: string
     state: string
     flowId: string
@@ -501,7 +501,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // chatgpt:completeOAuth — exchange code for tokens and store credentials
-  server.handle(IPC_CHANNELS.chatgpt.COMPLETE_OAUTH, async (ctx, args: {
+  server.handle(RPC_CHANNELS.chatgpt.COMPLETE_OAUTH, async (ctx, args: {
     flowId: string
     code: string
     state: string
@@ -544,7 +544,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Cancel ongoing ChatGPT OAuth flow
-  server.handle(IPC_CHANNELS.chatgpt.CANCEL_OAUTH, async (ctx, args?: { state?: string }): Promise<{ success: boolean }> => {
+  server.handle(RPC_CHANNELS.chatgpt.CANCEL_OAUTH, async (ctx, args?: { state?: string }): Promise<{ success: boolean }> => {
     if (args?.state) {
       const flow = pendingChatGptFlows.get(args.state)
       if (flow && flow.ownerClientId === ctx.clientId) {
@@ -556,7 +556,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Get ChatGPT authentication status
-  server.handle(IPC_CHANNELS.chatgpt.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
+  server.handle(RPC_CHANNELS.chatgpt.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
     authenticated: boolean
     expiresAt?: number
     hasRefreshToken?: boolean
@@ -584,7 +584,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Logout from ChatGPT (clear stored tokens)
-  server.handle(IPC_CHANNELS.chatgpt.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
+  server.handle(RPC_CHANNELS.chatgpt.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
     try {
       const credentialManager = getCredentialManager()
       await credentialManager.deleteLlmCredentials(connectionSlug)
@@ -601,7 +601,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   // ============================================================
 
   // Start GitHub Copilot OAuth flow (device flow via Pi SDK)
-  server.handle(IPC_CHANNELS.copilot.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
+  server.handle(RPC_CHANNELS.copilot.START_OAUTH, async (ctx, connectionSlug: string): Promise<{
     success: boolean
     error?: string
   }> => {
@@ -624,7 +624,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
           const codeMatch = instructions?.match(/:\s*(\S+)/)
           const userCode = codeMatch?.[1] ?? ''
           deps.platform.logger?.info(`[GitHub OAuth] Device code: ${userCode}`)
-          pushTyped(server, IPC_CHANNELS.copilot.DEVICE_CODE, { to: 'client', clientId: ctx.clientId }, {
+          pushTyped(server, RPC_CHANNELS.copilot.DEVICE_CODE, { to: 'client', clientId: ctx.clientId }, {
             userCode,
             verificationUri: url,
           })
@@ -668,7 +668,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Cancel ongoing GitHub OAuth flow
-  server.handle(IPC_CHANNELS.copilot.CANCEL_OAUTH, async (): Promise<{ success: boolean }> => {
+  server.handle(RPC_CHANNELS.copilot.CANCEL_OAUTH, async (): Promise<{ success: boolean }> => {
     if (copilotOAuthAbort) {
       copilotOAuthAbort.abort()
       copilotOAuthAbort = null
@@ -678,7 +678,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Get GitHub Copilot authentication status
-  server.handle(IPC_CHANNELS.copilot.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
+  server.handle(RPC_CHANNELS.copilot.GET_AUTH_STATUS, async (_ctx, connectionSlug: string): Promise<{
     authenticated: boolean
   }> => {
     try {
@@ -695,7 +695,7 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
   })
 
   // Logout from Copilot (clear stored tokens)
-  server.handle(IPC_CHANNELS.copilot.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
+  server.handle(RPC_CHANNELS.copilot.LOGOUT, async (_ctx, connectionSlug: string): Promise<{ success: boolean }> => {
     try {
       const credentialManager = getCredentialManager()
       await credentialManager.deleteLlmCredentials(connectionSlug)

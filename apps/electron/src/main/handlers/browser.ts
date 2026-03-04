@@ -1,33 +1,33 @@
-import { IPC_CHANNELS, type BrowserPaneCreateOptions, type BrowserEmptyStateLaunchPayload } from '../../shared/types'
+import { RPC_CHANNELS, type BrowserPaneCreateOptions, type BrowserEmptyStateLaunchPayload } from '../../shared/types'
 import type { BrowserScreenshotOptions } from '../browser-pane-manager'
 import { pushTyped, type RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
 
 export const HANDLED_CHANNELS = [
-  IPC_CHANNELS.browserPane.CREATE,
-  IPC_CHANNELS.browserPane.DESTROY,
-  IPC_CHANNELS.browserPane.LIST,
-  IPC_CHANNELS.browserPane.NAVIGATE,
-  IPC_CHANNELS.browserPane.GO_BACK,
-  IPC_CHANNELS.browserPane.GO_FORWARD,
-  IPC_CHANNELS.browserPane.RELOAD,
-  IPC_CHANNELS.browserPane.STOP,
-  IPC_CHANNELS.browserPane.FOCUS,
-  IPC_CHANNELS.browserPane.LAUNCH,
-  IPC_CHANNELS.browserPane.SNAPSHOT,
-  IPC_CHANNELS.browserPane.CLICK,
-  IPC_CHANNELS.browserPane.FILL,
-  IPC_CHANNELS.browserPane.SELECT,
-  IPC_CHANNELS.browserPane.SCREENSHOT,
-  IPC_CHANNELS.browserPane.EVALUATE,
-  IPC_CHANNELS.browserPane.SCROLL,
+  RPC_CHANNELS.browserPane.CREATE,
+  RPC_CHANNELS.browserPane.DESTROY,
+  RPC_CHANNELS.browserPane.LIST,
+  RPC_CHANNELS.browserPane.NAVIGATE,
+  RPC_CHANNELS.browserPane.GO_BACK,
+  RPC_CHANNELS.browserPane.GO_FORWARD,
+  RPC_CHANNELS.browserPane.RELOAD,
+  RPC_CHANNELS.browserPane.STOP,
+  RPC_CHANNELS.browserPane.FOCUS,
+  RPC_CHANNELS.browserPane.LAUNCH,
+  RPC_CHANNELS.browserPane.SNAPSHOT,
+  RPC_CHANNELS.browserPane.CLICK,
+  RPC_CHANNELS.browserPane.FILL,
+  RPC_CHANNELS.browserPane.SELECT,
+  RPC_CHANNELS.browserPane.SCREENSHOT,
+  RPC_CHANNELS.browserPane.EVALUATE,
+  RPC_CHANNELS.browserPane.SCROLL,
 ] as const
 
 export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): void {
   const { browserPaneManager, platform } = deps
   if (!browserPaneManager) return
 
-  server.handle(IPC_CHANNELS.browserPane.CREATE, (_ctx, input?: string | BrowserPaneCreateOptions) => {
+  server.handle(RPC_CHANNELS.browserPane.CREATE, (_ctx, input?: string | BrowserPaneCreateOptions) => {
     if (typeof input === 'string') {
       return browserPaneManager.createInstance(input)
     }
@@ -39,15 +39,15 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     return browserPaneManager.createInstance(input?.id, { show: input?.show })
   })
 
-  server.handle(IPC_CHANNELS.browserPane.DESTROY, (_ctx, id: string) => {
+  server.handle(RPC_CHANNELS.browserPane.DESTROY, (_ctx, id: string) => {
     browserPaneManager.destroyInstance(id)
   })
 
-  server.handle(IPC_CHANNELS.browserPane.LIST, () => {
+  server.handle(RPC_CHANNELS.browserPane.LIST, () => {
     return browserPaneManager.listInstances()
   })
 
-  server.handle(IPC_CHANNELS.browserPane.NAVIGATE, async (_ctx, id: string, url: string) => {
+  server.handle(RPC_CHANNELS.browserPane.NAVIGATE, async (_ctx, id: string, url: string) => {
     try {
       return await browserPaneManager.navigate(id, url)
     } catch (err) {
@@ -56,7 +56,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.GO_BACK, async (_ctx, id: string) => {
+  server.handle(RPC_CHANNELS.browserPane.GO_BACK, async (_ctx, id: string) => {
     try {
       return await browserPaneManager.goBack(id)
     } catch (err) {
@@ -65,7 +65,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.GO_FORWARD, async (_ctx, id: string) => {
+  server.handle(RPC_CHANNELS.browserPane.GO_FORWARD, async (_ctx, id: string) => {
     try {
       return await browserPaneManager.goForward(id)
     } catch (err) {
@@ -74,19 +74,19 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.RELOAD, (_ctx, id: string) => {
+  server.handle(RPC_CHANNELS.browserPane.RELOAD, (_ctx, id: string) => {
     browserPaneManager.reload(id)
   })
 
-  server.handle(IPC_CHANNELS.browserPane.STOP, (_ctx, id: string) => {
+  server.handle(RPC_CHANNELS.browserPane.STOP, (_ctx, id: string) => {
     browserPaneManager.stop(id)
   })
 
-  server.handle(IPC_CHANNELS.browserPane.FOCUS, (_ctx, id: string) => {
+  server.handle(RPC_CHANNELS.browserPane.FOCUS, (_ctx, id: string) => {
     browserPaneManager.focus(id)
   })
 
-  server.handle(IPC_CHANNELS.browserPane.LAUNCH, async (ctx, payload: BrowserEmptyStateLaunchPayload) => {
+  server.handle(RPC_CHANNELS.browserPane.LAUNCH, async (ctx, payload: BrowserEmptyStateLaunchPayload) => {
     try {
       return await browserPaneManager.handleEmptyStateLaunchFromRenderer(ctx.webContentsId!, payload)
     } catch (err) {
@@ -95,7 +95,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.SNAPSHOT, async (_ctx, id: string) => {
+  server.handle(RPC_CHANNELS.browserPane.SNAPSHOT, async (_ctx, id: string) => {
     try {
       return await browserPaneManager.getAccessibilitySnapshot(id)
     } catch (err) {
@@ -104,7 +104,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.CLICK, async (_ctx, id: string, ref: string) => {
+  server.handle(RPC_CHANNELS.browserPane.CLICK, async (_ctx, id: string, ref: string) => {
     try {
       return await browserPaneManager.clickElement(id, ref)
     } catch (err) {
@@ -113,7 +113,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.FILL, async (_ctx, id: string, ref: string, value: string) => {
+  server.handle(RPC_CHANNELS.browserPane.FILL, async (_ctx, id: string, ref: string, value: string) => {
     try {
       return await browserPaneManager.fillElement(id, ref, value)
     } catch (err) {
@@ -122,7 +122,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.SELECT, async (_ctx, id: string, ref: string, value: string) => {
+  server.handle(RPC_CHANNELS.browserPane.SELECT, async (_ctx, id: string, ref: string, value: string) => {
     try {
       return await browserPaneManager.selectOption(id, ref, value)
     } catch (err) {
@@ -131,7 +131,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.SCREENSHOT, async (_ctx, id: string, options?: BrowserScreenshotOptions) => {
+  server.handle(RPC_CHANNELS.browserPane.SCREENSHOT, async (_ctx, id: string, options?: BrowserScreenshotOptions) => {
     try {
       const result = await browserPaneManager.screenshot(id, options)
       return {
@@ -145,7 +145,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.EVALUATE, async (_ctx, id: string, expression: string) => {
+  server.handle(RPC_CHANNELS.browserPane.EVALUATE, async (_ctx, id: string, expression: string) => {
     try {
       return await browserPaneManager.evaluate(id, expression)
     } catch (err) {
@@ -154,7 +154,7 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
     }
   })
 
-  server.handle(IPC_CHANNELS.browserPane.SCROLL, async (_ctx, id: string, direction: string, amount?: number) => {
+  server.handle(RPC_CHANNELS.browserPane.SCROLL, async (_ctx, id: string, direction: string, amount?: number) => {
     const validDirections = ['up', 'down', 'left', 'right']
     if (!validDirections.includes(direction)) {
       throw new Error(`Invalid scroll direction: ${direction}`)
@@ -169,16 +169,16 @@ export function registerBrowserHandlers(server: RpcServer, deps: HandlerDeps): v
 
   // Forward browser state changes to all windows
   browserPaneManager.onStateChange((info) => {
-    pushTyped(server, IPC_CHANNELS.browserPane.STATE_CHANGED, { to: 'all' }, info)
+    pushTyped(server, RPC_CHANNELS.browserPane.STATE_CHANGED, { to: 'all' }, info)
   })
 
   // Forward browser removals so renderer can immediately drop stale tabs
   browserPaneManager.onRemoved((id) => {
-    pushTyped(server, IPC_CHANNELS.browserPane.REMOVED, { to: 'all' }, id)
+    pushTyped(server, RPC_CHANNELS.browserPane.REMOVED, { to: 'all' }, id)
   })
 
   // Forward browser interaction/focus events so renderer can align panel focus.
   browserPaneManager.onInteracted((id) => {
-    pushTyped(server, IPC_CHANNELS.browserPane.INTERACTED, { to: 'all' }, id)
+    pushTyped(server, RPC_CHANNELS.browserPane.INTERACTED, { to: 'all' }, id)
   })
 }

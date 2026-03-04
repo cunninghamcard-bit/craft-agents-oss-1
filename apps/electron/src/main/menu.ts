@@ -1,5 +1,5 @@
 import { Menu, app, shell, BrowserWindow } from 'electron'
-import { IPC_CHANNELS, type BroadcastEventMap } from '../shared/types'
+import { RPC_CHANNELS, type BroadcastEventMap } from '../shared/types'
 import { EDIT_MENU, VIEW_MENU, WINDOW_MENU } from '../shared/menu-schema'
 import type { MenuItem } from '../shared/menu-schema'
 import type { WindowManager } from './window-manager'
@@ -87,7 +87,7 @@ export async function rebuildMenu(): Promise<void> {
           label: 'Settings...',
           accelerator: 'CmdOrCtrl+,',
           registerAccelerator: false,  // Action registry handles the keyboard shortcut
-          click: () => sendToRenderer(IPC_CHANNELS.menu.OPEN_SETTINGS)
+          click: () => sendToRenderer(RPC_CHANNELS.menu.OPEN_SETTINGS)
         },
         { type: 'separator' as const },
         { role: 'hide' as const, label: 'Hide Craft Agents' },
@@ -106,7 +106,7 @@ export async function rebuildMenu(): Promise<void> {
           label: 'New Chat',
           accelerator: 'CmdOrCtrl+N',
           registerAccelerator: false,  // Action registry handles the keyboard shortcut
-          click: () => sendToRenderer(IPC_CHANNELS.menu.NEW_CHAT)
+          click: () => sendToRenderer(RPC_CHANNELS.menu.NEW_CHAT)
         },
         {
           label: 'New Window',
@@ -238,7 +238,7 @@ export async function rebuildMenu(): Promise<void> {
           label: 'Keyboard Shortcuts',
           accelerator: 'CmdOrCtrl+/',
           registerAccelerator: false,  // Action registry handles the keyboard shortcut
-          click: () => sendToRenderer(IPC_CHANNELS.menu.KEYBOARD_SHORTCUTS)
+          click: () => sendToRenderer(RPC_CHANNELS.menu.KEYBOARD_SHORTCUTS)
         }
       ]
     }

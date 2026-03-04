@@ -2,9 +2,9 @@
 /**
  * IPC Channel Inventory Generator (Step 0 of Phase 2A)
  *
- * Reads IPC_CHANNELS from shared/types.ts and generates:
+ * Reads RPC_CHANNELS from shared/types.ts and generates:
  * 1. Sorted snapshot array — all wire strings, alphabetically sorted
- * 2. Grouped namespace object — the new nested IPC_CHANNELS structure
+ * 2. Grouped namespace object — the new nested RPC_CHANNELS structure
  * 3. Migration report — OLD_KEY → NEW_KEY for every channel
  * 4. Channel count — exact number N
  *
@@ -19,16 +19,16 @@ import { join } from 'path'
 
 const TYPES_PATH = join(import.meta.dir, '..', 'apps', 'electron', 'src', 'shared', 'types.ts')
 
-// ── Extract IPC_CHANNELS from source ──
+// ── Extract RPC_CHANNELS from source ──
 
 const source = readFileSync(TYPES_PATH, 'utf-8')
 
-// Find the IPC_CHANNELS block
+// Find the RPC_CHANNELS block
 const channelBlockMatch = source.match(
-  /export const IPC_CHANNELS = \{([\s\S]*?)\} as const/
+  /export const RPC_CHANNELS = \{([\s\S]*?)\} as const/
 )
 if (!channelBlockMatch) {
-  console.error('ERROR: Could not find IPC_CHANNELS definition in types.ts')
+  console.error('ERROR: Could not find RPC_CHANNELS definition in types.ts')
   process.exit(1)
 }
 
@@ -109,7 +109,7 @@ for (const { oldKey, wireValue } of entries) {
 
   migrationMap.push({
     oldKey,
-    newPath: `IPC_CHANNELS.${ns}.${newKey}`,
+    newPath: `RPC_CHANNELS.${ns}.${newKey}`,
     wireValue,
     wirePrefix,
     namespace: ns,
@@ -134,7 +134,7 @@ const sortedNamespaces = [...namespaces.keys()].sort()
 
 console.log(`\n--- Namespace Count: ${sortedNamespaces.length} ---`)
 console.log(`\n--- Grouped Namespace Object ---`)
-console.log('export const IPC_CHANNELS = {')
+console.log('export const RPC_CHANNELS = {')
 
 for (const ns of sortedNamespaces) {
   const nsEntries = namespaces.get(ns)!

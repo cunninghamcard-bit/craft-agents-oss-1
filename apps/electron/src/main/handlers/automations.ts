@@ -1,6 +1,6 @@
 import { appendFile, readFile, writeFile } from 'fs/promises'
 import { join } from 'path'
-import { IPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
@@ -53,18 +53,18 @@ async function withAutomationMatcher(workspaceId: string, eventName: string, mat
 }
 
 export const HANDLED_CHANNELS = [
-  IPC_CHANNELS.automations.TEST,
-  IPC_CHANNELS.automations.SET_ENABLED,
-  IPC_CHANNELS.automations.DUPLICATE,
-  IPC_CHANNELS.automations.DELETE,
-  IPC_CHANNELS.automations.GET_HISTORY,
-  IPC_CHANNELS.automations.GET_LAST_EXECUTED,
+  RPC_CHANNELS.automations.TEST,
+  RPC_CHANNELS.automations.SET_ENABLED,
+  RPC_CHANNELS.automations.DUPLICATE,
+  RPC_CHANNELS.automations.DELETE,
+  RPC_CHANNELS.automations.GET_HISTORY,
+  RPC_CHANNELS.automations.GET_LAST_EXECUTED,
 ] as const
 
 export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
 
-  server.handle(IPC_CHANNELS.automations.TEST, async (_ctx, payload: import('@craft-agent/shared/protocol').TestAutomationPayload) => {
+  server.handle(RPC_CHANNELS.automations.TEST, async (_ctx, payload: import('@craft-agent/shared/protocol').TestAutomationPayload) => {
     const workspace = getWorkspaceByNameOrId(payload.workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
@@ -120,7 +120,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Automation enabled state management (toggle enabled/disabled in automations.json)
-  server.handle(IPC_CHANNELS.automations.SET_ENABLED, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
+  server.handle(RPC_CHANNELS.automations.SET_ENABLED, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number, enabled: boolean) => {
     await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx) => {
       if (enabled) {
         delete matchers[idx].enabled
@@ -131,7 +131,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Duplicate an automation matcher
-  server.handle(IPC_CHANNELS.automations.DUPLICATE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
+  server.handle(RPC_CHANNELS.automations.DUPLICATE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
     await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx, _config, genId) => {
       const clone = JSON.parse(JSON.stringify(matchers[idx]))
       clone.id = genId()
@@ -141,7 +141,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Delete an automation matcher
-  server.handle(IPC_CHANNELS.automations.DELETE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
+  server.handle(RPC_CHANNELS.automations.DELETE, async (_ctx, workspaceId: string, eventName: string, matcherIndex: number) => {
     await withAutomationMatcher(workspaceId, eventName, matcherIndex, (matchers, idx, config) => {
       matchers.splice(idx, 1)
       if (matchers.length === 0) {
@@ -152,7 +152,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Read execution history for a specific automation
-  server.handle(IPC_CHANNELS.automations.GET_HISTORY, async (_ctx, workspaceId: string, automationId: string, limit = 20) => {
+  server.handle(RPC_CHANNELS.automations.GET_HISTORY, async (_ctx, workspaceId: string, automationId: string, limit = 20) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
@@ -172,7 +172,7 @@ export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps
   })
 
   // Return last execution timestamp for all automations
-  server.handle(IPC_CHANNELS.automations.GET_LAST_EXECUTED, async (_ctx, workspaceId: string) => {
+  server.handle(RPC_CHANNELS.automations.GET_LAST_EXECUTED, async (_ctx, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 

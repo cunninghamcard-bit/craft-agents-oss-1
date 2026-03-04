@@ -63,7 +63,7 @@ import { resolveAuthEnvVars } from '@craft-agent/shared/config'
 import { toolMetadataStore, getLastApiError } from '@craft-agent/shared/interceptor'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
-import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, type UnreadSummary, IPC_CHANNELS, generateMessageId } from '../shared/types'
+import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, type UnreadSummary, RPC_CHANNELS, generateMessageId } from '../shared/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
 import type { ToolDisplayMeta } from '@craft-agent/core/types'
@@ -1205,49 +1205,49 @@ export class SessionManager implements ISessionManager {
 
   private broadcastSourcesChanged(workspaceId: string, sources: LoadedSource[]): void {
     if (!this.eventSink) return
-    this.eventSink(IPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
+    this.eventSink(RPC_CHANNELS.sources.CHANGED, { to: 'workspace', workspaceId }, workspaceId, sources)
   }
 
   private broadcastStatusesChanged(workspaceId: string): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting statuses changed for ${workspaceId}`)
-    this.eventSink(IPC_CHANNELS.statuses.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
+    this.eventSink(RPC_CHANNELS.statuses.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
   }
 
   private broadcastLabelsChanged(workspaceId: string): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting labels changed for ${workspaceId}`)
-    this.eventSink(IPC_CHANNELS.labels.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
+    this.eventSink(RPC_CHANNELS.labels.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
   }
 
   private broadcastAutomationsChanged(workspaceId: string): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting automations changed for ${workspaceId}`)
-    this.eventSink(IPC_CHANNELS.automations.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
+    this.eventSink(RPC_CHANNELS.automations.CHANGED, { to: 'workspace', workspaceId }, workspaceId)
   }
 
   private broadcastAppThemeChanged(theme: import('@craft-agent/shared/config').ThemeOverrides | null): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting app theme changed`)
-    this.eventSink(IPC_CHANNELS.theme.APP_CHANGED, { to: 'all' }, theme)
+    this.eventSink(RPC_CHANNELS.theme.APP_CHANGED, { to: 'all' }, theme)
   }
 
   private broadcastLlmConnectionsChanged(): void {
     if (!this.eventSink) return
     sessionLog.info('Broadcasting LLM connections changed')
-    this.eventSink(IPC_CHANNELS.llmConnections.CHANGED, { to: 'all' })
+    this.eventSink(RPC_CHANNELS.llmConnections.CHANGED, { to: 'all' })
   }
 
   private broadcastSkillsChanged(workspaceId: string, skills: import('@craft-agent/shared/skills').LoadedSkill[]): void {
     if (!this.eventSink) return
     sessionLog.info(`Broadcasting skills changed (${skills.length} skills)`)
-    this.eventSink(IPC_CHANNELS.skills.CHANGED, { to: 'workspace', workspaceId }, workspaceId, skills)
+    this.eventSink(RPC_CHANNELS.skills.CHANGED, { to: 'workspace', workspaceId }, workspaceId, skills)
   }
 
   private broadcastDefaultPermissionsChanged(): void {
     if (!this.eventSink) return
     sessionLog.info('Broadcasting default permissions changed')
-    this.eventSink(IPC_CHANNELS.permissions.DEFAULTS_CHANGED, { to: 'all' }, null)
+    this.eventSink(RPC_CHANNELS.permissions.DEFAULTS_CHANGED, { to: 'all' }, null)
   }
 
   /**
@@ -1764,7 +1764,7 @@ export class SessionManager implements ISessionManager {
     if (!this.eventSink) return
 
     // Broadcast to renderers for UI updates (session list dots, etc.)
-    this.eventSink(IPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED, { to: 'all' }, summary)
+    this.eventSink(RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED, { to: 'all' }, summary)
   }
 
   /**
@@ -5646,7 +5646,7 @@ To view this task's output:
       return
     }
 
-    this.eventSink(IPC_CHANNELS.sessions.EVENT, { to: 'workspace', workspaceId }, event)
+    this.eventSink(RPC_CHANNELS.sessions.EVENT, { to: 'workspace', workspaceId }, event)
   }
 
   /**

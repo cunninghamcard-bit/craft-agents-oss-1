@@ -1,21 +1,21 @@
 import { join } from 'path'
 import { readdirSync, statSync } from 'fs'
-import { IPC_CHANNELS, type SkillFile } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type SkillFile } from '@craft-agent/shared/protocol'
 import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import type { RpcServer } from '@craft-agent/server-core/transport'
 import type { HandlerDeps } from './handler-deps'
 
 export const HANDLED_CHANNELS = [
-  IPC_CHANNELS.skills.GET,
-  IPC_CHANNELS.skills.GET_FILES,
-  IPC_CHANNELS.skills.DELETE,
-  IPC_CHANNELS.skills.OPEN_EDITOR,
-  IPC_CHANNELS.skills.OPEN_FINDER,
+  RPC_CHANNELS.skills.GET,
+  RPC_CHANNELS.skills.GET_FILES,
+  RPC_CHANNELS.skills.DELETE,
+  RPC_CHANNELS.skills.OPEN_EDITOR,
+  RPC_CHANNELS.skills.OPEN_FINDER,
 ] as const
 
 export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): void {
   // Get all skills for a workspace (and optionally project-level skills from workingDirectory)
-  server.handle(IPC_CHANNELS.skills.GET, async (_ctx, workspaceId: string, workingDirectory?: string) => {
+  server.handle(RPC_CHANNELS.skills.GET, async (_ctx, workspaceId: string, workingDirectory?: string) => {
     deps.platform.logger?.info(`SKILLS_GET: Loading skills for workspace: ${workspaceId}${workingDirectory ? `, workingDirectory: ${workingDirectory}` : ''}`)
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
@@ -29,7 +29,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   })
 
   // Get files in a skill directory
-  server.handle(IPC_CHANNELS.skills.GET_FILES, async (_ctx, workspaceId: string, skillSlug: string) => {
+  server.handle(RPC_CHANNELS.skills.GET_FILES, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       deps.platform.logger?.error(`SKILLS_GET_FILES: Workspace not found: ${workspaceId}`)
@@ -78,7 +78,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   })
 
   // Delete a skill from a workspace
-  server.handle(IPC_CHANNELS.skills.DELETE, async (_ctx, workspaceId: string, skillSlug: string) => {
+  server.handle(RPC_CHANNELS.skills.DELETE, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
@@ -88,7 +88,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   })
 
   // Open skill SKILL.md in editor
-  server.handle(IPC_CHANNELS.skills.OPEN_EDITOR, async (_ctx, workspaceId: string, skillSlug: string) => {
+  server.handle(RPC_CHANNELS.skills.OPEN_EDITOR, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 
@@ -100,7 +100,7 @@ export function registerSkillsHandlers(server: RpcServer, deps: HandlerDeps): vo
   })
 
   // Open skill folder in Finder/Explorer
-  server.handle(IPC_CHANNELS.skills.OPEN_FINDER, async (_ctx, workspaceId: string, skillSlug: string) => {
+  server.handle(RPC_CHANNELS.skills.OPEN_FINDER, async (_ctx, workspaceId: string, skillSlug: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) throw new Error('Workspace not found')
 

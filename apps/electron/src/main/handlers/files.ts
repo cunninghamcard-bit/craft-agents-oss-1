@@ -1,7 +1,7 @@
 import { readFile, writeFile, unlink, mkdir, readdir } from 'fs/promises'
 import { join } from 'path'
 import { randomUUID } from 'crypto'
-import { IPC_CHANNELS, type FileAttachment } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS, type FileAttachment } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
 import { readFileAttachment, validateImageForClaudeAPI, IMAGE_LIMITS } from '@craft-agent/shared/utils'
 import { getSessionAttachmentsPath, validateSessionId } from '@craft-agent/shared/sessions'
@@ -17,19 +17,19 @@ import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 export { sanitizeFilename, validateFilePath } from '@craft-agent/server-core/handlers'
 
 export const HANDLED_CHANNELS = [
-  IPC_CHANNELS.file.READ,
-  IPC_CHANNELS.file.READ_DATA_URL,
-  IPC_CHANNELS.file.READ_BINARY,
-  IPC_CHANNELS.file.OPEN_DIALOG,
-  IPC_CHANNELS.file.READ_ATTACHMENT,
-  IPC_CHANNELS.file.STORE_ATTACHMENT,
-  IPC_CHANNELS.file.GENERATE_THUMBNAIL,
-  IPC_CHANNELS.fs.SEARCH,
+  RPC_CHANNELS.file.READ,
+  RPC_CHANNELS.file.READ_DATA_URL,
+  RPC_CHANNELS.file.READ_BINARY,
+  RPC_CHANNELS.file.OPEN_DIALOG,
+  RPC_CHANNELS.file.READ_ATTACHMENT,
+  RPC_CHANNELS.file.STORE_ATTACHMENT,
+  RPC_CHANNELS.file.GENERATE_THUMBNAIL,
+  RPC_CHANNELS.fs.SEARCH,
 ] as const
 
 export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): void {
   // Read a file (with path validation to prevent traversal attacks)
-  server.handle(IPC_CHANNELS.file.READ, async (_ctx, path: string) => {
+  server.handle(RPC_CHANNELS.file.READ, async (_ctx, path: string) => {
     try {
       // Validate and normalize the path
       const safePath = await validateFilePath(path)
@@ -49,7 +49,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   // Read an image file as a data URL for in-app image preview overlays.
   // Returns data:{mime};base64,{content} — used by ImagePreviewOverlay and markdown image blocks.
-  server.handle(IPC_CHANNELS.file.READ_DATA_URL, async (_ctx, path: string) => {
+  server.handle(RPC_CHANNELS.file.READ_DATA_URL, async (_ctx, path: string) => {
     try {
       const safePath = await validateFilePath(path)
       const buffer = await readFile(safePath)
@@ -80,7 +80,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   // Read a file as raw binary (Uint8Array) for react-pdf.
   // The WS transport codec preserves Uint8Array payloads over JSON envelopes.
-  server.handle(IPC_CHANNELS.file.READ_BINARY, async (_ctx, path: string) => {
+  server.handle(RPC_CHANNELS.file.READ_BINARY, async (_ctx, path: string) => {
     try {
       const safePath = await validateFilePath(path)
       const buffer = await readFile(safePath)
@@ -94,7 +94,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   })
 
   // Open native file dialog for selecting files to attach (routed to client)
-  server.handle(IPC_CHANNELS.file.OPEN_DIALOG, async (ctx) => {
+  server.handle(RPC_CHANNELS.file.OPEN_DIALOG, async (ctx) => {
     const result = await requestClientOpenFileDialog(server, ctx.clientId, {
       properties: ['openFile', 'multiSelections'],
       filters: [
@@ -109,7 +109,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   })
 
   // Read file and return as FileAttachment with Quick Look thumbnail
-  server.handle(IPC_CHANNELS.file.READ_ATTACHMENT, async (_ctx, path: string) => {
+  server.handle(RPC_CHANNELS.file.READ_ATTACHMENT, async (_ctx, path: string) => {
     try {
       // Validate path first to prevent path traversal
       const safePath = await validateFilePath(path)
@@ -139,7 +139,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   })
 
   // Generate thumbnail from base64 data (for drag-drop files where we don't have a path)
-  server.handle(IPC_CHANNELS.file.GENERATE_THUMBNAIL, async (_ctx, base64: string, _mimeType: string): Promise<string | null> => {
+  server.handle(RPC_CHANNELS.file.GENERATE_THUMBNAIL, async (_ctx, base64: string, _mimeType: string): Promise<string | null> => {
     try {
       const buffer = Buffer.from(base64, 'base64')
       const thumbBuffer = await deps.platform.imageProcessor.process(buffer, {
@@ -155,7 +155,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
 
   // Store an attachment to disk and generate thumbnail/markdown conversion
   // This is the core of the persistent file attachment system
-  server.handle(IPC_CHANNELS.file.STORE_ATTACHMENT, async (ctx, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
+  server.handle(RPC_CHANNELS.file.STORE_ATTACHMENT, async (ctx, sessionId: string, attachment: FileAttachment): Promise<StoredAttachment> => {
     // Track files we've written for cleanup on error
     const filesToCleanup: string[] = []
 
@@ -373,7 +373,7 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   // Parallel BFS walk that skips ignored directories BEFORE entering them,
   // avoiding reading node_modules/etc. contents entirely. Uses withFileTypes
   // to get entry types without separate stat calls.
-  server.handle(IPC_CHANNELS.fs.SEARCH, async (_ctx, basePath: string, query: string) => {
+  server.handle(RPC_CHANNELS.fs.SEARCH, async (_ctx, basePath: string, query: string) => {
     deps.platform.logger.info('[FS_SEARCH] called:', basePath, query)
     const MAX_RESULTS = 50
 

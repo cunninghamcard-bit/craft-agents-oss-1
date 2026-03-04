@@ -26,7 +26,7 @@ import {
   clearDismissedUpdateVersion,
 } from '@craft-agent/shared/config'
 import { readJsonFileSync } from '@craft-agent/shared/utils/files'
-import { IPC_CHANNELS, type UpdateInfo } from '../shared/types'
+import { RPC_CHANNELS, type UpdateInfo } from '../shared/types'
 import type { EventSink } from '@craft-agent/server-core/transport'
 
 // Platform detection
@@ -97,7 +97,7 @@ function broadcastUpdateInfo(): void {
   if (!eventSink) return
 
   const snapshot = { ...updateInfo }
-  eventSink(IPC_CHANNELS.update.AVAILABLE, { to: 'all' }, snapshot)
+  eventSink(RPC_CHANNELS.update.AVAILABLE, { to: 'all' }, snapshot)
 }
 
 /**
@@ -106,7 +106,7 @@ function broadcastUpdateInfo(): void {
 function broadcastDownloadProgress(progress: number): void {
   if (!eventSink) return
 
-  eventSink(IPC_CHANNELS.update.DOWNLOAD_PROGRESS, { to: 'all' }, progress)
+  eventSink(RPC_CHANNELS.update.DOWNLOAD_PROGRESS, { to: 'all' }, progress)
 }
 
 // ─── Configure electron-updater ───────────────────────────────────────────────

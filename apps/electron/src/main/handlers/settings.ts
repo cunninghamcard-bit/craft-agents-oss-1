@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname } from 'path'
-import { IPC_CHANNELS } from '@craft-agent/shared/protocol'
+import { RPC_CHANNELS } from '@craft-agent/shared/protocol'
 import { getPreferencesPath, getSessionDraft, setSessionDraft, deleteSessionDraft, getAllSessionDrafts, getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { getWorkspaceOrThrow } from '@craft-agent/server-core/handlers'
 import type { RpcServer } from '@craft-agent/server-core/transport'
@@ -8,27 +8,27 @@ import type { HandlerDeps } from './handler-deps'
 import { requestClientOpenFileDialog } from '@craft-agent/server-core/transport'
 
 export const HANDLED_CHANNELS = [
-  IPC_CHANNELS.workspace.SETTINGS_GET,
-  IPC_CHANNELS.workspace.SETTINGS_UPDATE,
-  IPC_CHANNELS.preferences.READ,
-  IPC_CHANNELS.preferences.WRITE,
-  IPC_CHANNELS.drafts.GET,
-  IPC_CHANNELS.drafts.SET,
-  IPC_CHANNELS.drafts.DELETE,
-  IPC_CHANNELS.drafts.GET_ALL,
-  IPC_CHANNELS.input.GET_AUTO_CAPITALISATION,
-  IPC_CHANNELS.input.SET_AUTO_CAPITALISATION,
-  IPC_CHANNELS.input.GET_SEND_MESSAGE_KEY,
-  IPC_CHANNELS.input.SET_SEND_MESSAGE_KEY,
-  IPC_CHANNELS.input.GET_SPELL_CHECK,
-  IPC_CHANNELS.input.SET_SPELL_CHECK,
-  IPC_CHANNELS.power.GET_KEEP_AWAKE,
-  IPC_CHANNELS.power.SET_KEEP_AWAKE,
-  IPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS,
-  IPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS,
-  IPC_CHANNELS.sessions.GET_MODEL,
-  IPC_CHANNELS.sessions.SET_MODEL,
-  IPC_CHANNELS.dialog.OPEN_FOLDER,
+  RPC_CHANNELS.workspace.SETTINGS_GET,
+  RPC_CHANNELS.workspace.SETTINGS_UPDATE,
+  RPC_CHANNELS.preferences.READ,
+  RPC_CHANNELS.preferences.WRITE,
+  RPC_CHANNELS.drafts.GET,
+  RPC_CHANNELS.drafts.SET,
+  RPC_CHANNELS.drafts.DELETE,
+  RPC_CHANNELS.drafts.GET_ALL,
+  RPC_CHANNELS.input.GET_AUTO_CAPITALISATION,
+  RPC_CHANNELS.input.SET_AUTO_CAPITALISATION,
+  RPC_CHANNELS.input.GET_SEND_MESSAGE_KEY,
+  RPC_CHANNELS.input.SET_SEND_MESSAGE_KEY,
+  RPC_CHANNELS.input.GET_SPELL_CHECK,
+  RPC_CHANNELS.input.SET_SPELL_CHECK,
+  RPC_CHANNELS.power.GET_KEEP_AWAKE,
+  RPC_CHANNELS.power.SET_KEEP_AWAKE,
+  RPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS,
+  RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS,
+  RPC_CHANNELS.sessions.GET_MODEL,
+  RPC_CHANNELS.sessions.SET_MODEL,
+  RPC_CHANNELS.dialog.OPEN_FOLDER,
 ] as const
 
 export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): void {
@@ -37,19 +37,19 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get session-specific model
-  server.handle(IPC_CHANNELS.sessions.GET_MODEL, async (_ctx, sessionId: string, _workspaceId: string): Promise<string | null> => {
+  server.handle(RPC_CHANNELS.sessions.GET_MODEL, async (_ctx, sessionId: string, _workspaceId: string): Promise<string | null> => {
     const session = await deps.sessionManager.getSession(sessionId)
     return session?.model ?? null
   })
 
   // Set session-specific model (and optionally connection)
-  server.handle(IPC_CHANNELS.sessions.SET_MODEL, async (_ctx, sessionId: string, workspaceId: string, model: string | null, connection?: string) => {
+  server.handle(RPC_CHANNELS.sessions.SET_MODEL, async (_ctx, sessionId: string, workspaceId: string, model: string | null, connection?: string) => {
     await deps.sessionManager.updateSessionModel(sessionId, workspaceId, model, connection)
     deps.platform.logger.info(`Session ${sessionId} model updated to: ${model}${connection ? ` (connection: ${connection})` : ''}`)
   })
 
   // Open native folder dialog for selecting working directory (routed to client)
-  server.handle(IPC_CHANNELS.dialog.OPEN_FOLDER, async (ctx) => {
+  server.handle(RPC_CHANNELS.dialog.OPEN_FOLDER, async (ctx) => {
     const result = await requestClientOpenFileDialog(server, ctx.clientId, {
       properties: ['openDirectory', 'createDirectory'],
       title: 'Select Working Directory',
@@ -62,7 +62,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get workspace settings (model, permission mode, working directory, credential strategy)
-  server.handle(IPC_CHANNELS.workspace.SETTINGS_GET, async (_ctx, workspaceId: string) => {
+  server.handle(RPC_CHANNELS.workspace.SETTINGS_GET, async (_ctx, workspaceId: string) => {
     const workspace = getWorkspaceByNameOrId(workspaceId)
     if (!workspace) {
       deps.platform.logger.error(`Workspace not found: ${workspaceId}`)
@@ -88,7 +88,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
 
   // Update a workspace setting
   // Valid keys: 'name', 'model', 'enabledSourceSlugs', 'permissionMode', 'cyclablePermissionModes', 'thinkingLevel', 'workingDirectory', 'localMcpEnabled', 'defaultLlmConnection'
-  server.handle(IPC_CHANNELS.workspace.SETTINGS_UPDATE, async (_ctx, workspaceId: string, key: string, value: unknown) => {
+  server.handle(RPC_CHANNELS.workspace.SETTINGS_UPDATE, async (_ctx, workspaceId: string, key: string, value: unknown) => {
     const workspace = getWorkspaceOrThrow(workspaceId)
 
     // Validate key is a known workspace setting
@@ -134,7 +134,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Read user preferences file
-  server.handle(IPC_CHANNELS.preferences.READ, async () => {
+  server.handle(RPC_CHANNELS.preferences.READ, async () => {
     const path = getPreferencesPath()
     if (!existsSync(path)) {
       return { content: '{}', exists: false, path }
@@ -143,7 +143,7 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Write user preferences file (validates JSON before saving)
-  server.handle(IPC_CHANNELS.preferences.WRITE, async (_, content: string) => {
+  server.handle(RPC_CHANNELS.preferences.WRITE, async (_, content: string) => {
     try {
       JSON.parse(content) // Validate JSON
       const path = getPreferencesPath()
@@ -160,22 +160,22 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get draft text for a session
-  server.handle(IPC_CHANNELS.drafts.GET, async (_ctx, sessionId: string) => {
+  server.handle(RPC_CHANNELS.drafts.GET, async (_ctx, sessionId: string) => {
     return getSessionDraft(sessionId)
   })
 
   // Set draft text for a session (pass empty string to clear)
-  server.handle(IPC_CHANNELS.drafts.SET, async (_ctx, sessionId: string, text: string) => {
+  server.handle(RPC_CHANNELS.drafts.SET, async (_ctx, sessionId: string, text: string) => {
     setSessionDraft(sessionId, text)
   })
 
   // Delete draft for a session
-  server.handle(IPC_CHANNELS.drafts.DELETE, async (_ctx, sessionId: string) => {
+  server.handle(RPC_CHANNELS.drafts.DELETE, async (_ctx, sessionId: string) => {
     deleteSessionDraft(sessionId)
   })
 
   // Get all drafts (for loading on app start)
-  server.handle(IPC_CHANNELS.drafts.GET_ALL, async () => {
+  server.handle(RPC_CHANNELS.drafts.GET_ALL, async () => {
     return getAllSessionDrafts()
   })
 
@@ -184,37 +184,37 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get auto-capitalisation setting
-  server.handle(IPC_CHANNELS.input.GET_AUTO_CAPITALISATION, async () => {
+  server.handle(RPC_CHANNELS.input.GET_AUTO_CAPITALISATION, async () => {
     const { getAutoCapitalisation } = await import('@craft-agent/shared/config/storage')
     return getAutoCapitalisation()
   })
 
   // Set auto-capitalisation setting
-  server.handle(IPC_CHANNELS.input.SET_AUTO_CAPITALISATION, async (_ctx, enabled: boolean) => {
+  server.handle(RPC_CHANNELS.input.SET_AUTO_CAPITALISATION, async (_ctx, enabled: boolean) => {
     const { setAutoCapitalisation } = await import('@craft-agent/shared/config/storage')
     setAutoCapitalisation(enabled)
   })
 
   // Get send message key setting
-  server.handle(IPC_CHANNELS.input.GET_SEND_MESSAGE_KEY, async () => {
+  server.handle(RPC_CHANNELS.input.GET_SEND_MESSAGE_KEY, async () => {
     const { getSendMessageKey } = await import('@craft-agent/shared/config/storage')
     return getSendMessageKey()
   })
 
   // Set send message key setting
-  server.handle(IPC_CHANNELS.input.SET_SEND_MESSAGE_KEY, async (_ctx, key: 'enter' | 'cmd-enter') => {
+  server.handle(RPC_CHANNELS.input.SET_SEND_MESSAGE_KEY, async (_ctx, key: 'enter' | 'cmd-enter') => {
     const { setSendMessageKey } = await import('@craft-agent/shared/config/storage')
     setSendMessageKey(key)
   })
 
   // Get spell check setting
-  server.handle(IPC_CHANNELS.input.GET_SPELL_CHECK, async () => {
+  server.handle(RPC_CHANNELS.input.GET_SPELL_CHECK, async () => {
     const { getSpellCheck } = await import('@craft-agent/shared/config/storage')
     return getSpellCheck()
   })
 
   // Set spell check setting
-  server.handle(IPC_CHANNELS.input.SET_SPELL_CHECK, async (_ctx, enabled: boolean) => {
+  server.handle(RPC_CHANNELS.input.SET_SPELL_CHECK, async (_ctx, enabled: boolean) => {
     const { setSpellCheck } = await import('@craft-agent/shared/config/storage')
     setSpellCheck(enabled)
   })
@@ -224,13 +224,13 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get keep awake while running setting
-  server.handle(IPC_CHANNELS.power.GET_KEEP_AWAKE, async () => {
+  server.handle(RPC_CHANNELS.power.GET_KEEP_AWAKE, async () => {
     const { getKeepAwakeWhileRunning } = await import('@craft-agent/shared/config/storage')
     return getKeepAwakeWhileRunning()
   })
 
   // Set keep awake while running setting
-  server.handle(IPC_CHANNELS.power.SET_KEEP_AWAKE, async (_ctx, enabled: boolean) => {
+  server.handle(RPC_CHANNELS.power.SET_KEEP_AWAKE, async (_ctx, enabled: boolean) => {
     const { setKeepAwakeWhileRunning } = await import('@craft-agent/shared/config/storage')
     const { setKeepAwakeSetting } = await import('../power-manager')
     // Save to config
@@ -244,13 +244,13 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   // ============================================================
 
   // Get rich tool descriptions setting
-  server.handle(IPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS, async () => {
+  server.handle(RPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS, async () => {
     const { getRichToolDescriptions } = await import('@craft-agent/shared/config/storage')
     return getRichToolDescriptions()
   })
 
   // Set rich tool descriptions setting
-  server.handle(IPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS, async (_ctx, enabled: boolean) => {
+  server.handle(RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS, async (_ctx, enabled: boolean) => {
     const { setRichToolDescriptions } = await import('@craft-agent/shared/config/storage')
     setRichToolDescriptions(enabled)
   })

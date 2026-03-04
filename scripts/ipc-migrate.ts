@@ -2,7 +2,7 @@
 /**
  * IPC Channel Migration Script (Phase 2A Step 3)
  *
- * Replaces all IPC_CHANNELS.FLAT_KEY references with IPC_CHANNELS.ns.NEW_KEY
+ * Replaces all RPC_CHANNELS.FLAT_KEY references with RPC_CHANNELS.ns.NEW_KEY
  * across the codebase. Hardcoded migration map matches the nested structure.
  *
  * Usage: bun run scripts/ipc-migrate.ts [--dry-run]
@@ -330,7 +330,7 @@ const MIGRATION_MAP: Record<string, string> = {
 
 console.log(`Migration map: ${Object.keys(MIGRATION_MAP).length} entries`)
 
-// ── Find all .ts/.tsx files that reference IPC_CHANNELS ──
+// ── Find all .ts/.tsx files that reference RPC_CHANNELS ──
 
 const SRC_DIR = join(ROOT, 'apps', 'electron', 'src')
 
@@ -340,12 +340,12 @@ for (const path of glob.scanSync({ cwd: SRC_DIR })) {
   allFiles.push(join(SRC_DIR, path))
 }
 
-// Filter to files that contain IPC_CHANNELS (skip types.ts itself — already restructured)
+// Filter to files that contain RPC_CHANNELS (skip types.ts itself — already restructured)
 const targetFiles = allFiles.filter(f => {
   if (f.endsWith('shared/types.ts')) return false
   if (f.endsWith('ipc-channels.test.ts')) return false
   const content = readFileSync(f, 'utf-8')
-  return content.includes('IPC_CHANNELS.')
+  return content.includes('RPC_CHANNELS.')
 })
 
 console.log(`Found ${targetFiles.length} files to process`)
@@ -365,11 +365,11 @@ for (const filePath of targetFiles) {
 
   for (const oldKey of sortedKeys) {
     const newPath = MIGRATION_MAP[oldKey]
-    // Match IPC_CHANNELS.OLD_KEY followed by non-word char or end of string
-    const regex = new RegExp(`IPC_CHANNELS\\.${oldKey}(?!\\w)`, 'g')
+    // Match RPC_CHANNELS.OLD_KEY followed by non-word char or end of string
+    const regex = new RegExp(`RPC_CHANNELS\\.${oldKey}(?!\\w)`, 'g')
     const matches = content.match(regex)
     if (matches) {
-      content = content.replace(regex, `IPC_CHANNELS.${newPath}`)
+      content = content.replace(regex, `RPC_CHANNELS.${newPath}`)
       fileReplacements += matches.length
     }
   }

@@ -367,7 +367,7 @@ Requires Electron APIs. Only registered in Electron entry point.
 |------|-------------|-------|
 | `debug:log` | Remove fire-and-forget `send()` | Becomes `server.handle('debug:log', ...)` returning void. Or drop entirely — use WS transport logging. |
 | `getVersions()` | Rework | Currently synchronous in preload using `process.versions`. Becomes RPC or static config. |
-| `onboarding:validateMcp` | Check if used | Defined in `IPC_CHANNELS` but not in preload — may be dead code. |
+| `onboarding:validateMcp` | Check if used | Defined in `RPC_CHANNELS` but not in preload — may be dead code. |
 
 ---
 

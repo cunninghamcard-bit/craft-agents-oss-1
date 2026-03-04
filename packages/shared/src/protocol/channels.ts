@@ -2,9 +2,6 @@
  * RPC channel names — organized by domain namespace.
  * Wire-format strings (values) are the stable API contract.
  * Key paths are internal and may be reorganized freely.
- *
- * Canonical name: RPC_CHANNELS
- * Compat alias: IPC_CHANNELS (to be removed after full rename)
  */
 export const RPC_CHANNELS = {
   sessions: {
@@ -326,5 +323,4 @@ export const RPC_CHANNELS = {
   },
 } as const
 
-/** Compat alias — use RPC_CHANNELS in new code. Remove after full rename. */
-export { RPC_CHANNELS as IPC_CHANNELS }
+// IPC_CHANNELS compat alias removed — all consumers now use RPC_CHANNELS
