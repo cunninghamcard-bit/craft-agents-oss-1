@@ -115,6 +115,16 @@ const instance = await (async () => {
 console.log(`CRAFT_SERVER_URL=${instance.protocol}://${instance.host}:${instance.port}`)
 console.log(`CRAFT_SERVER_TOKEN=${instance.token}`)
 
+// Warn if binding to a non-localhost address without TLS — tokens would be sent in cleartext
+const isLocalBind = instance.host === '127.0.0.1' || instance.host === 'localhost' || instance.host === '::1'
+if (!isLocalBind && instance.protocol === 'ws') {
+  console.warn(
+    '\n⚠️  WARNING: Server is listening on a network address without TLS.\n' +
+    '   Authentication tokens will be sent in cleartext.\n' +
+    '   Set CRAFT_RPC_TLS_CERT and CRAFT_RPC_TLS_KEY to enable wss://.\n'
+  )
+}
+
 const shutdown = async () => {
   await instance.stop()
   process.exit(0)

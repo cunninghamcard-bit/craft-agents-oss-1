@@ -41,6 +41,17 @@ if (process.env.CRAFT_SERVER_URL) {
   wsMode = 'remote'
   wsUrl = process.env.CRAFT_SERVER_URL
   wsToken = process.env.CRAFT_SERVER_TOKEN ?? ''
+
+  // Block unencrypted ws:// to non-localhost servers — tokens would be sent in cleartext
+  const parsed = new URL(wsUrl)
+  const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1'
+  if (parsed.protocol === 'ws:' && !isLocalhost) {
+    throw new Error(
+      `Refusing to connect to remote server over unencrypted ws://. ` +
+      `Use wss:// (TLS) for non-localhost connections. ` +
+      `Set CRAFT_RPC_TLS_CERT/KEY on the server to enable TLS.`
+    )
+  }
   webContentsId = ipcRenderer.sendSync('__get-web-contents-id')
   workspaceId = process.env.CRAFT_WORKSPACE_ID ?? ipcRenderer.sendSync('__get-workspace-id')
 } else {
