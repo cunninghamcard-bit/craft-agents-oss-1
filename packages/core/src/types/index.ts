@@ -43,3 +43,6 @@ export type {
 } from './message.ts';
 export { generateMessageId } from './message.ts';
 
+// Message persistence mappers
+export { messageToStored, storedToMessage } from './message-mapper.ts';
+

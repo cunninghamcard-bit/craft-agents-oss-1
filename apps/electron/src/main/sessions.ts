@@ -68,7 +68,7 @@ import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/share
 import { type Session, type Message, type SessionEvent, type FileAttachment, type StoredAttachment, type SendMessageOptions, type UnreadSummary, IPC_CHANNELS, generateMessageId } from '../shared/types'
 import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrl, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
-import type { ToolDisplayMeta } from '@craft-agent/core/types'
+import { messageToStored, storedToMessage, type ToolDisplayMeta } from '@craft-agent/core/types'
 import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
 import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/agent/thinking-levels'
@@ -773,19 +773,6 @@ function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Sess
     supportsBranching: resolveSupportsBranching(m),
     ...overrides,
   } as Session
-}
-
-// Convert runtime Message to StoredMessage for persistence
-// All fields are shared except role↔type rename and isStreaming (transient, excluded)
-function messageToStored(msg: Message): StoredMessage {
-  const { role, isStreaming, isPending, ...rest } = msg
-  return { ...rest, type: role } as StoredMessage
-}
-
-// Convert StoredMessage to runtime Message
-function storedToMessage(stored: StoredMessage): Message {
-  const { type, ...rest } = stored
-  return { ...rest, role: type, timestamp: stored.timestamp ?? Date.now() } as Message
 }
 
 // Performance: Batch IPC delta events to reduce renderer load

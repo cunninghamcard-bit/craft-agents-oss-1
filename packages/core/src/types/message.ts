@@ -205,7 +205,7 @@ export interface Message {
 
 /**
  * Stored message format (persistence)
- * Excludes only transient fields (isStreaming)
+ * Excludes transient runtime-only fields (isStreaming, isPending)
  */
 export interface StoredMessage {
   id: string;
@@ -240,6 +240,8 @@ export interface StoredMessage {
   turnId?: string;
   // Status type for compaction messages (persisted for reload)
   statusType?: 'compacting' | 'compaction_complete';
+  // Info level for info messages (persisted for reload)
+  infoLevel?: 'info' | 'warning' | 'error' | 'success';
   // Error display fields
   errorCode?: string;
   errorTitle?: string;
