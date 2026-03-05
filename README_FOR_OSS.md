@@ -147,6 +147,100 @@ Use **SHIFT+TAB** to cycle through modes in the chat interface.
 | `Enter` | Send message |
 | `Shift+Enter` | New line |
 
+## Remote Server (Headless)
+
+Craft Agents can run as a headless server on a remote machine (e.g., a Linux VPS), with the desktop app connecting as a thin client. This lets you keep long-running sessions alive, access them from multiple machines, and run compute-heavy tasks on a powerful server.
+
+### Quick Start
+
+From the monorepo root:
+
+```bash
+# Generate a token and start the server
+CRAFT_SERVER_TOKEN=$(openssl rand -hex 32) bun run packages/server/src/index.ts
+```
+
+The server prints the connection details on startup:
+
+```
+CRAFT_SERVER_URL=ws://203.0.113.5:9100
+CRAFT_SERVER_TOKEN=<generated-token>
+```
+
+Copy these values and use them to connect the desktop app.
+
+### Connecting the Desktop App
+
+Launch the Electron app in thin-client mode by passing the server URL and token:
+
+```bash
+CRAFT_SERVER_URL=wss://203.0.113.5:9100 CRAFT_SERVER_TOKEN=<token> bun run electron:start
+```
+
+In thin-client mode, the desktop app renders the UI but all session logic, tool execution, and LLM calls run on the remote server.
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `CRAFT_SERVER_TOKEN` | Yes | — | Bearer token for client authentication |
+| `CRAFT_RPC_HOST` | No | `127.0.0.1` | Bind address (`0.0.0.0` for remote access) |
+| `CRAFT_RPC_PORT` | No | `9100` | Bind port |
+| `CRAFT_RPC_TLS_CERT` | No | — | Path to PEM certificate file (enables `wss://`) |
+| `CRAFT_RPC_TLS_KEY` | No | — | Path to PEM private key file (required with cert) |
+| `CRAFT_RPC_TLS_CA` | No | — | Path to PEM CA chain file (optional, for client cert verification) |
+| `CRAFT_DEBUG` | No | `false` | Enable debug logging |
+
+### TLS (Recommended for Remote Access)
+
+When exposing the server over the network, TLS encrypts the WebSocket connection (`wss://` instead of `ws://`).
+
+**Generate a self-signed certificate (development/testing):**
+
+```bash
+./scripts/generate-dev-cert.sh
+# Creates certs/cert.pem and certs/key.pem (valid 365 days)
+```
+
+**Start the server with TLS:**
+
+```bash
+CRAFT_SERVER_TOKEN=<token> \
+CRAFT_RPC_HOST=0.0.0.0 \
+CRAFT_RPC_TLS_CERT=certs/cert.pem \
+CRAFT_RPC_TLS_KEY=certs/key.pem \
+bun run packages/server/src/index.ts
+```
+
+The server will print `CRAFT_SERVER_URL=wss://<your-public-ip>:9100`.
+
+**For production**, use certificates from a trusted CA (e.g., Let's Encrypt) or place the server behind a reverse proxy (nginx, Caddy) that terminates TLS.
+
+### Docker
+
+```bash
+docker run -d \
+  -p 9100:9100 \
+  -e CRAFT_SERVER_TOKEN=<token> \
+  -e CRAFT_RPC_HOST=0.0.0.0 \
+  -v craft-data:/root/.craft-agent \
+  craft-agents-server
+```
+
+To enable TLS in Docker, mount your certificates and set the env vars:
+
+```bash
+docker run -d \
+  -p 9100:9100 \
+  -e CRAFT_SERVER_TOKEN=<token> \
+  -e CRAFT_RPC_HOST=0.0.0.0 \
+  -e CRAFT_RPC_TLS_CERT=/certs/cert.pem \
+  -e CRAFT_RPC_TLS_KEY=/certs/key.pem \
+  -v ./certs:/certs:ro \
+  -v craft-data:/root/.craft-agent \
+  craft-agents-server
+```
+
 ## Architecture
 
 ```
