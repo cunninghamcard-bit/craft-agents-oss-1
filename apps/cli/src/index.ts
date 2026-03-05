@@ -749,6 +749,7 @@ export interface ValidateStep {
 export interface ValidateContext {
   workspaceId?: string
   workspaceRootPath?: string
+  createdWorkspace?: boolean
   createdSessionId?: string
   createdSourceSlug?: string
   createdSkillSlug?: string
@@ -856,8 +857,18 @@ export function getValidateSteps(): ValidateStep[] {
           // Bind this client to the workspace so push events (e.g. session:event)
           // routed { to: 'workspace' } reach us.
           await client.invoke('window:switchWorkspace', r[0].id)
+          return `${r.length} workspaces`
         }
-        return `${r?.length ?? 0} workspaces`
+        // Auto-bootstrap a temp workspace for CI environments
+        const { mkdtemp } = await import('fs/promises')
+        const { tmpdir } = await import('os')
+        const tmpDir = await mkdtemp(`${tmpdir()}/craft-validate-`)
+        const ws = (await client.invoke('workspaces:create', tmpDir, 'validate-workspace')) as { id: string }
+        ctx.workspaceId = ws.id
+        ctx.workspaceRootPath = tmpDir
+        ctx.createdWorkspace = true
+        await client.invoke('window:switchWorkspace', ws.id)
+        return `0 found → created temp workspace`
       },
     },
     {
@@ -872,7 +883,21 @@ export function getValidateSteps(): ValidateStep[] {
       name: 'LLM_Connection:list',
       fn: async (client) => {
         const r = (await client.invoke('LLM_Connection:list')) as any[]
-        return `${r?.length ?? 0} connections`
+        if (r?.length > 0) return `${r.length} connections`
+        // Auto-setup from env for CI environments
+        const envKey = process.env.ANTHROPIC_API_KEY
+        if (!envKey) return `0 connections (no ANTHROPIC_API_KEY)`
+        const slug = 'anthropic-cli'
+        await client.invoke('LLM_Connection:save', {
+          slug,
+          name: 'Anthropic',
+          providerType: 'anthropic',
+          authType: 'api_key',
+          createdAt: Date.now(),
+        })
+        await client.invoke('settings:setupLlmConnection', { slug, credential: envKey })
+        await client.invoke('LLM_Connection:setDefault', slug)
+        return `0 found → created from env`
       },
     },
     {
@@ -1152,6 +1177,23 @@ export async function runValidation(client: CliRpcClient, jsonMode: boolean): Pr
       await client.invoke('sessions:delete', ctx.createdSessionId)
     } catch {
       // best effort
+    }
+  }
+
+  // Cleanup: if we auto-created a temp workspace, remove it
+  if (ctx.createdWorkspace && ctx.workspaceId && client.isConnected) {
+    try {
+      await client.invoke('workspaces:delete', ctx.workspaceId)
+    } catch {
+      // best effort
+    }
+    if (ctx.workspaceRootPath) {
+      try {
+        const { rm } = await import('fs/promises')
+        await rm(ctx.workspaceRootPath, { recursive: true, force: true })
+      } catch {
+        // best effort
+      }
     }
   }
 
