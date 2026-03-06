@@ -373,7 +373,7 @@ export class PiAgent extends BaseAgent {
     const piAuth = await this.getPiAuth();
     const legacyApiKey = piAuth ? undefined : await this.getApiKey();
     const sessionPath = this.config.session
-      ? getSessionPlansPath(this.config.workspace.rootPath, sessionId).replace(/\/plans$/, '')
+      ? getSessionPath(this.config.workspace.rootPath, sessionId)
       : '';
     const plansFolderPath = getSessionPlansPath(this.config.workspace.rootPath, sessionId);
     const workingDirectory = this.config.session?.workingDirectory || cwd;
