@@ -103,6 +103,9 @@ export {
   BrowserControls,
   BrowserEmptyStateCard,
   FilterableSelectPopover,
+  Island,
+  IslandContentView,
+  IslandFollowUpContentView,
   type SpinnerProps,
   type SimpleDropdownProps,
   type SimpleDropdownItemProps,
@@ -115,6 +118,13 @@ export {
   type BrowserEmptyPromptSample,
   type FilterableSelectPopoverProps,
   type FilterableSelectRenderState,
+  type IslandProps,
+  type IslandContentViewProps,
+  type IslandTransitionConfig,
+  type IslandActiveViewSize,
+  type IslandFollowUpContentViewProps,
+  type AnchorX,
+  type AnchorY,
 } from './components/ui'
 
 // Tooltip
