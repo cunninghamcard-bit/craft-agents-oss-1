@@ -2303,15 +2303,9 @@ export class ClaudeAgent extends BaseAgent {
         }),
       ]);
     } catch (error) {
-      throw new Error(
-        `Failed to establish branch context: ${error instanceof Error ? error.message : String(error)}`
-      );
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      // interrupt() serves dual purpose:
-      // - On SUCCESS: query is already done, interrupt() is a benign no-op.
-      // - On TIMEOUT: interrupt() kills the underlying SDK stream, stopping the
-      //   detached async iterator. This is the standard SDK cancellation API.
+      // On error/timeout: interrupt() is needed to kill the SDK subprocess
+      // and stop the detached async iterator. This is the standard SDK
+      // cancellation API — used throughout the codebase.
       if (preflightQuery) {
         try {
           await preflightQuery.interrupt();
@@ -2319,6 +2313,16 @@ export class ClaudeAgent extends BaseAgent {
           // Ignore — query may already be complete or errored.
         }
       }
+      throw new Error(
+        `Failed to establish branch context: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      // On SUCCESS: skip interrupt(). The query completed and will clean up
+      // naturally. Calling interrupt() here races with the SDK's internal
+      // stream teardown — if the subprocess exits between the interrupt
+      // request write and stdin.end(), the SDK emits ERR_STREAM_WRITE_AFTER_END
+      // as an uncaught exception (SDK bug: no 'error' handler on processStdin).
     }
 
     if (!capturedSessionId) {
