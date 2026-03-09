@@ -73,6 +73,7 @@ import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels } from '@craft-agent/shared/labels/storage'
 import { extractLabelId } from '@craft-agent/shared/labels'
+import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { AutomationSystem, AUTOMATIONS_HISTORY_FILE, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 
 // Import from server-core domain utilities
@@ -6008,6 +6009,11 @@ To view this task's output:
     // Resolve @mentions to source/skill slugs
     const resolved = mentions ? this.resolveAutomationMentions(workspaceRootPath, mentions) : undefined
 
+    // Ensure labels exist in workspace config before assigning to session
+    const resolvedLabels = labels?.length
+      ? ensureLabelsExist(workspaceRootPath, labels)
+      : labels
+
     // Use automation name if provided, otherwise fall back to prompt snippet
     const fallback = `Automation: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`
     const sessionName = automationName || fallback
@@ -6015,7 +6021,7 @@ To view this task's output:
     // Create a new session for this automation
     const session = await this.createSession(workspaceId, {
       name: sessionName,
-      labels,
+      labels: resolvedLabels,
       permissionMode: permissionMode || 'safe',
       enabledSourceSlugs: resolved?.sourceSlugs,
       llmConnection,
