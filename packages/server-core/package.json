@@ -25,7 +25,8 @@
     "@craft-agent/core": "workspace:*",
     "@craft-agent/shared": "workspace:*",
     "ws": "^8.19.0",
-    "sharp": "0.34.5"
+    "sharp": "0.34.5",
+    "@mariozechner/pi-ai": "0.56.2"
   },
   "devDependencies": {
     "typescript": "^5.8.2",

@@ -154,8 +154,6 @@ export const RPC_CHANNELS = {
     DELETE: 'LLM_Connection:delete',
     TEST: 'LLM_Connection:test',
     SET_DEFAULT: 'LLM_Connection:setDefault',
-    GET_DEFAULT_THINKING: 'LLM_Connection:getDefaultThinking',
-    SET_DEFAULT_THINKING: 'LLM_Connection:setDefaultThinking',
     SET_WORKSPACE_DEFAULT: 'LLM_Connection:setWorkspaceDefault',
     REFRESH_MODELS: 'LLM_Connection:refreshModels',
     CHANGED: 'LLM_Connection:changed',
@@ -177,6 +175,8 @@ export const RPC_CHANNELS = {
   settings: {
     SETUP_LLM_CONNECTION: 'settings:setupLlmConnection',
     TEST_LLM_CONNECTION_SETUP: 'settings:testLlmConnectionSetup',
+    GET_DEFAULT_THINKING_LEVEL: 'settings:getDefaultThinkingLevel',
+    SET_DEFAULT_THINKING_LEVEL: 'settings:setDefaultThinkingLevel',
   },
   pi: {
     GET_API_KEY_PROVIDERS: 'pi:getApiKeyProviders',

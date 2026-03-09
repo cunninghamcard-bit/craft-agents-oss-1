@@ -17,6 +17,7 @@ import { entityListComponents } from './entity-lists'
 import { browserUiComponents } from './browser-ui'
 import { plannerComponents } from './planner'
 import { customShadowsComponents } from './custom-shadows'
+import { transportBannerComponents } from './transport-banner'
 import { containerTransitionsComponents } from './container-transitions'
 
 export * from './types'
@@ -41,6 +42,7 @@ export const componentRegistry: ComponentEntry[] = [
   ...browserUiComponents,
   ...plannerComponents,
   ...customShadowsComponents,
+  ...transportBannerComponents,
   ...containerTransitionsComponents,
 ]
 

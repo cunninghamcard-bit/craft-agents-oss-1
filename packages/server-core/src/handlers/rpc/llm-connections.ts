@@ -1,6 +1,5 @@
 import { RPC_CHANNELS, type LlmConnectionSetup } from '@craft-agent/shared/protocol'
-import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, getDefaultThinkingLevel, setDefaultThinkingLevel, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus } from '@craft-agent/shared/config'
-import { isValidThinkingLevel } from '@craft-agent/shared/agent'
+import { getLlmConnections, getLlmConnection, addLlmConnection, updateLlmConnection, deleteLlmConnection, getDefaultLlmConnection, setDefaultLlmConnection, touchLlmConnection, isCompatProvider, isAnthropicProvider, getDefaultModelsForConnection, getDefaultModelForConnection, type LlmConnection, type LlmConnectionWithStatus } from '@craft-agent/shared/config'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import {
   resolveSetupTestConnectionHint,
@@ -27,8 +26,6 @@ export const HANDLED_CHANNELS = [
   RPC_CHANNELS.llmConnections.DELETE,
   RPC_CHANNELS.llmConnections.TEST,
   RPC_CHANNELS.llmConnections.SET_DEFAULT,
-  RPC_CHANNELS.llmConnections.GET_DEFAULT_THINKING,
-  RPC_CHANNELS.llmConnections.SET_DEFAULT_THINKING,
   RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT,
   RPC_CHANNELS.llmConnections.REFRESH_MODELS,
   RPC_CHANNELS.chatgpt.START_OAUTH,
@@ -445,29 +442,6 @@ export function registerLlmConnectionsHandlers(server: RpcServer, deps: HandlerD
       return { success, error: success ? undefined : 'Connection not found' }
     } catch (error) {
       deps.platform.logger?.error('Failed to set default LLM connection:', error)
-      return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
-    }
-  })
-
-  // Get app-level default thinking level
-  server.handle(RPC_CHANNELS.llmConnections.GET_DEFAULT_THINKING, async (): Promise<'off' | 'think' | 'max'> => {
-    return getDefaultThinkingLevel()
-  })
-
-  // Set app-level default thinking level
-  server.handle(RPC_CHANNELS.llmConnections.SET_DEFAULT_THINKING, async (_ctx, level: string): Promise<{ success: boolean; error?: string }> => {
-    try {
-      if (!isValidThinkingLevel(level)) {
-        return { success: false, error: "Invalid thinking level. Valid values: 'off', 'think', 'max'" }
-      }
-
-      const success = setDefaultThinkingLevel(level)
-      if (success) {
-        deps.platform.logger?.info(`App-level default thinking level set to: ${level}`)
-      }
-      return { success, error: success ? undefined : 'Failed to persist default thinking level' }
-    } catch (error) {
-      deps.platform.logger?.error('Failed to set app-level default thinking level:', error)
       return { success: false, error: error instanceof Error ? error.message : 'Unknown error' }
     }
   })

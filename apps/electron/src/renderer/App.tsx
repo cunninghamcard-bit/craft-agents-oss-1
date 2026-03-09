@@ -1597,7 +1597,7 @@ export default function App() {
           )}
 
           {/* Main UI - always rendered, splash fades away to reveal it */}
-          <div className="h-full flex flex-col text-foreground">
+          <div className="h-full flex flex-col pt-[48px] text-foreground">
             {showTransportConnectionBanner && transportConnectionState && (
               <TransportConnectionBanner
                 state={transportConnectionState}

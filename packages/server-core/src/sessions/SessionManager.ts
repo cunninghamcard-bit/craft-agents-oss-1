@@ -4087,6 +4087,24 @@ export class SessionManager implements ISessionManager {
       await new Promise(resolve => setTimeout(resolve, 100))
     }
 
+    // Revoke share if session was shared (prevent orphaned viewer copies)
+    if (managed.sharedId) {
+      try {
+        const { VIEWER_URL } = await import('@craft-agent/shared/branding')
+        const response = await fetch(
+          `${VIEWER_URL}/s/api/${managed.sharedId}`,
+          { method: 'DELETE', signal: AbortSignal.timeout(5000) }
+        )
+        if (!response.ok) {
+          sessionLog.warn(`Failed to revoke share for ${sessionId}: HTTP ${response.status}`)
+        } else {
+          sessionLog.info(`Revoked share for deleted session ${sessionId}`)
+        }
+      } catch (error) {
+        sessionLog.warn(`Failed to revoke share for ${sessionId}:`, error)
+      }
+    }
+
     // Clean up delta flush timers to prevent orphaned timers
     const timer = this.deltaFlushTimers.get(sessionId)
     if (timer) {
