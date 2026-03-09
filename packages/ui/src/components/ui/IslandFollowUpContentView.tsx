@@ -243,6 +243,7 @@ export function IslandFollowUpContentView({
                     align="end"
                     sideOffset={6}
                     minWidth=""
+                    style={{ zIndex: 'var(--z-island-popover, 410)' }}
                     onInteractOutside={handleSubmitMenuInteractOutside}
                     data-ca-annotation-island="true"
                   >

@@ -2275,8 +2275,16 @@ export class ClaudeAgent extends BaseAgent {
    * backend session context is only attempted later on first user message.
    */
   override async ensureBranchReady(): Promise<void> {
-    // Nothing to preflight for non-branched sessions or already-initialized sessions.
-    if (this.sessionId || !this.branchFromSdkSessionId) return;
+    const isBranchedSession = !!this.config.session?.branchFromMessageId;
+
+    // Already initialized sessions are ready.
+    if (this.sessionId) return;
+    // Nothing to preflight for non-branched sessions.
+    if (!isBranchedSession) return;
+    // Branched Claude sessions must carry parent SDK session metadata for strict forking.
+    if (!this.branchFromSdkSessionId) {
+      throw new Error('Claude branch preflight failed: missing parent SDK session ID');
+    }
 
     const options: Options = {
       ...getDefaultOptions(this.config.envOverrides),
@@ -2297,7 +2305,8 @@ export class ClaudeAgent extends BaseAgent {
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
 
     try {
-      preflightQuery = query({ prompt: ' ', options });
+      // Anthropic rejects whitespace-only text blocks. Use a minimal non-whitespace prompt.
+      preflightQuery = query({ prompt: '.', options });
 
       capturedSessionId = await Promise.race([
         (async () => {

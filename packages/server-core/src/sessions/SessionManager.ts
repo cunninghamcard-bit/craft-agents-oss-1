@@ -2015,10 +2015,9 @@ export class SessionManager implements ISessionManager {
         throw new Error(`Invalid branch request: message ${options.branchFromMessageId} not found in source session`)
       }
 
-      const experimentalStrictFork = process.env.CRAFT_EXPERIMENTAL_STRICT_BRANCH_FORK === '1'
-      const branchContextStrategy: 'sdk-fork' | 'seeded-fresh-session' = experimentalStrictFork
-        ? 'sdk-fork'
-        : 'seeded-fresh-session'
+      // New branches always use strict provider-level SDK fork semantics.
+      // Seeded mode remains only for legacy sessions created before strict fork was enforced.
+      const branchContextStrategy: 'sdk-fork' | 'seeded-fresh-session' = 'sdk-fork'
 
       const branchFromSdkSessionId = branchContextStrategy === 'sdk-fork'
         ? (sourceManaged?.sdkSessionId || sourceSession.sdkSessionId)
@@ -2026,6 +2025,16 @@ export class SessionManager implements ISessionManager {
       const branchFromSessionPath = branchContextStrategy === 'sdk-fork'
         ? getSessionStoragePath(workspaceRootPath, options.branchFromSessionId)
         : undefined
+
+      if (branchContextStrategy === 'sdk-fork' && !branchFromSdkSessionId) {
+        sessionLog.warn('Branch validation failed: sdk-fork requires parent SDK session ID', {
+          workspaceId,
+          branchFromSessionId: options.branchFromSessionId,
+          sourceProvider: sourceBackendContext.provider,
+          targetProvider: targetBackendContext.provider,
+        })
+        throw new Error('Cannot create branch yet: parent session SDK context is not initialized. Send one message in the parent session and try again.')
+      }
 
       validatedBranch = {
         sourceSessionId: options.branchFromSessionId,

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
+import { beforeEach, describe, expect, it, mock } from 'bun:test'
 
 const workspaceRootPath = '/tmp/ws-rollback'
 const workspace = {
@@ -10,6 +10,7 @@ const workspace = {
 let idCounter = 0
 const storedById = new Map<string, any>()
 const deletedIds: string[] = []
+let mockedProvider: 'anthropic' | 'pi' = 'anthropic'
 
 // Partial-mock baseline: import real modules via file paths (avoids recursive mock imports)
 const actualSharedAgentModule = await import('../../../../../packages/shared/src/agent/index.ts')
@@ -69,6 +70,7 @@ mock.module('@craft-agent/shared/config', () => ({
   resolveAuthEnvVars: () => ({}),
   getToolIconsDir: () => '/tmp/tool-icons',
   getMiniModel: () => 'claude-haiku-4-5-20251001',
+  getDefaultThinkingLevel: () => 'medium',
   ConfigWatcher: class ConfigWatcher {
     constructor(..._args: unknown[]) {}
     start() {}
@@ -140,9 +142,9 @@ mock.module('@craft-agent/shared/agent/backend', () => ({
     throw new Error('not used in this test')
   },
   resolveBackendContext: () => ({
-    provider: 'anthropic',
-    resolvedModel: 'claude-sonnet-4-20250514',
-    connection: { providerType: 'anthropic' },
+    provider: mockedProvider,
+    resolvedModel: mockedProvider === 'anthropic' ? 'claude-sonnet-4-20250514' : 'pi/gpt-5',
+    connection: { providerType: mockedProvider === 'anthropic' ? 'anthropic' : 'pi' },
   }),
   createBackendFromResolvedContext: () => {
     throw new Error('not used in this test')
@@ -260,7 +262,7 @@ const { SessionManager } = await import('@craft-agent/server-core/sessions')
 
 describe('session branch rollback on preflight failure', () => {
   beforeEach(() => {
-    process.env.CRAFT_EXPERIMENTAL_STRICT_BRANCH_FORK = '1'
+    mockedProvider = 'anthropic'
     idCounter = 0
     storedById.clear()
     deletedIds.length = 0
@@ -278,10 +280,6 @@ describe('session branch rollback on preflight failure', () => {
       createdAt: Date.now() - 20,
       lastUsedAt: Date.now() - 5,
     })
-  })
-
-  afterEach(() => {
-    delete process.env.CRAFT_EXPERIMENTAL_STRICT_BRANCH_FORK
   })
 
   it('deletes newly created child session when ensureBranchReady throws', async () => {
@@ -319,26 +317,53 @@ describe('session branch rollback on preflight failure', () => {
     expect(poolStopCalled).toBe(true)
   })
 
-  it('skips backend preflight in seeded branch mode', async () => {
-    delete process.env.CRAFT_EXPERIMENTAL_STRICT_BRANCH_FORK
+  it('fails branch creation when parent claude sdk session id is missing', async () => {
+    const source = storedById.get('source-1')
+    source.sdkSessionId = undefined
+    storedById.set('source-1', source)
+
+    const manager = new SessionManager()
+
+    await expect(
+      manager.createSession('ws-1', {
+        branchFromSessionId: 'source-1',
+        branchFromMessageId: 'm1',
+      } as any)
+    ).rejects.toThrow('parent session SDK context is not initialized')
+
+    expect(deletedIds).toEqual([])
+    expect(storedById.has('child-1')).toBe(false)
+  })
+
+  it('runs backend preflight for pi branches and rolls back on failure', async () => {
+    mockedProvider = 'pi'
 
     const manager = new SessionManager()
     let getOrCreateAgentCalled = false
 
     ;(manager as any).ensureMessagesLoaded = async (_managed: any) => {}
-    ;(manager as any).getOrCreateAgent = async () => {
+    ;(manager as any).getOrCreateAgent = async (managed: any) => {
       getOrCreateAgentCalled = true
-      throw new Error('should not be called in seeded mode')
+      managed.poolServer = { stop: () => {} }
+      managed.agent = {
+        supportsBranching: true,
+        ensureBranchReady: async () => {
+          throw new Error('pi preflight boom')
+        },
+        destroy: () => {},
+      }
+      return managed.agent
     }
 
-    const child = await manager.createSession('ws-1', {
-      branchFromSessionId: 'source-1',
-      branchFromMessageId: 'm1',
-    } as any)
+    await expect(
+      manager.createSession('ws-1', {
+        branchFromSessionId: 'source-1',
+        branchFromMessageId: 'm1',
+      } as any)
+    ).rejects.toThrow('Could not create branch: pi preflight boom')
 
-    expect(child.id).toBe('child-1')
-    expect(getOrCreateAgentCalled).toBe(false)
-    expect(deletedIds).toEqual([])
-    expect(storedById.has('child-1')).toBe(true)
+    expect(getOrCreateAgentCalled).toBe(true)
+    expect(deletedIds).toEqual(['child-1'])
+    expect(storedById.has('child-1')).toBe(false)
   })
 })
