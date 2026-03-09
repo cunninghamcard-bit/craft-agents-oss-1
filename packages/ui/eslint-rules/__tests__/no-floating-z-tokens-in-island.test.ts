@@ -49,6 +49,15 @@ describe('no-floating-z-tokens-in-island (ui)', () => {
     expect(messages.length).toBe(0)
   })
 
+  it('flags floating menu token in IslandFollowUpContentView', () => {
+    const messages = runRule(
+      "const zIndex = 'var(--z-floating-menu, 400)'",
+      '/repo/packages/ui/src/components/ui/IslandFollowUpContentView.tsx',
+    )
+
+    expect(messages.length).toBe(1)
+  })
+
   it('does not apply to non-island files', () => {
     const messages = runRule(
       "const zIndex = 'var(--z-floating-menu, 400)'",

@@ -91,6 +91,7 @@
   --z-floating-menu: 400;
   --z-island-overlay: 390;
   --z-island: 400;
+  --z-island-popover: 410;
   --z-splash: 600;
 
   /* === MIX VARIANTS (solid interpolation toward background) === */

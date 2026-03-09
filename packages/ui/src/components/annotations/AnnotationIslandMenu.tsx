@@ -58,11 +58,19 @@ export function AnnotationIslandMenu({
   transitionConfig,
   onExitComplete,
   zIndex = 'var(--z-island, 400)',
-  overlayZIndex = 'var(--z-island-overlay, 390)',
+  overlayZIndex,
   usePortal = true,
 }: AnnotationIslandMenuProps) {
   const menuRef = React.useRef<HTMLDivElement>(null)
   const [activeViewSize, setActiveViewSize] = React.useState<{ width: number; height: number } | null>(null)
+
+  // Keep blocker behind the island menu when consumers pass a custom numeric zIndex
+  // (for example TurnCard uses zIndex=50). Otherwise fall back to the semantic island token.
+  const resolvedOverlayZIndex = React.useMemo<React.CSSProperties['zIndex']>(() => {
+    if (overlayZIndex != null) return overlayZIndex
+    if (typeof zIndex === 'number') return zIndex - 1
+    return 'var(--z-island-overlay, 390)'
+  }, [overlayZIndex, zIndex])
 
   const anchorX = React.useMemo(() => {
     if (typeof window === 'undefined') return 0
@@ -100,7 +108,7 @@ export function AnnotationIslandMenu({
         dialogBehavior="back-or-close"
         onRequestBack={onRequestBack}
         onRequestClose={onCancel}
-        overlayZIndex={overlayZIndex}
+        overlayZIndex={resolvedOverlayZIndex}
       >
         <IslandContentView id="compact" anchorX="center" anchorY="bottom">
           <div className="p-1 flex items-center gap-1">

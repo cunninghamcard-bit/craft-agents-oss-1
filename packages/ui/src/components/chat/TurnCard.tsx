@@ -2347,7 +2347,6 @@ export function ResponseCard({
       sendMessageKey={sendMessageKey}
       transitionConfig={selectionMenuTransitionConfig}
       onExitComplete={handleSelectionMenuExitComplete}
-      zIndex={50}
       usePortal={shouldRenderAnnotationIslandInPortal('turncard')}
     />
   ) : null

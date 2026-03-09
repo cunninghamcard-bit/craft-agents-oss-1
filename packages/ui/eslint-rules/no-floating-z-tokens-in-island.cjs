@@ -29,7 +29,7 @@ module.exports = {
 
   create(context) {
     const filename = String(context.getFilename?.() ?? '').replace(/\\/g, '/').toLowerCase()
-    const isIslandContext = /\/components\/(annotations\/annotationislandmenu|overlay\/annotatablemarkdowndocument|ui\/island)\.tsx$/.test(filename)
+    const isIslandContext = /\/components\/(annotations\/annotationislandmenu|overlay\/annotatablemarkdowndocument|ui\/island|ui\/islandfollowupcontentview)\.tsx$/.test(filename)
 
     if (!isIslandContext) {
       return {}
