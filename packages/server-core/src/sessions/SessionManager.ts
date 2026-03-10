@@ -3736,7 +3736,7 @@ export class SessionManager implements ISessionManager {
 
     // Load user preferences for language-aware title generation
     const preferences = loadPreferences()
-    const titleOptions = { currentTitle: managed.name, language: preferences.language }
+    const titleOptions = { language: preferences.language }
 
     // Use existing agent or create temporary one
     let agent: AgentInstance | null = managed.agent

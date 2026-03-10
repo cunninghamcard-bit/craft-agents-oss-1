@@ -1177,7 +1177,7 @@ ${formattedMessages}
    * @param options.language - Preferred language for the title
    * @returns Generated title (2-5 words), or null if generation fails
    */
-  async regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { currentTitle?: string; language?: string }): Promise<string | null> {
+  async regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { language?: string }): Promise<string | null> {
     try {
       const prompt = buildRegenerateTitlePrompt(recentUserMessages, lastAssistantResponse, options);
       const result = await this.runMiniCompletion(prompt);
