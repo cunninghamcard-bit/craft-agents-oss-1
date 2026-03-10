@@ -128,8 +128,7 @@ const PI_AUTH_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   cerebras: 'Cerebras',
   zai: 'z.ai',
   huggingface: 'Hugging Face',
-  'minimax-global': 'Minimax Global',
-  'minimax-cn': 'Minimax CN',
+  minimax: 'Minimax',
   'kimi-coding': 'Kimi (Coding)',
   'vercel-ai-gateway': 'Vercel AI Gateway',
 }

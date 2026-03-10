@@ -115,7 +115,7 @@ export function getAllPiModels(): ModelDefinition[] {
 /**
  * Display metadata for Pi SDK providers.
  */
-const PI_PROVIDER_DISPLAY: Partial<Record<KnownProvider | string, { label: string; placeholder: string }>> = {
+const PI_PROVIDER_DISPLAY: Partial<Record<KnownProvider, { label: string; placeholder: string }>> = {
   'anthropic':              { label: 'Anthropic',          placeholder: 'sk-ant-...' },
   'google':                 { label: 'Google AI Studio',   placeholder: 'AIza...' },
   'openai':                 { label: 'OpenAI',             placeholder: 'sk-...' },
@@ -128,8 +128,7 @@ const PI_PROVIDER_DISPLAY: Partial<Record<KnownProvider | string, { label: strin
   'azure-openai-responses': { label: 'Azure OpenAI',       placeholder: 'Paste your key here...' },
   'vercel-ai-gateway':      { label: 'Vercel AI Gateway',  placeholder: 'Paste your key here...' },
   'huggingface':            { label: 'Hugging Face',       placeholder: 'hf_...' },
-  'minimax-global':         { label: 'Minimax Global',     placeholder: 'Paste your key here...' },
-  'minimax-cn':             { label: 'Minimax CN',         placeholder: 'Paste your key here...' },
+  'minimax':                { label: 'Minimax',            placeholder: 'Paste your key here...' },
   'kimi-coding':            { label: 'Kimi (Coding)',      placeholder: 'sk-kimi-...' },
   'zai':                    { label: 'z.ai (GLM)',         placeholder: 'Paste your key here...' },
 };
