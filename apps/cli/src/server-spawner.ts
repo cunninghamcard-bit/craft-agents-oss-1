@@ -72,7 +72,7 @@ export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedSer
   // Pipe server stderr to our stderr so --debug logs are visible (unless quiet)
   if (proc.stderr && !opts?.quiet) {
     ;(async () => {
-      const reader = proc.stderr!.getReader()
+      const reader = (proc.stderr as ReadableStream<Uint8Array>).getReader()
       try {
         while (true) {
           const { done, value } = await reader.read()
@@ -122,7 +122,7 @@ export async function spawnServer(opts?: SpawnServerOptions): Promise<SpawnedSer
     }
 
     ;(async () => {
-      const reader = proc.stdout!.getReader()
+      const reader = (proc.stdout as ReadableStream<Uint8Array>).getReader()
       const decoder = new TextDecoder()
       try {
         while (true) {

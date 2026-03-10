@@ -759,6 +759,9 @@ export interface ValidateContext {
   createdSessionId?: string
   createdSourceSlug?: string
   createdSkillSlug?: string
+  createdAutomation?: boolean
+  automationTestSessionId?: string
+  createdLabelId?: string
   onEvent?: (ev: { type: string; [key: string]: unknown }) => void
 }
 
@@ -1034,6 +1037,156 @@ SKILLEOF`, 90_000, true, undefined, ctx.onEvent)
         return `deleted skill: ${ctx.createdSkillSlug}`
       },
     },
+    // ----- Automation lifecycle -----
+    {
+      name: 'automation:create',
+      fn: async (client, ctx) => {
+        if (!ctx.createdSessionId || !ctx.workspaceRootPath) return 'skipped (no session or workspace)'
+        const configPath = `${ctx.workspaceRootPath}/automations.json`
+        const config = JSON.stringify({
+          version: 2,
+          automations: {
+            SessionStatusChange: [{
+              name: 'CLI Validate Automation',
+              matcher: 'in-progress',
+              labels: ['__cli-validate-label'],
+              actions: [{ type: 'prompt', prompt: 'Reply with exactly: AUTOMATION_TRIGGERED' }],
+            }],
+          },
+        }, null, 2)
+        return await waitForSendEvents(client, ctx.createdSessionId,
+          `Use the Bash tool to run this exact command:
+cat > "${configPath}" << 'AUTOMATIONEOF'
+${config}
+AUTOMATIONEOF`, 90_000, true, undefined, ctx.onEvent)
+          .then((r) => { ctx.createdAutomation = true; return r })
+      },
+    },
+    {
+      name: 'automation:trigger (status change)',
+      fn: async (client, ctx) => {
+        if (!ctx.createdSessionId || !ctx.workspaceId) return 'skipped (no session or workspace)'
+        // Get available statuses to find one containing "in-progress"
+        const statuses = (await client.invoke('statuses:list', ctx.workspaceId)) as any[]
+        const inProgress = statuses?.find((s: any) =>
+          (s.id ?? s.name ?? '').toLowerCase().includes('in-progress') ||
+          (s.name ?? '').toLowerCase().includes('in progress')
+        )
+        if (!inProgress) {
+          // Fall back to using 'in-progress' directly as the state value
+        }
+        const statusValue = inProgress?.id ?? inProgress?.name ?? 'in-progress'
+
+        // Change session status to trigger the automation
+        await client.invoke('sessions:command', ctx.createdSessionId, {
+          type: 'setSessionStatus',
+          state: statusValue,
+        })
+
+        // Poll for the automation-created session (automation fires asynchronously)
+        const deadline = Date.now() + 60_000
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000))
+          const sessions = (await client.invoke('sessions:get', ctx.workspaceId)) as any[]
+          const automationSession = sessions?.find((s: any) =>
+            s.name === 'CLI Validate Automation' && s.id !== ctx.createdSessionId
+          )
+          if (automationSession) {
+            ctx.automationTestSessionId = automationSession.id
+            return `triggered → session ${automationSession.id} (status=${statusValue})`
+          }
+        }
+        throw new Error('Automation-created session not found within 60s')
+      },
+    },
+    {
+      name: 'automation:verify session',
+      fn: async (client, ctx) => {
+        if (!ctx.automationTestSessionId) return 'skipped (no automation session)'
+        // Wait for the automation session to complete
+        const deadline = Date.now() + 90_000
+        while (Date.now() < deadline) {
+          const session = (await client.invoke('sessions:getMessages', ctx.automationTestSessionId)) as any
+          const messages = session?.messages ?? session?.conversation ?? []
+          const hasAssistant = messages.some?.((m: any) => m.role === 'assistant')
+          if (hasAssistant) {
+            const lastAssistant = [...messages].reverse().find((m: any) => m.role === 'assistant')
+            const text = typeof lastAssistant?.content === 'string'
+              ? lastAssistant.content
+              : Array.isArray(lastAssistant?.content)
+                ? lastAssistant.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join(' ')
+                : ''
+            return `session has assistant response (${text.slice(0, 80).trim()})`
+          }
+          await new Promise((r) => setTimeout(r, 2000))
+        }
+        throw new Error('Automation session did not complete within 90s')
+      },
+    },
+    {
+      name: 'automation:verify labels',
+      fn: async (client, ctx) => {
+        if (!ctx.automationTestSessionId || !ctx.workspaceId) return 'skipped (no automation session)'
+        // Verify label was auto-created
+        const labels = (await client.invoke('labels:list', ctx.workspaceId)) as any[]
+        const found = labels?.find((l: any) => (l.id ?? l.name ?? '') === '__cli-validate-label')
+        if (!found) throw new Error('Label __cli-validate-label was not auto-created')
+        ctx.createdLabelId = found.id ?? '__cli-validate-label'
+
+        // Verify the automation session has the label
+        const sessions = (await client.invoke('sessions:get', ctx.workspaceId)) as any[]
+        const automationSession = sessions?.find((s: any) => s.id === ctx.automationTestSessionId)
+        const sessionLabels: string[] = automationSession?.labels ?? []
+        const hasLabel = sessionLabels.some((l: string) => l.includes('__cli-validate-label'))
+        if (!hasLabel) throw new Error(`Automation session missing label (has: ${sessionLabels.join(', ')})`)
+        return `label created and assigned: ${ctx.createdLabelId}`
+      },
+    },
+    {
+      name: 'automations:getLastExecuted',
+      fn: async (client, ctx) => {
+        if (!ctx.workspaceId) return 'skipped (no workspace)'
+        const history = (await client.invoke('automations:getLastExecuted', ctx.workspaceId)) as Record<string, number>
+        const entries = Object.keys(history)
+        if (entries.length === 0) throw new Error('No automation execution history found')
+        return `${entries.length} automation(s) with history`
+      },
+    },
+    {
+      name: 'automation:cleanup',
+      fn: async (client, ctx) => {
+        const cleaned: string[] = []
+        // Delete automation config
+        if (ctx.workspaceRootPath && ctx.createdAutomation) {
+          const configPath = `${ctx.workspaceRootPath}/automations.json`
+          const historyPath = `${ctx.workspaceRootPath}/automations-history.jsonl`
+          try {
+            const { unlink } = await import('fs/promises')
+            await unlink(configPath).catch(() => {})
+            await unlink(historyPath).catch(() => {})
+            ctx.createdAutomation = false
+            cleaned.push('automations.json')
+          } catch { /* best effort */ }
+        }
+        // Delete automation-triggered session
+        if (ctx.automationTestSessionId) {
+          try {
+            await client.invoke('sessions:delete', ctx.automationTestSessionId)
+            cleaned.push(`session ${ctx.automationTestSessionId}`)
+            ctx.automationTestSessionId = undefined
+          } catch { /* best effort */ }
+        }
+        // Delete test label
+        if (ctx.workspaceId && ctx.createdLabelId) {
+          try {
+            await client.invoke('labels:delete', ctx.workspaceId, ctx.createdLabelId)
+            cleaned.push(`label ${ctx.createdLabelId}`)
+            ctx.createdLabelId = undefined
+          } catch { /* best effort */ }
+        }
+        return cleaned.length > 0 ? `cleaned: ${cleaned.join(', ')}` : 'nothing to clean'
+      },
+    },
     {
       name: 'sources:delete',
       fn: async (client, ctx) => {
@@ -1181,6 +1334,31 @@ export async function runValidation(client: CliRpcClient, jsonMode: boolean, noS
   if (ctx.createdSessionId && client.isConnected) {
     try {
       await client.invoke('sessions:delete', ctx.createdSessionId)
+    } catch {
+      // best effort
+    }
+  }
+
+  // Cleanup: automation artifacts
+  if (ctx.automationTestSessionId && client.isConnected) {
+    try {
+      await client.invoke('sessions:delete', ctx.automationTestSessionId)
+    } catch {
+      // best effort
+    }
+  }
+  if (ctx.createdAutomation && ctx.workspaceRootPath) {
+    try {
+      const { unlink } = await import('fs/promises')
+      await unlink(`${ctx.workspaceRootPath}/automations.json`).catch(() => {})
+      await unlink(`${ctx.workspaceRootPath}/automations-history.jsonl`).catch(() => {})
+    } catch {
+      // best effort
+    }
+  }
+  if (ctx.createdLabelId && ctx.workspaceId && client.isConnected) {
+    try {
+      await client.invoke('labels:delete', ctx.workspaceId, ctx.createdLabelId)
     } catch {
       // best effort
     }
