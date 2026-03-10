@@ -663,6 +663,15 @@ const BUILT_IN_MCP_SERVERS = new Set(['session', 'craft-agents-docs']);
 /** File write tools that require permission in ask mode */
 const FILE_WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
+/** Auth trigger tools that should be blocked when the source is already connected */
+const AUTH_TRIGGER_TOOLS = new Set([
+  'mcp__session__source_oauth_trigger',
+  'mcp__session__source_google_oauth_trigger',
+  'mcp__session__source_slack_oauth_trigger',
+  'mcp__session__source_microsoft_oauth_trigger',
+  'mcp__session__source_credential_prompt',
+]);
+
 /**
  * Centralized PreToolUse pipeline.
  *
@@ -763,6 +772,24 @@ export function runPreToolUseChecks(ctx: PreToolUseInput): PreToolUseCheckResult
           sourceExists,
         };
       }
+    }
+  }
+
+  // ============================================================
+  // 2b. OAUTH TRIGGER GUARD (block re-auth for connected sources)
+  // ============================================================
+  // When an OAuth token is refreshed mid-sendMessage, the agent may still see a stale
+  // "needs_auth" signal in its context and try to trigger re-authentication. By the time
+  // the tool call reaches this hook, activeSourceSlugs reflects the post-refresh state.
+  // If the source is already connected with working tools, block the OAuth trigger.
+  if (AUTH_TRIGGER_TOOLS.has(toolName)) {
+    const sourceSlug = input.sourceSlug as string | undefined;
+    if (sourceSlug && activeSourceSlugs.includes(sourceSlug)) {
+      onDebug?.(`[OAuth guard] Blocking ${toolName} for "${sourceSlug}" — source is already connected`);
+      return {
+        type: 'block',
+        reason: `Source "${sourceSlug}" is already connected and authenticated with working tools. No re-authentication needed. Proceed with using the source's tools directly.`,
+      };
     }
   }
 

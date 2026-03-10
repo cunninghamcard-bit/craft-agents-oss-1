@@ -56,6 +56,22 @@ export async function handleSourceOAuthTrigger(
     );
   }
 
+  // Check if already authenticated (with valid token)
+  if (source.isAuthenticated && ctx.credentialManager) {
+    const workspaceId = basename(ctx.workspacePath) || '';
+    const loadedSource = {
+      config: source,
+      guide: null,
+      folderPath: '',
+      workspaceRootPath: ctx.workspacePath,
+      workspaceId,
+    };
+    const hasValidToken = await ctx.credentialManager.getToken(loadedSource);
+    if (hasValidToken) {
+      return successResponse(`Source '${sourceSlug}' is already authenticated.`);
+    }
+  }
+
   // Build auth request
   const authRequest: McpOAuthAuthRequest = {
     type: 'oauth',
