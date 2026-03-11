@@ -50,6 +50,7 @@ import {
   getSessionAttachmentsPath,
   getSessionPath as getSessionStoragePath,
   sessionPersistenceQueue,
+  getHeaderMetadataSignature,
   type StoredSession,
   type StoredMessage,
   type SessionMetadata,
@@ -1279,6 +1280,17 @@ export class SessionManager implements ISessionManager {
       onSessionMetadataChange: (sessionId, header) => {
         const managed = this.sessions.get(sessionId)
         if (!managed) return
+
+        // Suppress self-triggered events: if the header signature matches what
+        // the persistence queue last wrote, this is our own write echoing back
+        // via fs.watch() — not an external change. Skip to avoid feedback loops.
+        // This is especially important on Windows where fs.watch() fires aggressively
+        // (unlink + rename generates 2+ events per atomic write).
+        const incomingSignature = getHeaderMetadataSignature(header)
+        const lastWrittenSignature = sessionPersistenceQueue.getLastWrittenSignature(sessionId)
+        if (lastWrittenSignature && incomingSignature === lastWrittenSignature) {
+          return
+        }
 
         if (managed.isProcessing) {
           managed.pendingExternalMetadata = header
