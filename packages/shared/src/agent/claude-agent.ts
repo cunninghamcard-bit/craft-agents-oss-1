@@ -2355,94 +2355,22 @@ export class ClaudeAgent extends BaseAgent {
   // ============================================================
 
   /**
-   * Ensure branched sessions establish SDK fork context at creation time.
-   * This prevents "fake branches" where transcript history is copied but
-   * backend session context is only attempted later on first user message.
+   * Branch preflight is intentionally a no-op for Claude sessions.
+   *
+   * The SDK's fork mechanism (resume + forkSession) runs naturally on the
+   * first user message in chat(). Attempting to pre-fork with a separate
+   * SDK subprocess is unreliable — the forked session gets garbage-collected
+   * by Anthropic before the user sends their first message, or the subprocess
+   * crashes during initialization.
+   *
+   * Defense-in-depth recovery in chat() handles fork failures:
+   * - wasResuming covers branchFromSdkSessionId
+   * - Session-expired detection checks errorMsg, rawErrorMsg, and stderr
+   * - branchFromSdkSessionId is cleared on recovery to prevent retry loops
    */
   override async ensureBranchReady(): Promise<void> {
-    const isBranchedSession = !!this.config.session?.branchFromMessageId;
-
-    // Already initialized sessions are ready.
-    if (this.sessionId) return;
-    // Nothing to preflight for non-branched sessions.
-    if (!isBranchedSession) return;
-    // Branched Claude sessions must carry parent SDK session metadata for strict forking.
-    if (!this.branchFromSdkSessionId) {
-      throw new Error('Claude branch preflight failed: missing parent SDK session ID');
-    }
-
-    const forkOptions: Options = {
-      ...getDefaultOptions(this.config.envOverrides),
-      model: this.getModel(),
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      // No tools — we only need a simple text response to create real API
-      // activity. Including claude_code tools can cause the subprocess to
-      // crash if the model attempts tool use during the preflight turn.
-      tools: [],
-      // Single query: fork parent and force one real model turn.
-      // The model response creates genuine API activity that prevents
-      // Anthropic from garbage-collecting the forked session.
-      maxTurns: 1,
-      resume: this.branchFromSdkSessionId,
-      forkSession: true,
-    };
-
-    const BRANCH_PREFLIGHT_TIMEOUT = 60_000;
-    let capturedSessionId: string | null = null;
-    let preflightQuery: Query | null = null;
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-
-    try {
-      // Use a real prompt (not an SDK command like /compact) to ensure
-      // the API processes an actual model turn. SDK commands may be
-      // intercepted without creating API-level activity.
-      preflightQuery = query({ prompt: 'Reply with OK', options: forkOptions });
-
-      capturedSessionId = await Promise.race([
-        (async () => {
-          let sid: string | null = null;
-          for await (const msg of preflightQuery!) {
-            // Capture session_id but keep draining — the model must complete
-            // its turn so the API records real activity and won't GC the session.
-            if (!sid && 'session_id' in msg && msg.session_id) {
-              sid = msg.session_id;
-            }
-          }
-          return sid;
-        })(),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () => reject(new Error('Branch preflight timed out after 60s')),
-            BRANCH_PREFLIGHT_TIMEOUT
-          );
-        }),
-      ]);
-
-      if (!capturedSessionId) {
-        throw new Error('No forked session ID received from SDK');
-      }
-    } catch (error) {
-      // On error/timeout: interrupt the query to kill the SDK subprocess.
-      if (preflightQuery) {
-        try {
-          await Promise.race([
-            preflightQuery.interrupt(),
-            new Promise<void>(r => setTimeout(r, 2000)),
-          ]);
-        } catch {
-          // Best-effort cleanup
-        }
-      }
-      throw new Error(
-        `Failed to establish branch context: ${error instanceof Error ? error.message : String(error)}`
-      );
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-    }
-
-    this.sessionId = capturedSessionId;
-    this.config.onSdkSessionIdUpdate?.(capturedSessionId);
+    // No preflight needed — fork happens on first chat() call via
+    // resume: branchFromSdkSessionId + forkSession: true
   }
 
   // ============================================================
