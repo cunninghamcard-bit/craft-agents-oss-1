@@ -397,6 +397,7 @@ export class ClaudeAgent extends BaseAgent {
   private sessionId: string | null = null;
   private branchFromSdkSessionId: string | null = null;
   private branchFromSdkCwd: string | null = null;
+  private branchFromSdkTurnId: string | null = null;
   private isHeadless: boolean = false;
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   // Permission whitelists are now managed by this.permissionManager (inherited from BaseAgent)
@@ -526,6 +527,7 @@ export class ClaudeAgent extends BaseAgent {
     if (config.session?.branchFromSdkSessionId) {
       this.branchFromSdkSessionId = config.session.branchFromSdkSessionId;
       this.branchFromSdkCwd = config.session.branchFromSdkCwd ?? null;
+      this.branchFromSdkTurnId = config.session.branchFromSdkTurnId ?? null;
     }
 
     // Initialize permission mode state with callbacks
@@ -1178,7 +1180,13 @@ export class ClaudeAgent extends BaseAgent {
         ...(!_isRetry && this.sessionId
           ? { resume: this.sessionId }
           : !_isRetry && this.branchFromSdkSessionId
-            ? { resume: this.branchFromSdkSessionId, forkSession: true }
+            ? {
+                resume: this.branchFromSdkSessionId,
+                forkSession: true,
+                // Trim the forked conversation at the branch point so the model
+                // only sees messages up to where the user branched, not the full parent.
+                ...(this.branchFromSdkTurnId ? { resumeSessionAt: this.branchFromSdkTurnId } : {}),
+              }
             : {}),
         mcpServers,
         // NOTE: This callback is NOT called by the SDK because we set `permissionMode: 'bypassPermissions'` above.
@@ -1202,7 +1210,7 @@ export class ClaudeAgent extends BaseAgent {
       if (wasResuming) {
         debug(`[ClaudeAgent] Attempting to resume SDK session: ${this.sessionId}`);
         if (this.branchFromSdkSessionId) {
-          debug(`[ClaudeAgent] Branch fork: parentSdkSessionId=${this.branchFromSdkSessionId}, branchFromSdkCwd=${this.branchFromSdkCwd}, childSdkCwd=${this.config.session?.sdkCwd}`);
+          debug(`[ClaudeAgent] Branch fork: parentSdkSessionId=${this.branchFromSdkSessionId}, branchFromSdkCwd=${this.branchFromSdkCwd}, resumeSessionAt=${this.branchFromSdkTurnId}, childSdkCwd=${this.config.session?.sdkCwd}`);
         }
       } else {
         debug(`[ClaudeAgent] Starting fresh SDK session (no resume)`);
@@ -1421,6 +1429,7 @@ This is a branched conversation. All prior messages in this conversation are par
           this.sessionId = null;
           this.branchFromSdkSessionId = null; // prevent retry from re-attempting fork with dead parent
           this.branchFromSdkCwd = null;
+          this.branchFromSdkTurnId = null;
           // Notify that we're clearing the session ID (for persistence)
           this.config.onSdkSessionIdCleared?.();
           // Clear pinned state for fresh start
@@ -1610,6 +1619,7 @@ This is a branched conversation. All prior messages in this conversation are par
           this.sessionId = null;
           this.branchFromSdkSessionId = null; // prevent retry from re-attempting fork with dead parent
           this.branchFromSdkCwd = null;
+          this.branchFromSdkTurnId = null;
           this.config.onSdkSessionIdCleared?.(); // persist cleared ID to JSONL header
           // Clear pinned state so retry captures fresh values
           this.pinnedPreferencesPrompt = null;
@@ -1726,6 +1736,7 @@ This is a branched conversation. All prior messages in this conversation are par
           this.sessionId = null;
           this.branchFromSdkSessionId = null; // prevent retry from re-attempting fork with dead parent
           this.branchFromSdkCwd = null;
+          this.branchFromSdkTurnId = null;
           // Clear pinned state so retry captures fresh values
           this.pinnedPreferencesPrompt = null;
           this.preferencesDriftNotified = false;

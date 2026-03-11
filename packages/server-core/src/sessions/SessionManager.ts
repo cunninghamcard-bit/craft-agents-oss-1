@@ -731,6 +731,9 @@ interface ManagedSession {
   // Parent session's sdkCwd — needed so the fork subprocess uses the correct
   // ~/.claude/projects/{cwd-hash}/ directory to find the parent's session file.
   branchFromSdkCwd?: string
+  // SDK assistant message UUID at the branch point — used as resumeSessionAt
+  // to trim the forked conversation at the branch point.
+  branchFromSdkTurnId?: string
   // One-shot flag for seeded branch mode - set true after first turn seed injection.
   branchSeedApplied?: boolean
   // Token refresh manager for OAuth token refresh with rate limiting
@@ -1952,6 +1955,7 @@ export class SessionManager implements ISessionManager {
       branchFromSdkSessionId?: string
       branchFromSessionPath?: string
       branchFromSdkCwd?: string
+      branchFromSdkTurnId?: string
     } | undefined
 
     if (options?.branchFromSessionId || options?.branchFromMessageId) {
@@ -2043,6 +2047,13 @@ export class SessionManager implements ISessionManager {
       const branchFromSdkCwd = branchContextStrategy === 'sdk-fork'
         ? (sourceManaged?.sdkCwd || sourceSession.sdkCwd)
         : undefined
+      // Extract SDK assistant message UUID at the branch point.
+      // Used as `resumeSessionAt` to trim the forked conversation at the branch point
+      // so the model only sees messages up to the branch, not the full parent history.
+      const branchMessage = sourceSession.messages[branchIdx]
+      const branchFromSdkTurnId = branchContextStrategy === 'sdk-fork'
+        ? branchMessage?.turnId
+        : undefined
 
       if (branchContextStrategy === 'sdk-fork' && !branchFromSdkSessionId) {
         sessionLog.warn('Branch validation failed: sdk-fork requires parent SDK session ID', {
@@ -2063,6 +2074,7 @@ export class SessionManager implements ISessionManager {
         branchFromSdkSessionId,
         branchFromSessionPath,
         branchFromSdkCwd,
+        branchFromSdkTurnId,
       }
 
       sessionLog.info('Branch validation succeeded', {
@@ -2099,10 +2111,12 @@ export class SessionManager implements ISessionManager {
         branchedStored.branchFromSdkSessionId = validatedBranch.branchFromSdkSessionId
         branchedStored.branchFromSessionPath = validatedBranch.branchFromSessionPath
         branchedStored.branchFromSdkCwd = validatedBranch.branchFromSdkCwd
+        branchedStored.branchFromSdkTurnId = validatedBranch.branchFromSdkTurnId
       } else {
         delete branchedStored.branchFromSdkSessionId
         delete branchedStored.branchFromSessionPath
         delete branchedStored.branchFromSdkCwd
+        delete branchedStored.branchFromSdkTurnId
       }
       await saveStoredSession(branchedStored)
     }
@@ -2132,6 +2146,7 @@ export class SessionManager implements ISessionManager {
       branchFromSdkSessionId: validatedBranch?.branchFromSdkSessionId,
       branchFromSessionPath: validatedBranch?.branchFromSessionPath,
       branchFromSdkCwd: validatedBranch?.branchFromSdkCwd,
+      branchFromSdkTurnId: validatedBranch?.branchFromSdkTurnId,
       branchSeedApplied: validatedBranch ? validatedBranch.branchContextStrategy === 'sdk-fork' : undefined,
       messagesLoaded: !isBranch,  // Branched sessions: lazy-load messages from JSONL
     })
@@ -2299,6 +2314,7 @@ export class SessionManager implements ISessionManager {
         branchFromSdkSessionId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkSessionId : undefined,
         branchFromSessionPath: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSessionPath : undefined,
         branchFromSdkCwd: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkCwd : undefined,
+        branchFromSdkTurnId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkTurnId : undefined,
         branchFromMessageId: managed.branchFromMessageId,
         createdAt: managed.lastMessageAt,
         lastUsedAt: managed.lastMessageAt,

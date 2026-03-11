@@ -47,6 +47,7 @@ export const SESSION_PERSISTENT_FIELDS = [
   'branchFromSdkSessionId',
   'branchFromSessionPath',
   'branchFromSdkCwd',
+  'branchFromSdkTurnId',
   // Automation origin
   'triggeredBy',
 ] as const;
@@ -179,6 +180,12 @@ export interface SessionConfig {
    * to use the parent's CWD to locate the parent's session file.
    */
   branchFromSdkCwd?: string;
+  /**
+   * SDK assistant message UUID at the branch point (from StoredMessage.turnId).
+   * Used as `resumeSessionAt` to trim the forked conversation at the branch point
+   * instead of including the full parent history.
+   */
+  branchFromSdkTurnId?: string;
   /** Metadata for sessions created by automations */
   triggeredBy?: { automationName?: string; event?: string; timestamp?: number };
 }
