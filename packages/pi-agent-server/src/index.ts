@@ -87,6 +87,7 @@ interface InitMessage {
   baseUrl?: string;
   branchFromSdkSessionId?: string;
   branchFromSessionPath?: string;
+  branchFromSdkTurnId?: string;
   customEndpoint?: { api: CustomEndpointApi };
   customModels?: string[];
   piAuth?: { provider: string; credential: PiCredential };
@@ -540,7 +541,21 @@ async function ensureSession(): Promise<AgentSession> {
       }
 
       debugLog(`Forking Pi session from parent: ${parentPiSessionFile}`);
-      sessionOptions.sessionManager = PiSessionManager.forkFrom(parentPiSessionFile, cwd, sessionDir);
+      const forkedSessionManager = PiSessionManager.forkFrom(parentPiSessionFile, cwd, sessionDir);
+
+      // Strict branch cutoff: move leaf to the selected parent entry if provided.
+      // This is Pi's equivalent of Claude resumeSessionAt.
+      if (initConfig.branchFromSdkTurnId) {
+        const anchorId = initConfig.branchFromSdkTurnId;
+        const anchorEntry = forkedSessionManager.getEntry(anchorId);
+        if (!anchorEntry) {
+          throw new Error(`Pi branch preflight failed: branch anchor not found: ${anchorId}`);
+        }
+        forkedSessionManager.branch(anchorId);
+        debugLog(`Applied Pi branch cutoff at entry: ${anchorId}`);
+      }
+
+      sessionOptions.sessionManager = forkedSessionManager;
     } else {
       sessionOptions.sessionManager = PiSessionManager.continueRecent(cwd, sessionDir);
     }
@@ -1022,11 +1037,21 @@ function extractToolExecutionMetadata(args: Record<string, unknown> | undefined)
 function handleSessionEvent(event: AgentSessionEvent): void {
   let forwardedEvent: OutboundAgentEvent = event;
 
-  // Log API errors for debugging
+  // Log API errors for debugging and attach provider-native turn anchor for branch cutoffs.
   if (event.type === 'message_end') {
-    const msg = event.message as { stopReason?: string; errorMessage?: string } | undefined;
+    const msg = event.message as { role?: string; stopReason?: string; errorMessage?: string } | undefined;
     if (msg?.stopReason === 'error') {
       debugLog(`API error in message_end: ${msg.errorMessage || 'unknown'}`);
+    }
+
+    if (msg?.role === 'assistant' && piSession) {
+      const sdkTurnAnchor = piSession.sessionManager.getLeafId();
+      if (sdkTurnAnchor) {
+        forwardedEvent = {
+          ...(event as Record<string, unknown>),
+          sdkTurnAnchor,
+        } as OutboundAgentEvent;
+      }
     }
   }
 

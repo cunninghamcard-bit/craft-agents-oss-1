@@ -181,9 +181,9 @@ export interface SessionConfig {
    */
   branchFromSdkCwd?: string;
   /**
-   * SDK assistant message UUID at the branch point (from StoredMessage.turnId).
-   * Used as `resumeSessionAt` to trim the forked conversation at the branch point
-   * instead of including the full parent history.
+   * Provider-native branch anchor at the branch point.
+   * - Claude: assistant message UUID (used as `resumeSessionAt`)
+   * - Pi: session entry ID (used with SessionManager.branch(anchor))
    */
   branchFromSdkTurnId?: string;
   /** Metadata for sessions created by automations */

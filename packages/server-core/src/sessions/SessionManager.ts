@@ -202,6 +202,61 @@ async function validateSpawnAttachmentPath(filePath: string): Promise<string> {
   return realFilePath
 }
 
+const PI_TURN_ANCHORS_VERSION = 1
+const PI_TURN_ANCHORS_FILE = 'pi-turn-anchors.json'
+
+interface PiTurnAnchorsIndex {
+  version: number
+  anchors: Record<string, string>
+}
+
+function getPiTurnAnchorsPath(sessionPath: string): string {
+  return join(sessionPath, 'meta', PI_TURN_ANCHORS_FILE)
+}
+
+async function loadPiTurnAnchors(sessionPath: string): Promise<PiTurnAnchorsIndex> {
+  const filePath = getPiTurnAnchorsPath(sessionPath)
+  try {
+    const raw = await readFile(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<PiTurnAnchorsIndex>
+    const anchors = (parsed.anchors && typeof parsed.anchors === 'object') ? parsed.anchors : {}
+    const normalized: Record<string, string> = {}
+    for (const [messageId, anchor] of Object.entries(anchors)) {
+      if (typeof messageId === 'string' && typeof anchor === 'string' && messageId && anchor) {
+        normalized[messageId] = anchor
+      }
+    }
+    return {
+      version: PI_TURN_ANCHORS_VERSION,
+      anchors: normalized,
+    }
+  } catch {
+    return {
+      version: PI_TURN_ANCHORS_VERSION,
+      anchors: {},
+    }
+  }
+}
+
+async function getPiTurnAnchor(sessionPath: string, messageId: string): Promise<string | undefined> {
+  if (!messageId) return undefined
+  const index = await loadPiTurnAnchors(sessionPath)
+  return index.anchors[messageId]
+}
+
+async function savePiTurnAnchor(sessionPath: string, messageId: string, anchorId: string): Promise<void> {
+  if (!messageId || !anchorId) return
+
+  const index = await loadPiTurnAnchors(sessionPath)
+  if (index.anchors[messageId] === anchorId) return
+
+  index.anchors[messageId] = anchorId
+
+  const filePath = getPiTurnAnchorsPath(sessionPath)
+  await mkdir(join(sessionPath, 'meta'), { recursive: true })
+  await writeFile(filePath, JSON.stringify(index), 'utf-8')
+}
+
 /**
  * Build MCP and API servers from sources using the new unified modules.
  * Handles credential loading and server building in one step.
@@ -2047,13 +2102,28 @@ export class SessionManager implements ISessionManager {
       const branchFromSdkCwd = branchContextStrategy === 'sdk-fork'
         ? (sourceManaged?.sdkCwd || sourceSession.sdkCwd)
         : undefined
-      // Extract SDK assistant message UUID at the branch point.
-      // Used as `resumeSessionAt` to trim the forked conversation at the branch point
-      // so the model only sees messages up to the branch, not the full parent history.
+
+      // Provider-native branch anchor at branch point.
+      // - Claude: assistant message UUID (resumeSessionAt)
+      // - Pi: session entry ID loaded from sidecar (pi-turn-anchors.json)
       const branchMessage = sourceSession.messages[branchIdx]
-      const branchFromSdkTurnId = branchContextStrategy === 'sdk-fork'
-        ? branchMessage?.turnId
-        : undefined
+      let branchFromSdkTurnId: string | undefined
+      if (branchContextStrategy === 'sdk-fork') {
+        if (sourceBackendContext.provider === 'pi') {
+          if (branchFromSessionPath) {
+            branchFromSdkTurnId = await getPiTurnAnchor(branchFromSessionPath, options.branchFromMessageId)
+            if (!branchFromSdkTurnId) {
+              sessionLog.warn('Pi branch anchor missing: falling back to full-history fork for this branch', {
+                workspaceId,
+                branchFromSessionId: options.branchFromSessionId,
+                branchFromMessageId: options.branchFromMessageId,
+              })
+            }
+          }
+        } else {
+          branchFromSdkTurnId = branchMessage?.turnId
+        }
+      }
 
       if (branchContextStrategy === 'sdk-fork' && !branchFromSdkSessionId) {
         sessionLog.warn('Branch validation failed: sdk-fork requires parent SDK session ID', {
@@ -5506,6 +5576,17 @@ export class SessionManager implements ISessionManager {
         if (!event.isIntermediate) {
           managed.lastMessageRole = 'assistant'
           managed.lastFinalMessageId = assistantMessage.id
+
+          // Pi branch-cutoff support: persist provider-native turn anchor in session sidecar.
+          // Keeps session.jsonl schema unchanged while enabling strict branch cutoffs later.
+          if (event.sdkTurnAnchor) {
+            try {
+              const sessionPath = getSessionStoragePath(managed.workspace.rootPath, sessionId)
+              await savePiTurnAnchor(sessionPath, assistantMessage.id, event.sdkTurnAnchor)
+            } catch (error) {
+              sessionLog.warn(`Failed to persist Pi turn anchor for session ${sessionId}:`, error)
+            }
+          }
         }
 
         this.sendEvent({ type: 'text_complete', sessionId, text: event.text, isIntermediate: event.isIntermediate, turnId: event.turnId, parentToolUseId: event.parentToolUseId, timestamp: assistantMessage.timestamp, messageId: assistantMessage.id }, workspaceId)
