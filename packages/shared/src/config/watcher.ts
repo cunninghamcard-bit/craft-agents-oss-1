@@ -291,6 +291,19 @@ export class ConfigWatcher {
   }
 
   /**
+   * Manually notify the watcher of a file change.
+   * Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+   * files in directories created after the watcher started.
+   * See: https://github.com/oven-sh/bun/issues/15939
+   * See: https://github.com/oven-sh/bun/issues/15085
+   * When these are fixed, this method and its call sites can be removed.
+   */
+  notifyFileChange(relativePath: string): void {
+    if (!this.isRunning) return;
+    this.handleWorkspaceFileChange(relativePath, 'change');
+  }
+
+  /**
    * Stop watching all files
    */
   stop(): void {

@@ -1166,20 +1166,6 @@ export class SessionManager implements ISessionManager {
       this.persistSession(managed)
     }
 
-    // Update session metadata via AutomationSystem (handles diffing and event emission internally)
-    const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
-    if (automationSystem) {
-      automationSystem.updateSessionMetadata(sessionId, {
-        permissionMode: header.permissionMode,
-        labels: header.labels,
-        isFlagged: header.isFlagged,
-        sessionStatus: header.sessionStatus,
-        sessionName: header.name,
-      }).catch((error) => {
-        sessionLog.error(`[Automations] Failed to update session metadata:`, error)
-      })
-    }
-
     return changed
   }
 
@@ -1274,31 +1260,46 @@ export class SessionManager implements ISessionManager {
         this.broadcastSkillsChanged(workspaceId, skills)
       },
 
-      // Session metadata changes (external edits to session.jsonl headers).
-      // Detects label/flag/name/sessionStatus changes made by other instances or scripts.
-      // If a session is actively processing, defer applying metadata until processing stops.
+      // Session metadata changes (edits to session.jsonl headers).
+      // Detects changes from both internal writes (self) and external sources
+      // (other instances, scripts, manual edits).
       onSessionMetadataChange: (sessionId, header) => {
         const managed = this.sessions.get(sessionId)
         if (!managed) return
 
-        // Suppress self-triggered events: if the header signature matches what
-        // the persistence queue last wrote, this is our own write echoing back
-        // via fs.watch() — not an external change. Skip to avoid feedback loops.
-        // This is especially important on Windows where fs.watch() fires aggressively
-        // (unlink + rename generates 2+ events per atomic write).
+        // Check if this is our own write echoing back via fs.watch().
+        // Self-writes don't need in-memory sync (already up to date), but
+        // still need to notify the automation system for event matching.
         const incomingSignature = getHeaderMetadataSignature(header)
         const lastWrittenSignature = sessionPersistenceQueue.getLastWrittenSignature(sessionId)
-        if (lastWrittenSignature && incomingSignature === lastWrittenSignature) {
-          return
+        const isSelfWrite = !!(lastWrittenSignature && incomingSignature === lastWrittenSignature)
+
+        // For external writes: sync in-memory state + emit UI events.
+        // Skip for self-writes to avoid feedback loops (especially on Windows
+        // where fs.watch fires aggressively: unlink + rename = 2+ events).
+        if (!isSelfWrite) {
+          if (managed.isProcessing) {
+            managed.pendingExternalMetadata = header
+            sessionLog.info(`Deferred external metadata update for session ${sessionId} (processing active)`)
+          } else {
+            this.applyExternalSessionMetadata(managed, header)
+          }
         }
 
-        if (managed.isProcessing) {
-          managed.pendingExternalMetadata = header
-          sessionLog.info(`Deferred external metadata update for session ${sessionId} (processing active)`)
-          return
+        // Always notify automation system — it does its own diffing and needs
+        // to see both self-writes and external changes for event matching.
+        const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
+        if (automationSystem) {
+          automationSystem.updateSessionMetadata(sessionId, {
+            permissionMode: header.permissionMode,
+            labels: header.labels,
+            isFlagged: header.isFlagged,
+            sessionStatus: header.sessionStatus,
+            sessionName: header.name,
+          }).catch((error) => {
+            sessionLog.error(`[Automations] Failed to update session metadata:`, error)
+          })
         }
-
-        this.applyExternalSessionMetadata(managed, header)
       },
     }
 
@@ -3376,6 +3377,29 @@ export class SessionManager implements ISessionManager {
         return true
       }
 
+      // Wire up onOAuthRefreshRequest to verify token validity before allowing re-auth triggers
+      managed.agent.onOAuthRefreshRequest = async (sourceSlug: string): Promise<boolean> => {
+        sessionLog.debug(`[OAuth guard] Refresh check for source "${sourceSlug}" in session ${managed.id}`)
+
+        const workspaceRootPath = managed.workspace.rootPath
+        const sources = getSourcesBySlugs(workspaceRootPath, [sourceSlug])
+        if (sources.length === 0) {
+          sessionLog.debug(`[OAuth guard] Source "${sourceSlug}" not found — allowing re-auth`)
+          return false
+        }
+
+        const source = sources[0]
+        const result = await managed.tokenRefreshManager.ensureFreshToken(source)
+
+        if (result.success) {
+          sessionLog.debug(`[OAuth guard] Token valid/refreshed for "${sourceSlug}" — blocking re-auth`)
+          return true
+        }
+
+        sessionLog.debug(`[OAuth guard] Token refresh failed for "${sourceSlug}": ${result.reason} — allowing re-auth`)
+        return false
+      }
+
       // NOTE: Source reloading is now handled by ConfigWatcher callbacks
       // which detect filesystem changes and update all affected sessions.
       // See setupConfigWatcher() for the full reload logic.
@@ -3411,6 +3435,11 @@ export class SessionManager implements ISessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_flagged', sessionId }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -3423,6 +3452,11 @@ export class SessionManager implements ISessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_unflagged', sessionId }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -3463,6 +3497,11 @@ export class SessionManager implements ISessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -3945,6 +3984,11 @@ export class SessionManager implements ISessionManager {
       this.persistSession(managed)
       // Notify renderer of the name change
       this.sendEvent({ type: 'title_generated', sessionId, title: name }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -5563,6 +5607,11 @@ export class SessionManager implements ISessionManager {
       }, managed.workspace.id)
       // Persist to disk
       this.persistSession(managed)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
