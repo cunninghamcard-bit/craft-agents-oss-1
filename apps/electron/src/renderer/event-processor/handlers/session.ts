@@ -33,6 +33,7 @@ import type {
   SessionModelChangedEvent,
   LLMConnectionChangedEvent,
   UserMessageEvent,
+  MessageAnnotationsUpdatedEvent,
   SessionSharedEvent,
   SessionUnsharedEvent,
   AuthRequestEvent,
@@ -55,16 +56,26 @@ export function handleComplete(
 ): ProcessResult {
   const { session } = state
 
-  // Fail-safe: mark any running tools as complete
+  // Fail-safe: mark any non-terminal tools as complete.
+  // Catches 'executing' (normal) and 'backgrounded' (spurious — e.g. foreground Agent
+  // whose result contained agentId:). Genuinely backgrounded tasks have isBackground=true
+  // AND a taskId, so they're excluded — task_completed will finalize them.
+  const TERMINAL_TOOL_STATUSES = new Set(['completed', 'error'])
   let updatedMessages = session.messages
   const hasRunningTools = session.messages.some(
-    m => m.role === 'tool' && m.toolStatus === 'executing'
+    m => m.role === 'tool'
+      && !TERMINAL_TOOL_STATUSES.has(m.toolStatus ?? '')
+      && !(m.isBackground && m.taskId)  // Don't force-complete genuine background tasks
   )
 
   if (hasRunningTools) {
     updatedMessages = session.messages.map(m => {
-      if (m.role === 'tool' && m.toolStatus === 'executing') {
-        return { ...m, toolStatus: 'completed' as const }
+      if (
+        m.role === 'tool'
+        && !TERMINAL_TOOL_STATUSES.has(m.toolStatus ?? '')
+        && !(m.isBackground && m.taskId)
+      ) {
+        return { ...m, toolStatus: 'completed' as const, toolResult: m.toolResult ?? '' }
       }
       return m
     })
@@ -528,6 +539,31 @@ export function handleUserMessage(
         lastMessageRole: 'user',  // Clear plan badge when user responds
         // Set isProcessing when message is accepted/processing (enables multi-window sync)
         isProcessing: status === 'accepted' || status === 'processing',
+      },
+      streaming,
+    },
+    effects: [],
+  }
+}
+
+/**
+ * Handle message_annotations_updated - update annotations on a specific message.
+ */
+export function handleMessageAnnotationsUpdated(
+  state: SessionState,
+  event: MessageAnnotationsUpdatedEvent
+): ProcessResult {
+  const { session, streaming } = state
+
+  return {
+    state: {
+      session: {
+        ...session,
+        messages: session.messages.map(m =>
+          m.id === event.messageId
+            ? { ...m, annotations: event.annotations }
+            : m
+        ),
       },
       streaming,
     },

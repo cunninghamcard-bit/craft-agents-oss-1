@@ -312,7 +312,7 @@ export async function saveSession(session: StoredSession): Promise<void> {
  * Multiple rapid calls are coalesced into a single write.
  * Use this during active sessions to avoid blocking the main thread.
  */
-export { sessionPersistenceQueue } from './persistence-queue.js'
+export { sessionPersistenceQueue, getHeaderMetadataSignature } from './persistence-queue.js'
 
 /**
  * Load session by ID
@@ -634,13 +634,15 @@ export async function unarchiveSession(workspaceRootPath: string, sessionId: str
 export async function setPendingPlanExecution(
   workspaceRootPath: string,
   sessionId: string,
-  planPath: string
+  planPath: string,
+  draftInputSnapshot?: string,
 ): Promise<void> {
   const session = loadSession(workspaceRootPath, sessionId);
   if (!session) return;
 
   session.pendingPlanExecution = {
     planPath,
+    draftInputSnapshot,
     awaitingCompaction: true,
   };
   await saveSession(session);
@@ -685,7 +687,7 @@ export async function clearPendingPlanExecution(
 export function getPendingPlanExecution(
   workspaceRootPath: string,
   sessionId: string
-): { planPath: string; awaitingCompaction: boolean } | null {
+): { planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean } | null {
   const session = loadSession(workspaceRootPath, sessionId);
   return session?.pendingPlanExecution ?? null;
 }

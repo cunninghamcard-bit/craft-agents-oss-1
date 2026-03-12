@@ -23,8 +23,17 @@ import {
 import { cn } from "@/lib/utils"
 import { Check, ChevronDown, Eye, EyeOff, Loader2 } from "lucide-react"
 import { pickTierDefaults, resolveTierModels, type PiModelInfo } from "./tier-models"
+import {
+  resolvePiAuthProviderForSubmit,
+  resolvePresetStateForBaseUrlChange,
+  type PresetKey,
+} from "./submit-helpers"
+
+import type { CustomEndpointApi, CustomEndpointConfig } from '@config/llm-connections'
 
 export type ApiKeyStatus = 'idle' | 'validating' | 'success' | 'error'
+
+export type { CustomEndpointApi }
 
 export interface ApiKeySubmitData {
   apiKey: string
@@ -33,6 +42,8 @@ export interface ApiKeySubmitData {
   models?: string[]
   piAuthProvider?: string
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
+  /** Custom endpoint protocol — set when user configures an arbitrary API endpoint */
+  customEndpoint?: CustomEndpointConfig
 }
 
 export interface ApiKeyInputProps {
@@ -55,11 +66,10 @@ export interface ApiKeyInputProps {
     connectionDefaultModel?: string
     activePreset?: string
     models?: string[]
+    /** Pre-fill the protocol toggle for custom endpoints */
+    customApi?: CustomEndpointApi
   }
 }
-
-// Preset key — string to support dynamic Pi SDK providers
-type PresetKey = string
 
 interface Preset {
   key: PresetKey
@@ -73,6 +83,8 @@ interface Preset {
 const ANTHROPIC_PRESETS: Preset[] = [
   { key: 'anthropic', label: 'Anthropic', url: 'https://api.anthropic.com', placeholder: 'sk-ant-...' },
   { key: 'openai', label: 'OpenAI', url: 'https://api.openai.com/v1', placeholder: 'sk-...' },
+  { key: 'openai-eu', label: 'OpenAI EU', url: 'https://eu.api.openai.com/v1', placeholder: 'sk-...' },
+  { key: 'openai-us', label: 'OpenAI US', url: 'https://us.api.openai.com/v1', placeholder: 'sk-...' },
   { key: 'google', label: 'Google AI Studio', url: 'https://generativelanguage.googleapis.com/v1beta', placeholder: 'AIza...' },
   { key: 'openrouter', label: 'OpenRouter', url: 'https://openrouter.ai/api/v1', placeholder: 'sk-or-...' },
   { key: 'azure-openai-responses', label: 'Azure OpenAI', url: '', placeholder: 'Paste your key here...' },
@@ -83,6 +95,9 @@ const ANTHROPIC_PRESETS: Preset[] = [
   { key: 'cerebras', label: 'Cerebras', url: 'https://api.cerebras.ai/v1', placeholder: 'csk-...' },
   { key: 'zai', label: 'z.ai (GLM)', url: 'https://api.z.ai/api/coding/paas/v4', placeholder: 'Paste your key here...' },
   { key: 'huggingface', label: 'Hugging Face', url: 'https://router.huggingface.co/v1', placeholder: 'hf_...' },
+  { key: 'minimax-global', label: 'Minimax Global', url: 'https://api.minimax.io/anthropic', placeholder: 'Paste your key here...' },
+  { key: 'minimax-cn', label: 'Minimax CN', url: 'https://api.minimaxi.com/anthropic', placeholder: 'Paste your key here...' },
+  { key: 'kimi-coding', label: 'Kimi (Coding)', url: 'https://api.kimi.com/coding', placeholder: 'sk-kimi-...' },
   { key: 'vercel-ai-gateway', label: 'Vercel AI Gateway', url: 'https://ai-gateway.vercel.sh', placeholder: 'Paste your key here...' },
   { key: 'custom', label: 'Custom', url: '', placeholder: 'Paste your key here...' },
 ]
@@ -108,6 +123,8 @@ const GOOGLE_PRESETS: Preset[] = [
 
 const COMPAT_ANTHROPIC_DEFAULTS = 'anthropic/claude-opus-4.6, anthropic/claude-sonnet-4.6, anthropic/claude-haiku-4.5'
 const COMPAT_OPENAI_DEFAULTS = 'openai/gpt-5.2-codex, openai/gpt-5.1-codex-mini'
+const COMPAT_MINIMAX_DEFAULTS = 'MiniMax-M2.5, MiniMax-M2.5-highspeed'
+const COMPAT_KIMI_DEFAULTS = 'k2p5, kimi-k2-thinking'
 
 function getPresetsForProvider(providerType: 'anthropic' | 'openai' | 'pi' | 'google' | 'pi_api_key'): Preset[] {
   if (providerType === 'pi_api_key') return ANTHROPIC_PRESETS
@@ -153,7 +170,11 @@ export function ApiKeyInput({
   const [showValue, setShowValue] = useState(false)
   const [baseUrl, setBaseUrl] = useState(initialValues?.baseUrl ?? defaultPreset.url)
   const [activePreset, setActivePreset] = useState<PresetKey>(initialPreset)
+  const [lastNonCustomPreset, setLastNonCustomPreset] = useState<PresetKey | null>(
+    initialPreset !== 'custom' ? initialPreset : defaultPreset.key
+  )
   const [connectionDefaultModel, setConnectionDefaultModel] = useState(initialValues?.connectionDefaultModel ?? '')
+  const [customApi, setCustomApi] = useState<CustomEndpointApi>(initialValues?.customApi ?? 'openai-completions')
   const [modelError, setModelError] = useState<string | null>(null)
 
   // Pi model tier state (for providers with many models like OpenRouter, Vercel)
@@ -215,10 +236,13 @@ export function ApiKeyInput({
   }, [activePreset, loadPiModels])
 
   // Whether to show 3 tier dropdowns instead of text input
-  const hasPiModels = isPiApiKeyFlow && piModels.length > 0 && !isDefaultProviderPreset
+  const hasPiModels = isPiApiKeyFlow && piModels.length > 0 && !isDefaultProviderPreset && activePreset !== 'custom'
 
   const handlePresetSelect = (preset: Preset) => {
     setActivePreset(preset.key)
+    if (preset.key !== 'custom') {
+      setLastNonCustomPreset(preset.key)
+    }
     if (preset.key === 'custom') {
       setBaseUrl('')
     } else {
@@ -231,6 +255,10 @@ export function ApiKeyInput({
       setConnectionDefaultModel('qwen3-coder')
     } else if (preset.key === 'openrouter' || preset.key === 'vercel-ai-gateway') {
       setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
+    } else if (preset.key === 'minimax-global' || preset.key === 'minimax-cn') {
+      setConnectionDefaultModel(COMPAT_MINIMAX_DEFAULTS)
+    } else if (preset.key === 'kimi-coding') {
+      setConnectionDefaultModel(COMPAT_KIMI_DEFAULTS)
     } else if (preset.key === 'custom') {
       setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
     } else {
@@ -241,21 +269,23 @@ export function ApiKeyInput({
   const handleBaseUrlChange = (value: string) => {
     setBaseUrl(value)
     const presetKey = getPresetForUrl(value, presets)
-    if (presetKey !== 'custom') {
-      setActivePreset(presetKey)
-    } else {
-      const currentPresetObj = presets.find(p => p.key === activePreset)
-      // Only fall back to 'custom' if the current preset has a non-empty default URL.
-      // Presets with empty URLs (e.g. Azure OpenAI) expect user-provided endpoints;
-      // switching them to custom would drop piAuthProvider routing metadata.
-      if (currentPresetObj && currentPresetObj.url !== '') {
-        setActivePreset('custom')
-      }
-    }
+    const currentPresetObj = presets.find(p => p.key === activePreset)
+    const nextPresetState = resolvePresetStateForBaseUrlChange({
+      matchedPreset: presetKey,
+      activePreset,
+      activePresetHasEmptyUrl: currentPresetObj?.url === '',
+      lastNonCustomPreset,
+    })
+    setActivePreset(nextPresetState.activePreset)
+    setLastNonCustomPreset(nextPresetState.lastNonCustomPreset)
     setModelError(null)
     if (!connectionDefaultModel.trim()) {
       if (presetKey === 'ollama') {
         setConnectionDefaultModel('qwen3-coder')
+      } else if (presetKey === 'minimax-global' || presetKey === 'minimax-cn') {
+        setConnectionDefaultModel(COMPAT_MINIMAX_DEFAULTS)
+      } else if (presetKey === 'kimi-coding') {
+        setConnectionDefaultModel(COMPAT_KIMI_DEFAULTS)
       } else if (presetKey === 'openrouter' || presetKey === 'vercel-ai-gateway' || presetKey === 'custom') {
         setConnectionDefaultModel(providerType === 'openai' ? COMPAT_OPENAI_DEFAULTS : COMPAT_ANTHROPIC_DEFAULTS)
       }
@@ -264,6 +294,10 @@ export function ApiKeyInput({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    const effectivePiAuthProvider = isPiApiKeyFlow
+      ? resolvePiAuthProviderForSubmit(activePreset, lastNonCustomPreset)
+      : undefined
 
     // Pi API key flow with tier dropdowns — submit selected models
     if (hasPiModels) {
@@ -277,7 +311,7 @@ export function ApiKeyInput({
         baseUrl: baseUrl.trim() || undefined,
         connectionDefaultModel: bestModel,
         models,
-        piAuthProvider: activePreset !== 'custom' ? activePreset : undefined,
+        piAuthProvider: effectivePiAuthProvider,
         modelSelectionMode: 'userDefined3Tier',
       })
       return
@@ -294,15 +328,23 @@ export function ApiKeyInput({
       return
     }
 
+    // Include custom endpoint protocol when user configured a custom base URL
+    const isCustomEndpoint = activePreset === 'custom' && !!effectiveBaseUrl
+    const customEndpoint = isCustomEndpoint ? { api: customApi } : undefined
+    const resolvedPiAuthProvider = isCustomEndpoint
+      ? (customApi === 'anthropic-messages' ? 'anthropic' : 'openai')
+      : effectivePiAuthProvider
+
     onSubmit({
       apiKey: apiKey.trim(),
       baseUrl: isUsingDefaultEndpoint ? undefined : effectiveBaseUrl,
       connectionDefaultModel: parsedModels[0],
       models: parsedModels.length > 0 ? parsedModels : undefined,
-      piAuthProvider: isPiApiKeyFlow && activePreset !== 'custom' ? activePreset : undefined,
+      piAuthProvider: resolvedPiAuthProvider,
       modelSelectionMode: isPiApiKeyFlow
         ? (parsedModels.length > 0 ? 'userDefined3Tier' : 'automaticallySyncedFromProvider')
         : undefined,
+      customEndpoint,
     })
   }
 
@@ -395,6 +437,41 @@ export function ApiKeyInput({
           </div>
         )}
       </div>
+      )}
+
+      {/* Protocol Toggle — visible as soon as Custom preset is selected */}
+      {activePreset === 'custom' && !isDefaultProviderPreset && (
+        <div className="space-y-2">
+          <Label>Protocol</Label>
+          <div className={cn(
+            "flex rounded-md shadow-minimal overflow-hidden",
+            "bg-foreground-2",
+            isDisabled && "opacity-50 pointer-events-none"
+          )}>
+            {([
+              { value: 'openai-completions' as const, label: 'OpenAI Compatible' },
+              { value: 'anthropic-messages' as const, label: 'Anthropic Compatible' },
+            ]).map(({ value, label }) => (
+              <button
+                key={value}
+                type="button"
+                disabled={isDisabled}
+                onClick={() => setCustomApi(value)}
+                className={cn(
+                  "flex-1 py-1.5 text-[12px] font-medium transition-colors",
+                  customApi === value
+                    ? "bg-background text-foreground shadow-minimal"
+                    : "text-foreground/50 hover:text-foreground/70"
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-foreground/30">
+            Most third-party APIs (Ollama, vLLM, DashScope) use OpenAI Compatible.
+          </p>
+        </div>
       )}
 
       {/* Model Selection — 3 tier dropdowns for Pi providers, text input for custom/compat */}

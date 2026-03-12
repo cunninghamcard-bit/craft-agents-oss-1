@@ -16,6 +16,7 @@ import { SplashScreen } from '@/components/SplashScreen'
 import { TooltipProvider } from '@craft-agent/ui'
 import { FocusProvider } from '@/context/FocusContext'
 import { ModalProvider } from '@/context/ModalContext'
+import { DismissibleLayerProvider } from '@/context/DismissibleLayerContext'
 import { useWindowCloseHandler } from '@/hooks/useWindowCloseHandler'
 import { useOnboarding } from '@/hooks/useOnboarding'
 import { useNotifications } from '@/hooks/useNotifications'
@@ -118,6 +119,10 @@ function handleBackgroundTaskEvent(
         ? { ...t, elapsedSeconds: evt.elapsedSeconds as number }
         : t
     ))
+  } else if (event.type === 'task_completed' && 'taskId' in evt) {
+    // Remove task when background task completes
+    const currentTasks = store.get(backgroundTasksAtom)
+    store.set(backgroundTasksAtom, currentTasks.filter(t => t.id !== evt.taskId))
   } else if (event.type === 'shell_killed' && 'shellId' in evt) {
     // Remove shell task when KillShell succeeds
     const currentTasks = store.get(backgroundTasksAtom)
@@ -140,8 +145,9 @@ function handleBackgroundTaskEvent(
   // Note: We do NOT clear background tasks on complete/error/interrupted
   // Background tasks should persist and keep running after the turn ends
   // They are only removed when:
-  // 1. Their tool_result comes back (task finished)
-  // 2. KillShell succeeds (shell_killed event)
+  // 1. task_completed event arrives (background task finished)
+  // 2. Their tool_result comes back (foreground task finished)
+  // 3. KillShell succeeds (shell_killed event)
 }
 
 export default function App() {
@@ -1512,18 +1518,20 @@ export default function App() {
   // ModalProvider + WindowCloseHandler ensures X button works on Windows
   if (appState === 'reauth') {
     return (
-      <ModalProvider>
-        <WindowCloseHandler />
-        <ReauthScreen
-          onLogin={handleReauthLogin}
-          onReset={handleReauthReset}
-        />
-        <ResetConfirmationDialog
-          open={showResetDialog}
-          onConfirm={executeReset}
-          onCancel={() => setShowResetDialog(false)}
-        />
-      </ModalProvider>
+      <DismissibleLayerProvider>
+        <ModalProvider>
+          <WindowCloseHandler />
+          <ReauthScreen
+            onLogin={handleReauthLogin}
+            onReset={handleReauthReset}
+          />
+          <ResetConfirmationDialog
+            open={showResetDialog}
+            onConfirm={executeReset}
+            onCancel={() => setShowResetDialog(false)}
+          />
+        </ModalProvider>
+      </DismissibleLayerProvider>
     )
   }
 
@@ -1532,28 +1540,30 @@ export default function App() {
   // (without this, the close IPC message has no listener and window stays open)
   if (appState === 'onboarding') {
     return (
-      <ModalProvider>
-        <WindowCloseHandler />
-        <OnboardingWizard
-          state={onboarding.state}
-          onContinue={onboarding.handleContinue}
-          onBack={onboarding.handleBack}
-          onSelectProvider={onboarding.handleSelectProvider}
-          onSelectApiSetupMethod={onboarding.handleSelectApiSetupMethod}
-          onSubmitCredential={onboarding.handleSubmitCredential}
-          onSubmitLocalModel={onboarding.handleSubmitLocalModel}
-          onStartOAuth={onboarding.handleStartOAuth}
-          onFinish={onboarding.handleFinish}
-          isWaitingForCode={onboarding.isWaitingForCode}
-          onSubmitAuthCode={onboarding.handleSubmitAuthCode}
-          onCancelOAuth={onboarding.handleCancelOAuth}
-          copilotDeviceCode={onboarding.copilotDeviceCode}
-          onBrowseGitBash={onboarding.handleBrowseGitBash}
-          onUseGitBashPath={onboarding.handleUseGitBashPath}
-          onRecheckGitBash={onboarding.handleRecheckGitBash}
-          onClearError={onboarding.handleClearError}
-        />
-      </ModalProvider>
+      <DismissibleLayerProvider>
+        <ModalProvider>
+          <WindowCloseHandler />
+          <OnboardingWizard
+            state={onboarding.state}
+            onContinue={onboarding.handleContinue}
+            onBack={onboarding.handleBack}
+            onSelectProvider={onboarding.handleSelectProvider}
+            onSelectApiSetupMethod={onboarding.handleSelectApiSetupMethod}
+            onSubmitCredential={onboarding.handleSubmitCredential}
+            onSubmitLocalModel={onboarding.handleSubmitLocalModel}
+            onStartOAuth={onboarding.handleStartOAuth}
+            onFinish={onboarding.handleFinish}
+            isWaitingForCode={onboarding.isWaitingForCode}
+            onSubmitAuthCode={onboarding.handleSubmitAuthCode}
+            onCancelOAuth={onboarding.handleCancelOAuth}
+            copilotDeviceCode={onboarding.copilotDeviceCode}
+            onBrowseGitBash={onboarding.handleBrowseGitBash}
+            onUseGitBashPath={onboarding.handleUseGitBashPath}
+            onRecheckGitBash={onboarding.handleRecheckGitBash}
+            onClearError={onboarding.handleClearError}
+          />
+        </ModalProvider>
+      </DismissibleLayerProvider>
     )
   }
 
@@ -1566,6 +1576,7 @@ export default function App() {
     <ShikiThemeProvider shikiTheme={shikiTheme}>
       <ActionRegistryProvider>
       <FocusProvider>
+        <DismissibleLayerProvider>
         <ModalProvider>
         <TooltipProvider delayDuration={0}>
         <NavigationProvider
@@ -1591,7 +1602,7 @@ export default function App() {
           )}
 
           {/* Main UI - always rendered, splash fades away to reveal it */}
-          <div className="h-full flex flex-col text-foreground">
+          <div className="h-full flex flex-col pt-[48px] text-foreground">
             {showTransportConnectionBanner && transportConnectionState && (
               <TransportConnectionBanner
                 state={transportConnectionState}
@@ -1626,6 +1637,7 @@ export default function App() {
         </NavigationProvider>
         </TooltipProvider>
         </ModalProvider>
+        </DismissibleLayerProvider>
       </FocusProvider>
       </ActionRegistryProvider>
     </ShikiThemeProvider>
@@ -1725,12 +1737,28 @@ function FilePreviewRenderer({
     }
 
     case 'json': {
-      // JSONPreviewOverlay expects parsed data, not a raw string
+      // JSONPreviewOverlay expects parsed data, not a raw string.
+      // @uiw/react-json-view crashes on null value, so guard against it.
       let parsedData: unknown = null
       try {
         if (state.content) parsedData = JSON.parse(state.content)
       } catch {
         // If parsing fails, fall back to showing as code
+        return (
+          <CodePreviewOverlay
+            isOpen
+            onClose={onClose}
+            filePath={state.filePath}
+            content={state.content ?? ''}
+            language="json"
+            mode="read"
+            theme={theme}
+            error={state.error}
+          />
+        )
+      }
+      // If read failed and content is empty, show raw code overlay with the read error.
+      if ((!state.content || !state.content.trim()) && state.error) {
         return (
           <CodePreviewOverlay
             isOpen

@@ -48,7 +48,7 @@ import {
   PERMISSION_MODE_CONFIG,
   SAFE_MODE_CONFIG,
 } from './mode-manager.ts';
-import { getSessionPlansPath, getSessionPath } from '../sessions/storage.ts';
+import { getSessionDataPath, getSessionPlansPath, getSessionPath } from '../sessions/storage.ts';
 import { extractWorkspaceSlug } from '../utils/workspace.ts';
 import {
   ConfigWatcher,
@@ -252,26 +252,90 @@ export function clearGlobalPermissions(): void {
  *
  * Returns a McpSdkServerConfigWithInstance that can be added to Options.mcpServers.
  */
-function jsonPropToZod(prop: any): z.ZodTypeAny {
-  if (prop.enum) return z.enum(prop.enum as [string, ...string[]]);
+
+const MAX_SCHEMA_DEPTH = 5;
+
+/**
+ * Convert a JSON Schema property to a Zod type.
+ * Handles oneOf/anyOf unions, nested objects with properties, typed arrays, allOf merges,
+ * and enums — so the LLM sees the full parameter structure instead of z.unknown().
+ */
+export function jsonPropToZod(prop: any, depth = 0): z.ZodTypeAny {
+  if (!prop || typeof prop !== 'object') return z.unknown();
+  if (depth >= MAX_SCHEMA_DEPTH) return z.unknown();
+
+  // Attach description if present
+  const withDesc = (zodType: z.ZodTypeAny): z.ZodTypeAny =>
+    prop.description ? zodType.describe(prop.description) : zodType;
+
+  // Enum — string literals
+  if (prop.enum && Array.isArray(prop.enum) && prop.enum.length > 0) {
+    return withDesc(z.enum(prop.enum as [string, ...string[]]));
+  }
+
+  // oneOf / anyOf — discriminated or plain unions
+  const unionVariants = prop.oneOf ?? prop.anyOf;
+  if (Array.isArray(unionVariants) && unionVariants.length > 0) {
+    const members = unionVariants.map((v: any) => jsonPropToZod(v, depth + 1));
+    if (members.length === 1) return withDesc(members[0]!);
+    return withDesc(z.union(members as [z.ZodTypeAny, z.ZodTypeAny, ...z.ZodTypeAny[]]));
+  }
+
+  // allOf — merge into a single object shape
+  if (Array.isArray(prop.allOf) && prop.allOf.length > 0) {
+    const mergedProps: Record<string, any> = {};
+    const mergedRequired: string[] = [];
+    for (const sub of prop.allOf) {
+      if (sub.properties) Object.assign(mergedProps, sub.properties);
+      if (Array.isArray(sub.required)) mergedRequired.push(...sub.required);
+    }
+    if (Object.keys(mergedProps).length > 0) {
+      return withDesc(jsonPropToZod({
+        type: 'object',
+        properties: mergedProps,
+        required: mergedRequired,
+        description: prop.description,
+      }, depth));
+    }
+    // Fallback: if allOf doesn't have properties, take the first variant
+    return withDesc(jsonPropToZod(prop.allOf[0], depth + 1));
+  }
+
   switch (prop.type) {
-    case 'string': return z.string();
-    case 'number': case 'integer': return z.number();
-    case 'boolean': return z.boolean();
-    case 'array': return z.array(z.unknown());
-    case 'object': return z.record(z.string(), z.unknown());
-    default: return z.unknown();
+    case 'string':
+      return withDesc(z.string());
+    case 'number':
+    case 'integer':
+      return withDesc(z.number());
+    case 'boolean':
+      return withDesc(z.boolean());
+    case 'array': {
+      const itemSchema = prop.items
+        ? jsonPropToZod(prop.items, depth + 1)
+        : z.unknown();
+      return withDesc(z.array(itemSchema));
+    }
+    case 'object': {
+      // Nested object with known properties → build z.object({...})
+      if (prop.properties && typeof prop.properties === 'object') {
+        const shape = jsonSchemaToZodShape(prop, depth + 1);
+        return withDesc(z.object(shape));
+      }
+      // Generic object (no properties defined)
+      return withDesc(z.record(z.string(), z.unknown()));
+    }
+    default:
+      return withDesc(z.unknown());
   }
 }
 
-function jsonSchemaToZodShape(schema: Record<string, unknown>): Record<string, z.ZodTypeAny> {
+function jsonSchemaToZodShape(schema: Record<string, unknown>, depth = 0): Record<string, z.ZodTypeAny> {
   const properties = (schema.properties as Record<string, any>) || {};
   const required = new Set((schema.required as string[]) || []);
   const shape: Record<string, z.ZodTypeAny> = {};
 
   for (const [key, prop] of Object.entries(properties)) {
-    let zodType = jsonPropToZod(prop);
-    if (prop.description) zodType = zodType.describe(prop.description);
+    let zodType = jsonPropToZod(prop, depth);
     if (!required.has(key)) zodType = zodType.optional();
     shape[key] = zodType;
   }
@@ -332,6 +396,8 @@ export class ClaudeAgent extends BaseAgent {
   private lastAbortReason: AbortReason | null = null;
   private sessionId: string | null = null;
   private branchFromSdkSessionId: string | null = null;
+  private branchFromSdkCwd: string | null = null;
+  private branchFromSdkTurnId: string | null = null;
   private isHeadless: boolean = false;
   private pendingPermissions: Map<string, PendingPermission> = new Map();
   // Permission whitelists are now managed by this.permissionManager (inherited from BaseAgent)
@@ -460,6 +526,8 @@ export class ClaudeAgent extends BaseAgent {
     // Initialize branch params for SDK-level fork (resume parent + forkSession)
     if (config.session?.branchFromSdkSessionId) {
       this.branchFromSdkSessionId = config.session.branchFromSdkSessionId;
+      this.branchFromSdkCwd = config.session.branchFromSdkCwd ?? null;
+      this.branchFromSdkTurnId = config.session.branchFromSdkTurnId ?? null;
     }
 
     // Initialize permission mode state with callbacks
@@ -793,8 +861,13 @@ export class ClaudeAgent extends BaseAgent {
         // Use sdkCwd for SDK session storage - this is set once at session creation and never changes.
         // This ensures SDK can always find session transcripts regardless of workingDirectory changes.
         // Note: workingDirectory is still used for context injection and shown to the agent.
-        cwd: this.config.session?.sdkCwd ??
-          (sessionId ? getSessionPath(this.workspaceRootPath, sessionId) : this.workspaceRootPath),
+        // For fork attempts: use the parent's sdkCwd so the SDK subprocess can find the parent's
+        // session file (stored under ~/.claude/projects/{cwd-hash}/). Without this, cross-CWD
+        // branches (e.g., worktree ↔ main repo) fail with "No conversation found".
+        cwd: (!_isRetry && this.branchFromSdkCwd && this.branchFromSdkSessionId)
+          ? this.branchFromSdkCwd
+          : (this.config.session?.sdkCwd ??
+            (sessionId ? getSessionPath(this.workspaceRootPath, sessionId) : this.workspaceRootPath)),
         includePartialMessages: true,
         // Tools configuration:
         // - Mini agents: minimal set for quick config edits (reduces token count ~70%)
@@ -882,7 +955,7 @@ export class ClaudeAgent extends BaseAgent {
 
               // Get current permission mode (single source of truth)
               const permissionMode = getPermissionMode(sessionId);
-              this.onDebug?.(`PreToolUse hook: ${input.tool_name} (permissionMode=${permissionMode})`);
+              this.onDebug?.(`PreToolUse hook: ${input.tool_name} (sessionId=${sessionId}, permissionMode=${permissionMode})`);
 
               const toolInput = input.tool_input as Record<string, unknown>;
 
@@ -895,6 +968,7 @@ export class ClaudeAgent extends BaseAgent {
                 workspaceRootPath: this.workspaceRootPath,
                 workspaceId: extractWorkspaceSlug(this.workspaceRootPath, this.config.workspace.id),
                 plansFolderPath: sessionId ? getSessionPlansPath(this.workspaceRootPath, sessionId) : undefined,
+                dataFolderPath: sessionId ? getSessionDataPath(this.workspaceRootPath, sessionId) : undefined,
                 workingDirectory: this.config.session?.workingDirectory,
                 activeSourceSlugs: Array.from(this.sourceManager.getActiveSlugs()),
                 allSourceSlugs: this.sourceManager.getAllSources().map(s => s.config.slug),
@@ -1077,8 +1151,8 @@ export class ClaudeAgent extends BaseAgent {
           }],
           SubagentStop: [{
             hooks: [async (input, _toolUseID) => {
-              const typedInput = input as { agent_id?: string };
-              debug(`[ClaudeAgent] SubagentStop: agent_id=${typedInput.agent_id}`);
+              const typedInput = input as { agent_id?: string; agent_transcript_path?: string };
+              debug(`[ClaudeAgent] SubagentStop: agent_id=${typedInput.agent_id}, transcript=${typedInput.agent_transcript_path ?? 'none'}`);
               return { continue: true };
             }],
           }],
@@ -1106,7 +1180,13 @@ export class ClaudeAgent extends BaseAgent {
         ...(!_isRetry && this.sessionId
           ? { resume: this.sessionId }
           : !_isRetry && this.branchFromSdkSessionId
-            ? { resume: this.branchFromSdkSessionId, forkSession: true }
+            ? {
+                resume: this.branchFromSdkSessionId,
+                forkSession: true,
+                // Trim the forked conversation at the branch point so the model
+                // only sees messages up to where the user branched, not the full parent.
+                ...(this.branchFromSdkTurnId ? { resumeSessionAt: this.branchFromSdkTurnId } : {}),
+              }
             : {}),
         mcpServers,
         // NOTE: This callback is NOT called by the SDK because we set `permissionMode: 'bypassPermissions'` above.
@@ -1123,11 +1203,18 @@ export class ClaudeAgent extends BaseAgent {
       };
 
       // Track whether we're trying to resume a session (for error handling)
-      const wasResuming = !_isRetry && !!this.sessionId;
+      // Also covers branch fork attempts where sessionId is null but branchFromSdkSessionId is set
+      const wasResuming = !_isRetry && (!!this.sessionId || !!this.branchFromSdkSessionId);
+      // Track whether this turn attempted branch-point cutoff via resumeSessionAt.
+      // Needed for targeted fallback when the parent message UUID no longer exists server-side.
+      const attemptedBranchCutoff = !_isRetry && !!this.branchFromSdkSessionId && !!this.branchFromSdkTurnId;
 
       // Log resume attempt for debugging session failures
       if (wasResuming) {
         debug(`[ClaudeAgent] Attempting to resume SDK session: ${this.sessionId}`);
+        if (this.branchFromSdkSessionId) {
+          debug(`[ClaudeAgent] Branch fork: parentSdkSessionId=${this.branchFromSdkSessionId}, branchFromSdkCwd=${this.branchFromSdkCwd}, resumeSessionAt=${this.branchFromSdkTurnId}, childSdkCwd=${this.config.session?.sdkCwd}`);
+        }
       } else {
         debug(`[ClaudeAgent] Starting fresh SDK session (no resume)`);
       }
@@ -1153,6 +1240,20 @@ export class ClaudeAgent extends BaseAgent {
         SDK_SLASH_COMMANDS.includes(commandName as typeof SDK_SLASH_COMMANDS[number]) &&
         !attachments?.length;
 
+      // For SDK-fork branches: prepend a one-time context hint so the model treats
+      // the parent conversation history (already in the SDK's messages via --fork-session)
+      // as part of this conversation. Without this, the model sees new session metadata
+      // and treats prior messages as "not this session."
+      // branchFromSdkSessionId is non-null only on the first message (cleared after fork/recovery).
+      let effectiveUserMessage = userMessage;
+      if (!_isRetry && this.branchFromSdkSessionId) {
+        const branchHint = `<branch_context>
+This is a branched conversation. All prior messages in this conversation are part of your shared context with the user. When the user refers to "this conversation" or asks what you discussed, include the full conversation history — not just messages after the branch point.
+</branch_context>`;
+        effectiveUserMessage = `${branchHint}\n\n${userMessage}`;
+        debug('[chat] Injected SDK-fork branch context hint into first message');
+      }
+
       // Create the query - handle slash commands, binary attachments, or regular messages
       if (isSlashCommand) {
         // Send slash commands directly to SDK without context wrapping.
@@ -1160,14 +1261,14 @@ export class ClaudeAgent extends BaseAgent {
         debug(`[chat] Detected SDK slash command: ${trimmedMessage}`);
         this.currentQuery = query({ prompt: trimmedMessage, options: optionsWithAbort });
       } else if (hasBinaryAttachments) {
-        const sdkMessage = this.buildSDKUserMessage(userMessage, attachments);
+        const sdkMessage = this.buildSDKUserMessage(effectiveUserMessage, attachments);
         async function* singleMessage(): AsyncIterable<SDKUserMessage> {
           yield sdkMessage;
         }
         this.currentQuery = query({ prompt: singleMessage(), options: optionsWithAbort });
       } else {
         // Simple string prompt for text-only messages (may include text file contents)
-        const prompt = this.buildTextPrompt(userMessage, attachments);
+        const prompt = this.buildTextPrompt(effectiveUserMessage, attachments);
         this.currentQuery = query({ prompt, options: optionsWithAbort });
       }
 
@@ -1183,6 +1284,8 @@ export class ClaudeAgent extends BaseAgent {
       // Track whether we received any assistant content (for empty response detection)
       // When SDK returns empty response (e.g., failed resume), we need to detect and recover
       let receivedAssistantContent = false;
+      let suppressedSessionExpiredError = false;
+      let suppressedBranchCutoffError = false;
       try {
         for await (const message of this.currentQuery) {
           // Track if we got any text content from assistant
@@ -1205,6 +1308,13 @@ export class ClaudeAgent extends BaseAgent {
             this.sessionId = message.session_id;
             // Notify caller of new SDK session ID (for immediate persistence)
             this.config.onSdkSessionIdUpdate?.(message.session_id);
+            // Retire in-memory branch fork metadata (persistence handled by callback)
+            if (this.branchFromSdkSessionId) {
+              debug(`[ClaudeAgent] Branch fork established, retiring in-memory fork metadata`);
+              this.branchFromSdkSessionId = null;
+              this.branchFromSdkCwd = null;
+              this.branchFromSdkTurnId = null;
+            }
           }
 
           const events = await this.eventAdapter.adapt(message);
@@ -1291,6 +1401,43 @@ export class ClaudeAgent extends BaseAgent {
               }
             }
 
+            // Suppress session-expired errors during resume/fork — don't yield
+            // them to the caller. The post-loop recovery (wasResuming check)
+            // will handle the retry. Without this, the error event reaches the
+            // SessionManager which shows it as a toast before recovery runs.
+            if (
+              wasResuming && !_isRetry &&
+              event.type === 'error' &&
+              'message' in event && typeof event.message === 'string' &&
+              event.message.includes('No conversation found with session ID')
+            ) {
+              debug('[SESSION_DEBUG] Suppressing session-expired error event for recovery:', event.message);
+              suppressedSessionExpiredError = true;
+              continue;
+            }
+
+            // Suppress resumeSessionAt branch-cutoff failures when the requested
+            // parent message UUID no longer exists server-side (e.g., compaction/TTL).
+            // We'll retry once without resumeSessionAt.
+            if (
+              attemptedBranchCutoff && wasResuming && !_isRetry &&
+              event.type === 'error' &&
+              'message' in event && typeof event.message === 'string' &&
+              event.message.includes('No message found with message.uuid')
+            ) {
+              debug('[SESSION_DEBUG] Suppressing missing-UUID branch cutoff error for fallback:', event.message);
+              suppressedBranchCutoffError = true;
+              continue;
+            }
+
+            // Also suppress the complete event that follows a suppressed error —
+            // recovery will produce its own completion flow.
+            if ((suppressedSessionExpiredError || suppressedBranchCutoffError) && event.type === 'complete') {
+              debug('[SESSION_DEBUG] Suppressing complete event after suppressed resume/fork error');
+              receivedComplete = true; // prevent duplicate complete emission
+              continue;
+            }
+
             if (event.type === 'complete') {
               receivedComplete = true;
             }
@@ -1298,13 +1445,29 @@ export class ClaudeAgent extends BaseAgent {
           }
         }
 
+        // Missing-UUID fallback: branch cutoff failed because resumeSessionAt target
+        // no longer exists server-side. Retry once by resuming the child session
+        // that was already established (without re-applying resumeSessionAt).
+        if (suppressedBranchCutoffError && !_isRetry && this.sessionId) {
+          debug('[SESSION_DEBUG] >>> DETECTED MISSING-UUID BRANCH CUTOFF ERROR - retrying on child session without cutoff');
+          yield { type: 'info', message: 'Branch point was compacted on server, retrying with nearest available context...' };
+          yield* this.chat(userMessage, attachments);
+          return;
+        }
+
         // Detect empty response when resuming - SDK silently fails resume if session is invalid
         // In this case, we got a new session ID but no assistant content
         debug('[SESSION_DEBUG] Post-loop check: wasResuming=', wasResuming, 'receivedAssistantContent=', receivedAssistantContent, '_isRetry=', _isRetry);
         if (wasResuming && !receivedAssistantContent && !_isRetry) {
           debug('[SESSION_DEBUG] >>> DETECTED EMPTY RESPONSE - triggering recovery');
+          if (this.branchFromSdkSessionId) {
+            debug(`[ClaudeAgent] Branch fork failed (empty response) before child session establishment (parent=${this.branchFromSdkSessionId}), recovering as fresh session`);
+          }
           // SDK resume failed silently - clear session and retry with context
           this.sessionId = null;
+          this.branchFromSdkSessionId = null; // prevent retry from re-attempting fork with dead parent
+          this.branchFromSdkCwd = null;
+          this.branchFromSdkTurnId = null;
           // Notify that we're clearing the session ID (for persistence)
           this.config.onSdkSessionIdCleared?.();
           // Clear pinned state for fresh start
@@ -1312,6 +1475,8 @@ export class ClaudeAgent extends BaseAgent {
           this.preferencesDriftNotified = false;
 
           // Build recovery context from previous messages to inject into retry
+          // Skip for branch failures — the messages are already in the UI, and
+          // injecting 300+ messages as recovery context overflows the SDK.
           const recoveryContext = this.buildRecoveryContext();
           const messageWithContext = recoveryContext
             ? recoveryContext + userMessage
@@ -1457,6 +1622,11 @@ export class ClaudeAgent extends BaseAgent {
         // The SDK's internal Claude Code process exits with code 1 for various API errors
         const isProcessError = errorMsg.includes('process exited with code');
 
+        // Include captured stderr in diagnostics (used by multiple checks below)
+        const stderrContext = this.lastStderrOutput.length > 0
+          ? this.lastStderrOutput.join('\n')
+          : undefined;
+
         // [SESSION_DEBUG] Comprehensive logging for session recovery investigation
         debug('[SESSION_DEBUG] === ERROR HANDLER ENTRY ===');
         debug('[SESSION_DEBUG] errorMsg:', errorMsg);
@@ -1468,34 +1638,53 @@ export class ClaudeAgent extends BaseAgent {
         debug('[SESSION_DEBUG] lastStderrOutput length:', this.lastStderrOutput.length);
         debug('[SESSION_DEBUG] lastStderrOutput:', this.lastStderrOutput.join('\n'));
 
+        // Check for expired session error - SDK session no longer exists server-side.
+        // This happens when sessions expire (TTL) or are cleaned up by Anthropic.
+        // Check error message, raw error, AND stderr — the SDK may propagate the error
+        // through different paths depending on version/timing.
+        const SESSION_EXPIRED_MARKER = 'No conversation found with session ID';
+        const isSessionExpired =
+          suppressedSessionExpiredError ||  // stream-level suppression already detected this
+          errorMsg.includes(SESSION_EXPIRED_MARKER) ||
+          (rawErrorMsg || '').includes(SESSION_EXPIRED_MARKER) ||
+          (stderrContext || '').includes(SESSION_EXPIRED_MARKER);
+        debug('[SESSION_DEBUG] isSessionExpired:', isSessionExpired, 'suppressedSessionExpiredError:', suppressedSessionExpiredError);
+
+        // Missing-UUID fallback may surface as a generic process-exit error in catch,
+        // even after we suppressed the underlying stream error event above.
+        // If branch cutoff failed but child session is established, retry once without cutoff.
+        if (suppressedBranchCutoffError && wasResuming && !_isRetry && this.sessionId) {
+          debug('[SESSION_DEBUG] >>> TAKING PATH: missing-UUID branch-cutoff fallback from catch');
+          yield { type: 'info', message: 'Branch point was compacted on server, retrying with nearest available context...' };
+          yield* this.chat(userMessage, attachments);
+          return;
+        }
+
+        if (isSessionExpired && wasResuming && !_isRetry) {
+          debug('[SESSION_DEBUG] >>> TAKING PATH: Session expired recovery');
+          if (this.branchFromSdkSessionId) {
+            debug(`[ClaudeAgent] Branch fork failed (session expired) before child session establishment (parent=${this.branchFromSdkSessionId}), recovering as fresh session`);
+          }
+          console.error('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
+          debug('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
+          this.sessionId = null;
+          this.branchFromSdkSessionId = null; // prevent retry from re-attempting fork with dead parent
+          this.branchFromSdkCwd = null;
+          this.branchFromSdkTurnId = null;
+          this.config.onSdkSessionIdCleared?.(); // persist cleared ID to JSONL header
+          // Clear pinned state so retry captures fresh values
+          this.pinnedPreferencesPrompt = null;
+          this.preferencesDriftNotified = false;
+          // Use 'info' instead of 'status' to show message without spinner
+          yield { type: 'info', message: 'Session expired, restoring context...' };
+          // Recursively call with isRetry=true (yield* delegates all events)
+          yield* this.chat(userMessage, attachments, { isRetry: true });
+          return;
+        }
+
         if (isProcessError) {
-          // Include captured stderr in diagnostics - this is often where the real error is
-          const stderrContext = this.lastStderrOutput.length > 0
-            ? this.lastStderrOutput.join('\n')
-            : undefined;
           if (stderrContext) {
             debug('[SDK process error] Captured stderr:', stderrContext);
-          }
-
-          // Check for expired session error - SDK session no longer exists server-side
-          // This happens when sessions expire (TTL) or are cleaned up by Anthropic
-          const isSessionExpired = stderrContext?.includes('No conversation found with session ID');
-          debug('[SESSION_DEBUG] isSessionExpired:', isSessionExpired);
-
-          if (isSessionExpired && wasResuming && !_isRetry) {
-            debug('[SESSION_DEBUG] >>> TAKING PATH: Session expired recovery');
-            console.error('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
-            debug('[ClaudeAgent] SDK session expired server-side, clearing and retrying fresh');
-            this.sessionId = null;
-            this.config.onSdkSessionIdCleared?.(); // persist cleared ID to JSONL header
-            // Clear pinned state so retry captures fresh values
-            this.pinnedPreferencesPrompt = null;
-            this.preferencesDriftNotified = false;
-            // Use 'info' instead of 'status' to show message without spinner
-            yield { type: 'info', message: 'Session expired, restoring context...' };
-            // Recursively call with isRetry=true (yield* delegates all events)
-            yield* this.chat(userMessage, attachments, { isRetry: true });
-            return;
           }
 
           // Check for Windows SDK setup error (missing .claude/skills directory)
@@ -1595,7 +1784,14 @@ export class ClaudeAgent extends BaseAgent {
         debug('[SESSION_DEBUG] isProcessError=false, checking wasResuming fallback');
         if (wasResuming && !_isRetry) {
           debug('[SESSION_DEBUG] >>> TAKING PATH: wasResuming fallback retry');
+          if (this.branchFromSdkSessionId) {
+            debug(`[ClaudeAgent] Branch fork failed (generic error) before child session establishment (parent=${this.branchFromSdkSessionId}), recovering as fresh session`);
+          }
           this.sessionId = null;
+          this.branchFromSdkSessionId = null; // prevent retry from re-attempting fork with dead parent
+          this.branchFromSdkCwd = null;
+          this.branchFromSdkTurnId = null;
+          this.config.onSdkSessionIdCleared?.(); // persist cleared ID to JSONL header
           // Clear pinned state so retry captures fresh values
           this.pinnedPreferencesPrompt = null;
           this.preferencesDriftNotified = false;
@@ -1676,6 +1872,11 @@ export class ClaudeAgent extends BaseAgent {
     // Add context parts using centralized PromptBuilder
     // This includes: date/time, session state (with plansFolderPath),
     // workspace capabilities, and working directory context
+    const textPromptDiagnostics = getPermissionModeDiagnostics(this.modeSessionId)
+    this.debug(
+      `[ModeSnapshot] sessionId=${this.modeSessionId} buildTextPrompt mode=${textPromptDiagnostics.permissionMode} ` +
+      `modeVersion=${textPromptDiagnostics.modeVersion} changedBy=${textPromptDiagnostics.lastChangedBy} changedAt=${textPromptDiagnostics.lastChangedAt}`
+    )
     const contextParts = this.promptBuilder.buildContextParts(
       { plansFolderPath: getSessionPlansPath(this.workspaceRootPath, this.modeSessionId) },
       this.sourceManager.formatSourceState()
@@ -1717,6 +1918,11 @@ export class ClaudeAgent extends BaseAgent {
     // Add context parts using centralized PromptBuilder
     // This includes: date/time, session state (with plansFolderPath),
     // workspace capabilities, and working directory context
+    const sdkPromptDiagnostics = getPermissionModeDiagnostics(this.modeSessionId)
+    this.debug(
+      `[ModeSnapshot] sessionId=${this.modeSessionId} buildSDKUserMessage mode=${sdkPromptDiagnostics.permissionMode} ` +
+      `modeVersion=${sdkPromptDiagnostics.modeVersion} changedBy=${sdkPromptDiagnostics.lastChangedBy} changedAt=${sdkPromptDiagnostics.lastChangedAt}`
+    )
     const contextParts = this.promptBuilder.buildContextParts(
       { plansFolderPath: getSessionPlansPath(this.workspaceRootPath, this.modeSessionId) },
       this.sourceManager.formatSourceState()
@@ -1950,6 +2156,17 @@ export class ClaudeAgent extends BaseAgent {
         canRetry: true,
         retryDelayMs: 2000,
       },
+      'max_output_tokens': {
+        code: 'invalid_request',
+        title: 'Output Too Large',
+        message: 'The response exceeded the maximum output token limit.',
+        details: ['Try breaking the task into smaller parts', 'Reduce the scope of the request'],
+        actions: [
+          { key: 'r', label: 'Retry', action: 'retry' },
+        ],
+        canRetry: true,
+        retryDelayMs: 1000,
+      },
       'unknown': {
         code: 'unknown_error',
         title: 'Unknown Error',
@@ -2099,8 +2316,7 @@ export class ClaudeAgent extends BaseAgent {
   }
 
   setModel(model: string): void {
-    this.config.model = model;
-    // Note: Model change takes effect on the next query
+    super.setModel(model);
   }
 
   // ============================================================
@@ -2259,90 +2475,22 @@ export class ClaudeAgent extends BaseAgent {
   // ============================================================
 
   /**
-   * Ensure branched sessions establish SDK fork context at creation time.
-   * This prevents "fake branches" where transcript history is copied but
-   * backend session context is only attempted later on first user message.
+   * Branch preflight is intentionally a no-op for Claude sessions.
+   *
+   * The SDK's fork mechanism (resume + forkSession) runs naturally on the
+   * first user message in chat(). Attempting to pre-fork with a separate
+   * SDK subprocess is unreliable — the forked session gets garbage-collected
+   * by Anthropic before the user sends their first message, or the subprocess
+   * crashes during initialization.
+   *
+   * Defense-in-depth recovery in chat() handles fork failures:
+   * - wasResuming covers branchFromSdkSessionId
+   * - Session-expired detection checks errorMsg, rawErrorMsg, and stderr
+   * - branchFromSdkSessionId is cleared on recovery to prevent retry loops
    */
   override async ensureBranchReady(): Promise<void> {
-    // Nothing to preflight for non-branched sessions or already-initialized sessions.
-    if (this.sessionId || !this.branchFromSdkSessionId) return;
-
-    const options: Options = {
-      ...getDefaultOptions(this.config.envOverrides),
-      model: this.getModel(),
-      // We only need session initialization/fork; no assistant turn required.
-      maxTurns: 0,
-      resume: this.branchFromSdkSessionId,
-      forkSession: true,
-      // Keep behavior aligned with normal chat options (permissions are enforced via hooks there).
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-      tools: { type: 'preset', preset: 'claude_code' },
-    };
-
-    const BRANCH_PREFLIGHT_TIMEOUT = 15_000;
-    let capturedSessionId: string | null = null;
-    let preflightQuery: Query | null = null;
-    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-
-    try {
-      preflightQuery = query({ prompt: ' ', options });
-
-      capturedSessionId = await Promise.race([
-        (async () => {
-          for await (const msg of preflightQuery!) {
-            if ('session_id' in msg && msg.session_id) return msg.session_id;
-          }
-          return null;
-        })(),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(
-            () => reject(new Error('Branch preflight timed out after 15s')),
-            BRANCH_PREFLIGHT_TIMEOUT
-          );
-        }),
-      ]);
-    } catch (error) {
-      // On error/timeout: interrupt() is needed to kill the SDK subprocess
-      // and stop the detached async iterator. Race it against a 2s timeout
-      // so a stuck subprocess can't block the catch path indefinitely.
-      if (preflightQuery) {
-        // Temporarily suppress ERR_STREAM_WRITE_AFTER_END that the SDK may
-        // emit during interrupt — it has no stdin error handler (SDK bug).
-        const suppress = (err: Error & { code?: string }) => {
-          if (err.code === 'ERR_STREAM_WRITE_AFTER_END') return;
-          throw err;
-        };
-        process.prependOnceListener('uncaughtException', suppress);
-        try {
-          await Promise.race([
-            preflightQuery.interrupt(),
-            new Promise<void>(r => setTimeout(r, 2000)),
-          ]);
-        } catch {
-          // Best-effort cleanup — ignore errors
-        } finally {
-          process.removeListener('uncaughtException', suppress);
-        }
-      }
-      throw new Error(
-        `Failed to establish branch context: ${error instanceof Error ? error.message : String(error)}`
-      );
-    } finally {
-      if (timeoutHandle) clearTimeout(timeoutHandle);
-      // On SUCCESS: skip interrupt(). The query completed and will clean up
-      // naturally. Calling interrupt() here races with the SDK's internal
-      // stream teardown — if the subprocess exits between the interrupt
-      // request write and stdin.end(), the SDK emits ERR_STREAM_WRITE_AFTER_END
-      // as an uncaught exception (SDK bug: no 'error' handler on processStdin).
-    }
-
-    if (!capturedSessionId) {
-      throw new Error('Failed to establish branch context during creation: no forked session ID received');
-    }
-
-    this.sessionId = capturedSessionId;
-    this.config.onSdkSessionIdUpdate?.(capturedSessionId);
+    // No preflight needed — fork happens on first chat() call via
+    // resume: branchFromSdkSessionId + forkSession: true
   }
 
   // ============================================================

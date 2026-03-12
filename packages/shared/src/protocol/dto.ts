@@ -11,10 +11,12 @@ import type {
   TypedError,
   ContentBadge,
   ToolDisplayMeta,
+  AnnotationV1,
   PermissionRequest as BasePermissionRequest,
 } from '@craft-agent/core/types'
 import type { PermissionMode } from '../agent/mode-types'
 import type { ThinkingLevel } from '../agent/thinking-levels'
+import type { CustomEndpointConfig } from '../config/llm-connections'
 import type {
   AuthRequest as SharedAuthRequest,
   CredentialInputMode as SharedCredentialInputMode,
@@ -119,7 +121,12 @@ export interface CreateSessionOptions {
   labels?: string[]
   isFlagged?: boolean
   enabledSourceSlugs?: string[]
+  /**
+   * Message ID to branch from. This is a hard context cutoff:
+   * the new session must not include model context from later parent messages.
+   */
   branchFromMessageId?: string
+  /** Parent session ID used together with branchFromMessageId. */
   branchFromSessionId?: string
 }
 
@@ -162,6 +169,7 @@ export type SessionEvent =
   | { type: 'task_backgrounded'; sessionId: string; toolUseId: string; taskId: string; intent?: string; turnId?: string }
   | { type: 'shell_backgrounded'; sessionId: string; toolUseId: string; shellId: string; intent?: string; command?: string; turnId?: string }
   | { type: 'task_progress'; sessionId: string; toolUseId: string; elapsedSeconds: number; turnId?: string }
+  | { type: 'task_completed'; sessionId: string; taskId: string; status: 'completed' | 'failed' | 'stopped'; outputFile?: string; summary?: string; turnId?: string }
   | { type: 'shell_killed'; sessionId: string; shellId: string }
   | { type: 'user_message'; sessionId: string; message: Message; status: 'accepted' | 'queued' | 'processing'; optimisticMessageId?: string }
   | { type: 'session_flagged'; sessionId: string }
@@ -179,6 +187,7 @@ export type SessionEvent =
   | { type: 'auth_completed'; sessionId: string; requestId: string; success: boolean; cancelled?: boolean; error?: string }
   | { type: 'source_activated'; sessionId: string; sourceSlug: string; originalMessage: string }
   | { type: 'usage_update'; sessionId: string; tokenUsage: { inputTokens: number; contextWindow?: number } }
+  | { type: 'message_annotations_updated'; sessionId: string; messageId: string; annotations: AnnotationV1[] }
 
 export interface SendMessageOptions {
   skillSlugs?: string[]
@@ -212,9 +221,12 @@ export type SessionCommand =
   | { type: 'revokeShare' }
   | { type: 'refreshTitle' }
   | { type: 'setConnection'; connectionSlug: string }
-  | { type: 'setPendingPlanExecution'; planPath: string }
+  | { type: 'setPendingPlanExecution'; planPath: string; draftInputSnapshot?: string }
   | { type: 'markCompactionComplete' }
   | { type: 'clearPendingPlanExecution' }
+  | { type: 'addAnnotation'; messageId: string; annotation: AnnotationV1 }
+  | { type: 'removeAnnotation'; messageId: string; annotationId: string }
+  | { type: 'updateAnnotation'; messageId: string; annotationId: string; patch: Partial<AnnotationV1> }
 
 export interface NewChatActionParams {
   input?: string
@@ -296,6 +308,8 @@ export interface LlmConnectionSetup {
   modelSelectionMode?: 'automaticallySyncedFromProvider' | 'userDefined3Tier'
   /** When true, reject setup if the connection doesn't already exist (reauth guard). */
   updateOnly?: boolean
+  /** Custom endpoint protocol for arbitrary OpenAI/Anthropic-compatible APIs */
+  customEndpoint?: CustomEndpointConfig
 }
 
 export interface TestLlmConnectionParams {
@@ -304,6 +318,8 @@ export interface TestLlmConnectionParams {
   baseUrl?: string
   model?: string
   piAuthProvider?: string
+  /** Optional custom endpoint protocol hint so setup tests mirror runtime routing */
+  customEndpoint?: CustomEndpointConfig
 }
 
 export interface TestLlmConnectionResult {
@@ -463,7 +479,7 @@ export interface TestAutomationPayload {
   automationId?: string
   automationName?: string
   actions: TestAutomationAction[]
-  permissionMode?: 'safe' | 'ask' | 'allow-all'
+  permissionMode?: PermissionMode
   labels?: string[]
 }
 

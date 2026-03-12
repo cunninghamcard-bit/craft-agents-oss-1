@@ -18,13 +18,14 @@ import {
   type BackendHostRuntimeContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
-import { getLlmConnection, getDefaultLlmConnection } from '@craft-agent/shared/config'
+import { getLlmConnection, getDefaultLlmConnection, getDefaultThinkingLevel } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { InitGate } from '@craft-agent/server-core/domain'
 import {
   getWorkspaces,
   getWorkspaceByNameOrId,
   loadConfigDefaults,
+  loadPreferences,
 
   migrateLegacyCredentials,
   migrateLegacyLlmConnectionsConfig,
@@ -49,6 +50,7 @@ import {
   getSessionAttachmentsPath,
   getSessionPath as getSessionStoragePath,
   sessionPersistenceQueue,
+  getHeaderMetadataSignature,
   type StoredSession,
   type StoredMessage,
   type SessionMetadata,
@@ -61,11 +63,12 @@ import { ConfigWatcher, type ConfigWatcherCallbacks } from '@craft-agent/shared/
 import { getValidClaudeOAuthToken } from '@craft-agent/shared/auth'
 import { resolveAuthEnvVars } from '@craft-agent/shared/config'
 import { toolMetadataStore, getLastApiError } from '@craft-agent/shared/interceptor'
+import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
 import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
-import type { Message, StoredAttachment, ToolDisplayMeta } from '@craft-agent/core/types'
-import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment } from '@craft-agent/shared/utils'
+import { messageToStored, storedToMessage, type Message, type StoredAttachment, type ToolDisplayMeta } from '@craft-agent/core/types'
+import { formatPathsToRelative, formatToolInputPaths, perf, encodeIconToDataUrlAsync, getEmojiIcon, resetSummarizationClient, resolveToolIcon, readFileAttachment, selectSpreadMessages, normalizePath } from '@craft-agent/shared/utils'
 import { loadAllSkills, loadSkillBySlug, type LoadedSkill } from '@craft-agent/shared/skills'
 import { getToolIconsDir, getMiniModel } from '@craft-agent/shared/config'
 import type { SummarizeCallback } from '@craft-agent/shared/sources'
@@ -73,6 +76,7 @@ import { type ThinkingLevel, DEFAULT_THINKING_LEVEL } from '@craft-agent/shared/
 import { evaluateAutoLabels } from '@craft-agent/shared/labels/auto'
 import { listLabels } from '@craft-agent/shared/labels/storage'
 import { extractLabelId } from '@craft-agent/shared/labels'
+import { ensureLabelsExist } from '@craft-agent/shared/labels/crud'
 import { AutomationSystem, AUTOMATIONS_HISTORY_FILE, type AutomationSystemMetadataSnapshot } from '@craft-agent/shared/automations'
 
 // Import from server-core domain utilities
@@ -145,6 +149,8 @@ export const AGENT_FLAGS = {
 } as const
 
 const MAX_ADMIN_REMEMBER_MINUTES = 60
+const MAX_ANNOTATIONS_PER_MESSAGE = 200
+const MAX_ANNOTATION_JSON_BYTES = 32 * 1024
 
 /**
  * Validate spawn attachment path using the same safety policy as IPC attachment reads.
@@ -195,6 +201,140 @@ async function validateSpawnAttachmentPath(filePath: string): Promise<string> {
   }
 
   return realFilePath
+}
+
+const PI_TURN_ANCHORS_VERSION = 1
+const PI_TURN_ANCHORS_FILE = 'pi-turn-anchors.json'
+
+interface PiTurnAnchorsIndex {
+  version: number
+  anchors: Record<string, string>
+}
+
+function getPiTurnAnchorsPath(sessionPath: string): string {
+  return join(sessionPath, 'meta', PI_TURN_ANCHORS_FILE)
+}
+
+async function loadPiTurnAnchors(sessionPath: string): Promise<PiTurnAnchorsIndex> {
+  const filePath = getPiTurnAnchorsPath(sessionPath)
+  try {
+    const raw = await readFile(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<PiTurnAnchorsIndex>
+    const anchors = (parsed.anchors && typeof parsed.anchors === 'object') ? parsed.anchors : {}
+    const normalized: Record<string, string> = {}
+    for (const [messageId, anchor] of Object.entries(anchors)) {
+      if (typeof messageId === 'string' && typeof anchor === 'string' && messageId && anchor) {
+        normalized[messageId] = anchor
+      }
+    }
+    return {
+      version: PI_TURN_ANCHORS_VERSION,
+      anchors: normalized,
+    }
+  } catch {
+    return {
+      version: PI_TURN_ANCHORS_VERSION,
+      anchors: {},
+    }
+  }
+}
+
+async function getPiTurnAnchor(sessionPath: string, messageId: string): Promise<string | undefined> {
+  if (!messageId) return undefined
+  const index = await loadPiTurnAnchors(sessionPath)
+  return index.anchors[messageId]
+}
+
+async function savePiTurnAnchor(sessionPath: string, messageId: string, anchorId: string): Promise<void> {
+  if (!messageId || !anchorId) return
+
+  const index = await loadPiTurnAnchors(sessionPath)
+  if (index.anchors[messageId] === anchorId) return
+
+  index.anchors[messageId] = anchorId
+
+  const filePath = getPiTurnAnchorsPath(sessionPath)
+  await mkdir(join(sessionPath, 'meta'), { recursive: true })
+  await writeFile(filePath, JSON.stringify(index), 'utf-8')
+}
+
+const CLAUDE_TURN_ANCHORS_VERSION = 1
+const CLAUDE_TURN_ANCHORS_FILE = 'claude-turn-anchors.json'
+
+interface ClaudeTurnAnchorRecord {
+  sdkSessionId: string
+  sdkMessageUuid: string
+}
+
+interface ClaudeTurnAnchorsIndex {
+  version: number
+  anchors: Record<string, ClaudeTurnAnchorRecord>
+}
+
+function getClaudeTurnAnchorsPath(sessionPath: string): string {
+  return join(sessionPath, 'meta', CLAUDE_TURN_ANCHORS_FILE)
+}
+
+function isClaudeMessageUuid(turnId: string): boolean {
+  return /^msg_[A-Za-z0-9]+$/.test(turnId)
+}
+
+async function loadClaudeTurnAnchors(sessionPath: string): Promise<ClaudeTurnAnchorsIndex> {
+  const filePath = getClaudeTurnAnchorsPath(sessionPath)
+  try {
+    const raw = await readFile(filePath, 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<ClaudeTurnAnchorsIndex>
+    const anchors = (parsed.anchors && typeof parsed.anchors === 'object') ? parsed.anchors : {}
+    const normalized: Record<string, ClaudeTurnAnchorRecord> = {}
+
+    for (const [messageId, value] of Object.entries(anchors)) {
+      if (!messageId || typeof messageId !== 'string') continue
+      if (!value || typeof value !== 'object') continue
+      const sdkSessionId = (value as { sdkSessionId?: unknown }).sdkSessionId
+      const sdkMessageUuid = (value as { sdkMessageUuid?: unknown }).sdkMessageUuid
+      if (typeof sdkSessionId === 'string' && sdkSessionId && typeof sdkMessageUuid === 'string' && sdkMessageUuid) {
+        normalized[messageId] = { sdkSessionId, sdkMessageUuid }
+      }
+    }
+
+    return {
+      version: CLAUDE_TURN_ANCHORS_VERSION,
+      anchors: normalized,
+    }
+  } catch {
+    return {
+      version: CLAUDE_TURN_ANCHORS_VERSION,
+      anchors: {},
+    }
+  }
+}
+
+async function getClaudeTurnAnchor(sessionPath: string, messageId: string): Promise<ClaudeTurnAnchorRecord | undefined> {
+  if (!messageId) return undefined
+  const index = await loadClaudeTurnAnchors(sessionPath)
+  return index.anchors[messageId]
+}
+
+async function saveClaudeTurnAnchor(
+  sessionPath: string,
+  messageId: string,
+  sdkSessionId: string,
+  sdkMessageUuid: string,
+): Promise<void> {
+  if (!messageId || !sdkSessionId || !sdkMessageUuid) return
+
+  const index = await loadClaudeTurnAnchors(sessionPath)
+  const previous = index.anchors[messageId]
+  if (previous && previous.sdkSessionId === sdkSessionId && previous.sdkMessageUuid === sdkMessageUuid) return
+
+  index.anchors[messageId] = {
+    sdkSessionId,
+    sdkMessageUuid,
+  }
+
+  const filePath = getClaudeTurnAnchorsPath(sessionPath)
+  await mkdir(join(sessionPath, 'meta'), { recursive: true })
+  await writeFile(filePath, JSON.stringify(index), 'utf-8')
 }
 
 /**
@@ -562,6 +702,7 @@ async function resolveToolDisplayMeta(
     'Grep': 'Search',
     'Glob': 'Find Files',
     'Task': 'Agent',
+    'Agent': 'Agent',
     'WebFetch': 'Fetch URL',
     'WebSearch': 'Web Search',
     'TodoWrite': 'Update Todos',
@@ -694,6 +835,8 @@ interface ManagedSession {
   }>
   // Map of shellId -> command for killing background shells
   backgroundShellCommands: Map<string, string>
+  // Map of taskId -> output info for background task results
+  backgroundTaskOutputs: Map<string, { outputFile: string; summary: string; status: string; completedAt: number }>
   // Whether messages have been loaded from disk (for lazy loading)
   messagesLoaded: boolean
   // Pending auth request tracking (for unified auth flow)
@@ -712,10 +855,22 @@ interface ManagedSession {
   // Whether this session is hidden from session list (e.g., mini edit sessions)
   hidden?: boolean
   branchFromMessageId?: string
-  // Parent session's SDK session ID (for SDK-level fork via resume + forkSession)
+  // Branch context strategy:
+  // - sdk-fork: provider-level fork from parent SDK session
+  // - seeded-fresh-session: fresh backend session seeded with transcript up to branch cutoff
+  branchContextStrategy?: 'sdk-fork' | 'seeded-fresh-session'
+  // Parent session's SDK session ID (used only when branchContextStrategy === 'sdk-fork')
   branchFromSdkSessionId?: string
-  // Parent session's storage path (for Pi SDK fork — locating parent Pi session files)
+  // Parent session's storage path (used only when branchContextStrategy === 'sdk-fork')
   branchFromSessionPath?: string
+  // Parent session's sdkCwd — needed so the fork subprocess uses the correct
+  // ~/.claude/projects/{cwd-hash}/ directory to find the parent's session file.
+  branchFromSdkCwd?: string
+  // SDK assistant message UUID at the branch point — used as resumeSessionAt
+  // to trim the forked conversation at the branch point.
+  branchFromSdkTurnId?: string
+  // One-shot flag for seeded branch mode - set true after first turn seed injection.
+  branchSeedApplied?: boolean
   // Token refresh manager for OAuth token refresh with rate limiting
   tokenRefreshManager: TokenRefreshManager
   // Metadata for sessions created by automations
@@ -742,7 +897,8 @@ function createManagedSession(
   overrides?: Partial<ManagedSession>,
 ): ManagedSession {
   const s = source as Record<string, unknown>
-  return {
+
+  const managed = {
     // Spread all session-like fields from source (id, name, permissionMode, labels, model, etc.)
     // This ensures new persistent fields automatically flow through without manual copying.
     ...Object.fromEntries(
@@ -759,6 +915,7 @@ function createManagedSession(
     isFlagged: (s.isFlagged ?? false) as boolean,
     messageQueue: [],
     backgroundShellCommands: new Map(),
+    backgroundTaskOutputs: new Map(),
     messagesLoaded: false,
     tokenRefreshManager: new TokenRefreshManager(getSourceCredentialManager(), {
       log: (msg) => sessionLog.debug(msg),
@@ -766,6 +923,19 @@ function createManagedSession(
     // Caller overrides (permissionMode defaults, thinkingLevel, messagesLoaded, etc.)
     ...overrides,
   } as ManagedSession
+
+  if (managed.branchFromMessageId && !managed.branchContextStrategy) {
+    managed.branchContextStrategy = managed.branchFromSdkSessionId
+      ? 'sdk-fork'
+      : 'seeded-fresh-session'
+  }
+
+  if (managed.branchContextStrategy === 'seeded-fresh-session' && managed.branchSeedApplied === undefined) {
+    // If an SDK session ID already exists, first turn has already happened.
+    managed.branchSeedApplied = !!managed.sdkSessionId
+  }
+
+  return managed
 }
 
 /**
@@ -808,19 +978,6 @@ function managedToSession(m: ManagedSession, overrides?: Partial<Session>): Sess
     supportsBranching: resolveSupportsBranching(m),
     ...overrides,
   } as Session
-}
-
-// Convert runtime Message to StoredMessage for persistence
-// All fields are shared except role↔type rename and isStreaming (transient, excluded)
-function messageToStored(msg: Message): StoredMessage {
-  const { role, isStreaming, isPending, ...rest } = msg
-  return { ...rest, type: role } as StoredMessage
-}
-
-// Convert StoredMessage to runtime Message
-function storedToMessage(stored: StoredMessage): Message {
-  const { type, ...rest } = stored
-  return { ...rest, role: type, timestamp: stored.timestamp ?? Date.now() } as Message
 }
 
 // Performance: Batch IPC delta events to reduce renderer load
@@ -866,6 +1023,8 @@ export class SessionManager implements ISessionManager {
   private activeViewingSession: Map<string, string> = new Map()
   /** Coordinates startup initialization waiters from IPC handlers. */
   private initGate = new InitGate()
+  // O(1) index: taskId → sessionId for background task output lookup (avoids O(n) session scan)
+  private taskOutputIndex: Map<string, string> = new Map()
   /** Monotonic clock to ensure strictly increasing message timestamps */
   private lastTimestamp = 0
 
@@ -1007,20 +1166,6 @@ export class SessionManager implements ISessionManager {
       this.persistSession(managed)
     }
 
-    // Update session metadata via AutomationSystem (handles diffing and event emission internally)
-    const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
-    if (automationSystem) {
-      automationSystem.updateSessionMetadata(sessionId, {
-        permissionMode: header.permissionMode,
-        labels: header.labels,
-        isFlagged: header.isFlagged,
-        sessionStatus: header.sessionStatus,
-        sessionName: header.name,
-      }).catch((error) => {
-        sessionLog.error(`[Automations] Failed to update session metadata:`, error)
-      })
-    }
-
     return changed
   }
 
@@ -1115,20 +1260,46 @@ export class SessionManager implements ISessionManager {
         this.broadcastSkillsChanged(workspaceId, skills)
       },
 
-      // Session metadata changes (external edits to session.jsonl headers).
-      // Detects label/flag/name/sessionStatus changes made by other instances or scripts.
-      // If a session is actively processing, defer applying metadata until processing stops.
+      // Session metadata changes (edits to session.jsonl headers).
+      // Detects changes from both internal writes (self) and external sources
+      // (other instances, scripts, manual edits).
       onSessionMetadataChange: (sessionId, header) => {
         const managed = this.sessions.get(sessionId)
         if (!managed) return
 
-        if (managed.isProcessing) {
-          managed.pendingExternalMetadata = header
-          sessionLog.info(`Deferred external metadata update for session ${sessionId} (processing active)`)
-          return
+        // Check if this is our own write echoing back via fs.watch().
+        // Self-writes don't need in-memory sync (already up to date), but
+        // still need to notify the automation system for event matching.
+        const incomingSignature = getHeaderMetadataSignature(header)
+        const lastWrittenSignature = sessionPersistenceQueue.getLastWrittenSignature(sessionId)
+        const isSelfWrite = !!(lastWrittenSignature && incomingSignature === lastWrittenSignature)
+
+        // For external writes: sync in-memory state + emit UI events.
+        // Skip for self-writes to avoid feedback loops (especially on Windows
+        // where fs.watch fires aggressively: unlink + rename = 2+ events).
+        if (!isSelfWrite) {
+          if (managed.isProcessing) {
+            managed.pendingExternalMetadata = header
+            sessionLog.info(`Deferred external metadata update for session ${sessionId} (processing active)`)
+          } else {
+            this.applyExternalSessionMetadata(managed, header)
+          }
         }
 
-        this.applyExternalSessionMetadata(managed, header)
+        // Always notify automation system — it does its own diffing and needs
+        // to see both self-writes and external changes for event matching.
+        const automationSystem = this.automationSystems.get(managed.workspace.rootPath)
+        if (automationSystem) {
+          automationSystem.updateSessionMetadata(sessionId, {
+            permissionMode: header.permissionMode,
+            labels: header.labels,
+            isFlagged: header.isFlagged,
+            sessionStatus: header.sessionStatus,
+            sessionName: header.name,
+          }).catch((error) => {
+            sessionLog.error(`[Automations] Failed to update session metadata:`, error)
+          })
+        }
       },
     }
 
@@ -1890,8 +2061,8 @@ export class SessionManager implements ISessionManager {
       ?? globalDefaults.workspaceDefaults.permissionMode
 
     const userDefaultWorkingDir = wsConfig?.defaults?.workingDirectory || undefined
-    // Get default thinking level from workspace config, fallback to global defaults
-    const defaultThinkingLevel = wsConfig?.defaults?.thinkingLevel ?? globalDefaults.workspaceDefaults.thinkingLevel
+    // Get default thinking level from workspace config, fallback to app-level default
+    const defaultThinkingLevel = wsConfig?.defaults?.thinkingLevel ?? getDefaultThinkingLevel()
     // Get default model from workspace config (used when no session-specific model is set)
     const defaultModel = wsConfig?.defaults?.model
     // Get default enabled sources from workspace config
@@ -1927,8 +2098,11 @@ export class SessionManager implements ISessionManager {
       sourceMessageId: string
       sourceSession: StoredSession
       branchIdx: number
+      branchContextStrategy: 'sdk-fork' | 'seeded-fresh-session'
       branchFromSdkSessionId?: string
       branchFromSessionPath?: string
+      branchFromSdkCwd?: string
+      branchFromSdkTurnId?: string
     } | undefined
 
     if (options?.branchFromSessionId || options?.branchFromMessageId) {
@@ -2005,22 +2179,100 @@ export class SessionManager implements ISessionManager {
         throw new Error(`Invalid branch request: message ${options.branchFromMessageId} not found in source session`)
       }
 
-      const branchFromSdkSessionId = sourceManaged?.sdkSessionId || sourceSession.sdkSessionId
-      const branchFromSessionPath = getSessionStoragePath(workspaceRootPath, options.branchFromSessionId)
+      // New branches always use strict provider-level SDK fork semantics.
+      // Seeded mode remains only for legacy sessions created before strict fork was enforced.
+      const branchContextStrategy: 'sdk-fork' | 'seeded-fresh-session' = 'sdk-fork'
+
+      const branchFromSdkSessionId = branchContextStrategy === 'sdk-fork'
+        ? (sourceManaged?.sdkSessionId || sourceSession.sdkSessionId)
+        : undefined
+      const branchFromSessionPath = branchContextStrategy === 'sdk-fork'
+        ? getSessionStoragePath(workspaceRootPath, options.branchFromSessionId)
+        : undefined
+      // Capture parent's sdkCwd so the child SDK subprocess can find the parent's
+      // session file (stored under ~/.claude/projects/{cwd-hash}/).
+      const branchFromSdkCwd = branchContextStrategy === 'sdk-fork'
+        ? (sourceManaged?.sdkCwd || sourceSession.sdkCwd)
+        : undefined
+
+      // Provider-native branch anchor at branch point.
+      // - Claude: assistant message UUID (resumeSessionAt), but only when anchor lineage
+      //   matches the parent SDK session being resumed.
+      // - Pi: session entry ID loaded from sidecar (pi-turn-anchors.json)
+      const branchMessage = sourceSession.messages[branchIdx]
+      let branchFromSdkTurnId: string | undefined
+      if (branchContextStrategy === 'sdk-fork') {
+        if (sourceBackendContext.provider === 'pi') {
+          if (branchFromSessionPath) {
+            branchFromSdkTurnId = await getPiTurnAnchor(branchFromSessionPath, options.branchFromMessageId)
+            if (!branchFromSdkTurnId) {
+              sessionLog.warn('Pi branch anchor missing: falling back to full-history fork for this branch', {
+                workspaceId,
+                branchFromSessionId: options.branchFromSessionId,
+                branchFromMessageId: options.branchFromMessageId,
+              })
+            }
+          }
+        } else if (sourceBackendContext.provider === 'anthropic') {
+          if (branchFromSessionPath && branchFromSdkSessionId) {
+            const anchor = await getClaudeTurnAnchor(branchFromSessionPath, options.branchFromMessageId)
+            if (!anchor) {
+              sessionLog.warn('Claude branch anchor missing: falling back to full-history fork for this branch', {
+                workspaceId,
+                branchFromSessionId: options.branchFromSessionId,
+                branchFromMessageId: options.branchFromMessageId,
+              })
+            } else if (!anchor.sdkMessageUuid || !isClaudeMessageUuid(anchor.sdkMessageUuid)) {
+              sessionLog.warn('Claude branch anchor malformed: falling back to full-history fork for this branch', {
+                workspaceId,
+                branchFromSessionId: options.branchFromSessionId,
+                branchFromMessageId: options.branchFromMessageId,
+                anchorSdkSessionId: anchor.sdkSessionId,
+              })
+            } else if (anchor.sdkSessionId !== branchFromSdkSessionId) {
+              sessionLog.warn('Claude branch anchor lineage mismatch: falling back to full-history fork for this branch', {
+                workspaceId,
+                branchFromSessionId: options.branchFromSessionId,
+                branchFromMessageId: options.branchFromMessageId,
+                anchorSdkSessionId: anchor.sdkSessionId,
+                parentSdkSessionId: branchFromSdkSessionId,
+              })
+            } else {
+              branchFromSdkTurnId = anchor.sdkMessageUuid
+            }
+          }
+        } else {
+          branchFromSdkTurnId = branchMessage?.turnId
+        }
+      }
+
+      if (branchContextStrategy === 'sdk-fork' && !branchFromSdkSessionId) {
+        sessionLog.warn('Branch validation failed: sdk-fork requires parent SDK session ID', {
+          workspaceId,
+          branchFromSessionId: options.branchFromSessionId,
+          sourceProvider: sourceBackendContext.provider,
+          targetProvider: targetBackendContext.provider,
+        })
+        throw new Error('Cannot create branch yet: parent session SDK context is not initialized. Send one message in the parent session and try again.')
+      }
 
       validatedBranch = {
         sourceSessionId: options.branchFromSessionId,
         sourceMessageId: options.branchFromMessageId,
         sourceSession,
         branchIdx,
+        branchContextStrategy,
         branchFromSdkSessionId,
         branchFromSessionPath,
+        branchFromSdkCwd,
+        branchFromSdkTurnId,
       }
 
       sessionLog.info('Branch validation succeeded', {
         workspaceId,
         branchFromSessionId: validatedBranch.sourceSessionId,
         branchFromMessageId: validatedBranch.sourceMessageId,
+        branchContextStrategy: validatedBranch.branchContextStrategy,
         branchFromSdkSessionId: !!validatedBranch.branchFromSdkSessionId,
         copiedMessageCount: validatedBranch.branchIdx + 1,
       })
@@ -2044,10 +2296,36 @@ export class SessionManager implements ISessionManager {
         throw new Error(`Failed to load newly created session ${storedSession.id} for branch copy`)
       }
 
-      branchedStored.messages = validatedBranch.sourceSession.messages.slice(0, validatedBranch.branchIdx + 1)
+      const sourceMessages = validatedBranch.sourceSession.messages.slice(0, validatedBranch.branchIdx + 1)
+
+      // Re-map embedded paths: source messages were loaded with expandSessionPath(sourceDir),
+      // so they contain absolute paths to the *source* session directory. When saved to the
+      // branch session, makeSessionPathPortable uses the *branch* dir — which won't match.
+      // Fix: replace source dir paths with branch dir paths so tokenization works on save.
+      const sourceDir = normalizePath(getSessionStoragePath(workspaceRootPath, validatedBranch.sourceSessionId))
+      const branchDir = normalizePath(getSessionStoragePath(workspaceRootPath, storedSession.id))
+      if (sourceDir !== branchDir) {
+        branchedStored.messages = sourceMessages.map(m => {
+          const json = JSON.stringify(m)
+          if (!json.includes(sourceDir)) return m
+          return JSON.parse(json.replaceAll(sourceDir, branchDir)) as StoredMessage
+        })
+      } else {
+        branchedStored.messages = sourceMessages
+      }
+
       branchedStored.branchFromMessageId = validatedBranch.sourceMessageId
-      branchedStored.branchFromSdkSessionId = validatedBranch.branchFromSdkSessionId
-      branchedStored.branchFromSessionPath = validatedBranch.branchFromSessionPath
+      if (validatedBranch.branchContextStrategy === 'sdk-fork') {
+        branchedStored.branchFromSdkSessionId = validatedBranch.branchFromSdkSessionId
+        branchedStored.branchFromSessionPath = validatedBranch.branchFromSessionPath
+        branchedStored.branchFromSdkCwd = validatedBranch.branchFromSdkCwd
+        branchedStored.branchFromSdkTurnId = validatedBranch.branchFromSdkTurnId
+      } else {
+        delete branchedStored.branchFromSdkSessionId
+        delete branchedStored.branchFromSessionPath
+        delete branchedStored.branchFromSdkCwd
+        delete branchedStored.branchFromSdkTurnId
+      }
       await saveStoredSession(branchedStored)
     }
 
@@ -2072,8 +2350,12 @@ export class SessionManager implements ISessionManager {
       systemPromptPreset: options?.systemPromptPreset,
       enabledSourceSlugs: defaultEnabledSourceSlugs,
       branchFromMessageId: validatedBranch?.sourceMessageId,
+      branchContextStrategy: validatedBranch?.branchContextStrategy,
       branchFromSdkSessionId: validatedBranch?.branchFromSdkSessionId,
       branchFromSessionPath: validatedBranch?.branchFromSessionPath,
+      branchFromSdkCwd: validatedBranch?.branchFromSdkCwd,
+      branchFromSdkTurnId: validatedBranch?.branchFromSdkTurnId,
+      branchSeedApplied: validatedBranch ? validatedBranch.branchContextStrategy === 'sdk-fork' : undefined,
       messagesLoaded: !isBranch,  // Branched sessions: lazy-load messages from JSONL
     })
 
@@ -2082,34 +2364,38 @@ export class SessionManager implements ISessionManager {
     if (isBranch) {
       await this.ensureMessagesLoaded(managed)
 
-      // Enforce branch correctness at creation time.
-      // A branch is only valid if backend context can be established now,
-      // not deferred to the first user message.
-      try {
-        await this.getOrCreateAgent(managed)
-        await managed.agent!.ensureBranchReady()
-      } catch (error) {
-        sessionLog.warn('Branch creation failed during backend preflight handshake', {
-          workspaceId,
-          sessionId: storedSession.id,
-          branchFromSessionId: validatedBranch?.sourceSessionId,
-          branchFromMessageId: validatedBranch?.sourceMessageId,
-          error: error instanceof Error ? error.message : String(error),
-        })
+      const requiresBranchPreflight = managed.branchContextStrategy === 'sdk-fork'
+      if (requiresBranchPreflight) {
+        // Enforce branch correctness at creation time.
+        // A branch is only valid if backend context can be established now,
+        // not deferred to the first user message.
+        try {
+          await this.getOrCreateAgent(managed)
+          await managed.agent!.ensureBranchReady()
+        } catch (error) {
+          sessionLog.warn('Branch creation failed during backend preflight handshake', {
+            workspaceId,
+            sessionId: storedSession.id,
+            branchFromSessionId: validatedBranch?.sourceSessionId,
+            branchFromMessageId: validatedBranch?.sourceMessageId,
+            branchContextStrategy: managed.branchContextStrategy,
+            error: error instanceof Error ? error.message : String(error),
+          })
 
-        await rollbackFailedBranchCreation({
-          managed,
-          workspaceRootPath,
-          sessionId: storedSession.id,
-          deleteFromRuntimeSessions: (id) => {
-            this.sessions.delete(id)
-          },
-          deleteStoredSession,
-        })
+          await rollbackFailedBranchCreation({
+            managed,
+            workspaceRootPath,
+            sessionId: storedSession.id,
+            deleteFromRuntimeSessions: (id) => {
+              this.sessions.delete(id)
+            },
+            deleteStoredSession,
+          })
 
-        throw new Error(
-          `Could not create branch: ${error instanceof Error ? error.message : String(error)}`
-        )
+          throw new Error(
+            `Could not create branch: ${error instanceof Error ? error.message : String(error)}`
+          )
+        }
       }
     }
 
@@ -2220,7 +2506,9 @@ export class SessionManager implements ISessionManager {
       }
 
       // Per-session env overrides
-      const envOverrides: Record<string, string> = {}
+      const envOverrides: Record<string, string> = {
+        CRAFT_WORKSPACE_PATH: managed.workspace.rootPath,
+      }
       managed.envOverrides = envOverrides
 
       // ============================================================
@@ -2231,8 +2519,10 @@ export class SessionManager implements ISessionManager {
         id: managed.id,
         workspaceRootPath: managed.workspace.rootPath,
         sdkSessionId: managed.sdkSessionId,
-        branchFromSdkSessionId: managed.branchFromSdkSessionId,
-        branchFromSessionPath: managed.branchFromSessionPath,
+        branchFromSdkSessionId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkSessionId : undefined,
+        branchFromSessionPath: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSessionPath : undefined,
+        branchFromSdkCwd: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkCwd : undefined,
+        branchFromSdkTurnId: managed.branchContextStrategy === 'sdk-fork' ? managed.branchFromSdkTurnId : undefined,
         branchFromMessageId: managed.branchFromMessageId,
         createdAt: managed.lastMessageAt,
         lastUsedAt: managed.lastMessageAt,
@@ -2240,11 +2530,21 @@ export class SessionManager implements ISessionManager {
         sdkCwd: managed.sdkCwd,
         model: managed.model,
         llmConnection: managed.llmConnection,
+        permissionMode: managed.permissionMode,
+        previousPermissionMode: managed.previousPermissionMode,
       }
 
       const onSdkSessionIdUpdate = (sdkSessionId: string) => {
         managed.sdkSessionId = sdkSessionId
-        sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
+        // Retire branch-only fork metadata now that child session is established
+        if (managed.branchFromSdkSessionId) {
+          sessionLog.info(`Branch fork established for ${managed.id}: child=${sdkSessionId}, retiring parent fork metadata (parent=${managed.branchFromSdkSessionId})`)
+          managed.branchFromSdkSessionId = undefined
+          managed.branchFromSdkCwd = undefined
+          managed.branchFromSdkTurnId = undefined
+        } else {
+          sessionLog.info(`SDK session ID captured for ${managed.id}: ${sdkSessionId}`)
+        }
         this.persistSession(managed)
         sessionPersistenceQueue.flush(managed.id)
       }
@@ -2267,6 +2567,30 @@ export class SessionManager implements ISessionManager {
         }))
       }
 
+      const getBranchSeedMessages = () => {
+        if (managed.branchContextStrategy !== 'seeded-fresh-session') return []
+        if (managed.branchSeedApplied) return []
+
+        const seedMessages = managed.messages
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .filter(m => !m.isIntermediate)
+
+        return seedMessages.map(m => ({
+          type: m.role as 'user' | 'assistant',
+          content: m.content,
+        }))
+      }
+
+      const markBranchSeedApplied = () => {
+        if (managed.branchContextStrategy !== 'seeded-fresh-session') return
+        if (managed.branchSeedApplied) return
+        managed.branchSeedApplied = true
+        sessionLog.info('Branch seed context applied', {
+          sessionId: managed.id,
+          strategy: managed.branchContextStrategy,
+        })
+      }
+
       // ============================================================
       // Construct backend via factory
       // ============================================================
@@ -2282,6 +2606,8 @@ export class SessionManager implements ISessionManager {
         onSdkSessionIdUpdate,
         onSdkSessionIdCleared,
         getRecoveryMessages,
+        getBranchSeedMessages,
+        markBranchSeedApplied,
         mcpPool: managed.mcpPool,
         poolServerUrl,
         envOverrides,
@@ -2947,6 +3273,11 @@ export class SessionManager implements ISessionManager {
           if (attachments.length > 0) fileAttachments = attachments
         }
 
+        // Notify renderer to hydrate full session metadata (including name)
+        // before streaming events arrive. Without this, the renderer creates
+        // a synthetic empty session and shows "New Chat" in the sidebar.
+        this.sendEvent({ type: 'session_created', sessionId: session.id }, managed.workspace.id)
+
         // Fire and forget — send the message but don't await completion
         this.sendMessage(session.id, request.prompt, fileAttachments).catch(err => {
           sessionLog.error(`Failed to send message to spawned session ${session.id}:`, err)
@@ -3081,6 +3412,11 @@ export class SessionManager implements ISessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_flagged', sessionId }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -3093,6 +3429,11 @@ export class SessionManager implements ISessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_unflagged', sessionId }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -3133,6 +3474,11 @@ export class SessionManager implements ISessionManager {
       await this.flushSession(managed.id)
       // Notify all windows for this workspace
       this.sendEvent({ type: 'session_status_changed', sessionId, sessionStatus }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -3186,10 +3532,10 @@ export class SessionManager implements ISessionManager {
    * Called when user clicks "Accept & Compact" to persist the plan path
    * so execution can resume after compaction (even if page reloads).
    */
-  async setPendingPlanExecution(sessionId: string, planPath: string): Promise<void> {
+  async setPendingPlanExecution(sessionId: string, planPath: string, draftInputSnapshot?: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      await setStoredPendingPlanExecution(managed.workspace.rootPath, sessionId, planPath)
+      await setStoredPendingPlanExecution(managed.workspace.rootPath, sessionId, planPath, draftInputSnapshot)
       sessionLog.info(`Session ${sessionId}: set pending plan execution for ${planPath}`)
     }
   }
@@ -3224,7 +3570,7 @@ export class SessionManager implements ISessionManager {
    * Get pending plan execution state for a session.
    * Used on reload/init to check if we need to resume plan execution.
    */
-  getPendingPlanExecution(sessionId: string): { planPath: string; awaitingCompaction: boolean } | null {
+  getPendingPlanExecution(sessionId: string): { planPath: string; draftInputSnapshot?: string; awaitingCompaction: boolean } | null {
     const managed = this.sessions.get(sessionId)
     if (!managed) return null
     return getStoredPendingPlanExecution(managed.workspace.rootPath, sessionId)
@@ -3615,6 +3961,11 @@ export class SessionManager implements ISessionManager {
       this.persistSession(managed)
       // Notify renderer of the name change
       this.sendEvent({ type: 'title_generated', sessionId, title: name }, managed.workspace.id)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -3634,13 +3985,13 @@ export class SessionManager implements ISessionManager {
     // Ensure messages are loaded from disk (lazy loading support)
     await this.ensureMessagesLoaded(managed)
 
-    // Get recent user messages (last 3) for context
-    const userMessages = managed.messages
+    // Select a spread of user messages (first, middle, last) to capture the session's purpose
+    const allUserContents = managed.messages
       .filter((m) => m.role === 'user')
-      .slice(-3)
       .map((m) => m.content)
+    const userMessages = selectSpreadMessages(allUserContents)
 
-    sessionLog.info(`refreshTitle: Found ${userMessages.length} user messages`)
+    sessionLog.info(`refreshTitle: Selected ${userMessages.length} spread messages from ${allUserContents.length} total`)
 
     if (userMessages.length === 0) {
       sessionLog.warn(`refreshTitle: No user messages found`)
@@ -3653,6 +4004,10 @@ export class SessionManager implements ISessionManager {
       .slice(-1)[0]
 
     const assistantResponse = lastAssistantMsg?.content ?? ''
+
+    // Load user preferences for language-aware title generation
+    const preferences = loadPreferences()
+    const titleOptions = { language: preferences.language }
 
     // Use existing agent or create temporary one
     let agent: AgentInstance | null = managed.agent
@@ -3699,7 +4054,7 @@ export class SessionManager implements ISessionManager {
     this.sendEvent({ type: 'title_regenerating', sessionId, isRegenerating: true }, managed.workspace.id)
 
     try {
-      const title = await agent.regenerateTitle(userMessages, assistantResponse)
+      const title = await agent.regenerateTitle(userMessages, assistantResponse, titleOptions)
       sessionLog.info(`refreshTitle: regenerateTitle returned: ${title ? `"${title}"` : 'null'}`)
       if (title) {
         managed.name = title
@@ -3831,6 +4186,173 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`Updated message ${messageId} content in session ${sessionId}`)
   }
 
+  /**
+   * Add an annotation to a message and persist the session.
+   */
+  addMessageAnnotation(sessionId: string, messageId: string, annotation: NonNullable<Message['annotations']>[number]): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      sessionLog.warn(`Cannot add annotation: session ${sessionId} not found`)
+      return
+    }
+
+    const message = managed.messages.find(m => m.id === messageId)
+    if (!message) {
+      sessionLog.warn(`Cannot add annotation: message ${messageId} not found in session ${sessionId}`)
+      return
+    }
+
+    if (!annotation?.id || !annotation?.target?.selectors?.length) {
+      sessionLog.warn(`Cannot add annotation: invalid annotation payload for message ${messageId}`)
+      return
+    }
+
+    if (annotation.target.source.messageId !== messageId) {
+      sessionLog.warn(`Cannot add annotation: target source.messageId mismatch (${annotation.target.source.messageId} !== ${messageId})`)
+      return
+    }
+
+    const safeAnnotation: NonNullable<Message['annotations']>[number] = {
+      ...annotation,
+      schemaVersion: 1,
+      target: {
+        ...annotation.target,
+        source: {
+          ...annotation.target.source,
+          sessionId,
+          messageId,
+        },
+      },
+    }
+
+    const annotationBytes = Buffer.byteLength(JSON.stringify(safeAnnotation), 'utf8')
+    if (annotationBytes > MAX_ANNOTATION_JSON_BYTES) {
+      sessionLog.warn(`Cannot add annotation: payload too large (${annotationBytes} bytes > ${MAX_ANNOTATION_JSON_BYTES}) on message ${messageId}`)
+      return
+    }
+
+    const existing = message.annotations ?? []
+    if (existing.some(a => a.id === safeAnnotation.id)) {
+      sessionLog.warn(`Cannot add annotation: duplicate annotation id ${safeAnnotation.id} on message ${messageId}`)
+      return
+    }
+
+    if (existing.length >= MAX_ANNOTATIONS_PER_MESSAGE) {
+      sessionLog.warn(`Cannot add annotation: per-message limit reached (${MAX_ANNOTATIONS_PER_MESSAGE}) on message ${messageId}`)
+      return
+    }
+
+    message.annotations = [...existing, safeAnnotation]
+    this.persistSession(managed)
+    this.sendEvent({ type: 'message_annotations_updated', sessionId, messageId, annotations: message.annotations }, managed.workspace.id)
+  }
+
+  /**
+   * Patch an existing annotation on a message.
+   */
+  updateMessageAnnotation(
+    sessionId: string,
+    messageId: string,
+    annotationId: string,
+    patch: Partial<NonNullable<Message['annotations']>[number]>
+  ): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      sessionLog.warn(`Cannot update annotation: session ${sessionId} not found`)
+      return
+    }
+
+    const message = managed.messages.find(m => m.id === messageId)
+    if (!message) {
+      sessionLog.warn(`Cannot update annotation: message ${messageId} not found in session ${sessionId}`)
+      return
+    }
+
+    const existing = message.annotations ?? []
+    const idx = existing.findIndex(a => a.id === annotationId)
+    if (idx === -1) {
+      sessionLog.warn(`Cannot update annotation: annotation ${annotationId} not found on message ${messageId}`)
+      return
+    }
+
+    if (patch.target?.source?.messageId && patch.target.source.messageId !== messageId) {
+      sessionLog.warn(`Cannot update annotation: target source.messageId mismatch in patch (${patch.target.source.messageId} !== ${messageId})`)
+      return
+    }
+
+    if (patch.target?.selectors && patch.target.selectors.length === 0) {
+      sessionLog.warn(`Cannot update annotation: empty selectors patch for annotation ${annotationId} on message ${messageId}`)
+      return
+    }
+
+    const current = existing[idx]!
+    const updated = {
+      ...current,
+      ...patch,
+      id: current.id,
+      schemaVersion: current.schemaVersion,
+      target: patch.target
+        ? {
+            ...current.target,
+            ...patch.target,
+            source: {
+              ...current.target.source,
+              ...(patch.target.source ?? {}),
+              sessionId,
+              messageId,
+            },
+          }
+        : {
+            ...current.target,
+            source: {
+              ...current.target.source,
+              sessionId,
+              messageId,
+            },
+          },
+      updatedAt: Date.now(),
+    }
+
+    const updatedBytes = Buffer.byteLength(JSON.stringify(updated), 'utf8')
+    if (updatedBytes > MAX_ANNOTATION_JSON_BYTES) {
+      sessionLog.warn(`Cannot update annotation: payload too large (${updatedBytes} bytes > ${MAX_ANNOTATION_JSON_BYTES}) for annotation ${annotationId} on message ${messageId}`)
+      return
+    }
+
+    const next = [...existing]
+    next[idx] = updated
+    message.annotations = next
+    this.persistSession(managed)
+    this.sendEvent({ type: 'message_annotations_updated', sessionId, messageId, annotations: message.annotations }, managed.workspace.id)
+  }
+
+  /**
+   * Remove an annotation from a message and persist the session.
+   */
+  removeMessageAnnotation(sessionId: string, messageId: string, annotationId: string): void {
+    const managed = this.sessions.get(sessionId)
+    if (!managed) {
+      sessionLog.warn(`Cannot remove annotation: session ${sessionId} not found`)
+      return
+    }
+
+    const message = managed.messages.find(m => m.id === messageId)
+    if (!message) {
+      sessionLog.warn(`Cannot remove annotation: message ${messageId} not found in session ${sessionId}`)
+      return
+    }
+
+    const existing = message.annotations ?? []
+    if (!existing.some(a => a.id === annotationId)) {
+      sessionLog.warn(`Cannot remove annotation: annotation ${annotationId} not found on message ${messageId}`)
+      return
+    }
+
+    message.annotations = existing.filter(a => a.id !== annotationId)
+    this.persistSession(managed)
+    this.sendEvent({ type: 'message_annotations_updated', sessionId, messageId, annotations: message.annotations }, managed.workspace.id)
+  }
+
   async deleteSession(sessionId: string): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
@@ -3847,6 +4369,24 @@ export class SessionManager implements ISessionManager {
       // Brief wait for the query to finish tearing down before we delete session files.
       // Prevents file corruption from overlapping writes during rapid delete operations.
       await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    // Revoke share if session was shared (prevent orphaned viewer copies)
+    if (managed.sharedId) {
+      try {
+        const { VIEWER_URL } = await import('@craft-agent/shared/branding')
+        const response = await fetch(
+          `${VIEWER_URL}/s/api/${managed.sharedId}`,
+          { method: 'DELETE', signal: AbortSignal.timeout(5000) }
+        )
+        if (!response.ok) {
+          sessionLog.warn(`Failed to revoke share for ${sessionId}: HTTP ${response.status}`)
+        } else {
+          sessionLog.info(`Revoked share for deleted session ${sessionId}`)
+        }
+      } catch (error) {
+        sessionLog.warn(`Failed to revoke share for ${sessionId}:`, error)
+      }
     }
 
     // Clean up delta flush timers to prevent orphaned timers
@@ -4161,24 +4701,11 @@ export class SessionManager implements ISessionManager {
         sessionLog.warn(`Source build errors:`, errors)
       }
 
-      // Apply source servers to the agent
-      const mcpCount = Object.keys(mcpServers).length
-      const apiCount = Object.keys(apiServers).length
-      if (mcpCount > 0 || apiCount > 0 || managed.enabledSourceSlugs.length > 0) {
-        // Pass intended slugs so agent shows sources as active even if build failed
-        const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
-
-        // Sync pool first so tools are available, then apply bridge updates (which may trigger reconnect)
-        const usableSources = sources.filter(isSourceUsable)
-        await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
-        await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
-        sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
-      }
-      sendSpan.mark('servers.applied')
-
-      // Proactive OAuth token refresh before chat starts.
-      // This ensures tokens are fresh BEFORE the first API call, avoiding mid-call auth failures.
-      // Handles both MCP OAuth (Linear, Notion) and API OAuth (Gmail, Slack, Microsoft).
+      // Proactive OAuth token refresh before applying servers to agent.
+      // This ensures tokens are fresh BEFORE the agent sees source state, avoiding a race
+      // where the agent receives a stale "needs_auth" status and triggers unnecessary re-auth
+      // even though the refresh succeeds moments later.
+      let tokensRefreshed = false
       if (managed.tokenRefreshManager) {
         const refreshResult = await refreshOAuthTokensIfNeeded(
           agent,
@@ -4191,9 +4718,27 @@ export class SessionManager implements ISessionManager {
           sessionLog.warn('[OAuth] Some sources failed token refresh:', refreshResult.failedSources.map(f => f.slug))
         }
         if (refreshResult.tokensRefreshed) {
+          tokensRefreshed = true
           sendSpan.mark('oauth.refreshed')
         }
       }
+
+      // Apply source servers to the agent.
+      // If tokens were refreshed, refreshOAuthTokensIfNeeded already rebuilt servers and
+      // called setSourceServers with fresh credentials — skip the duplicate call to avoid
+      // overwriting the post-refresh state with stale build results.
+      if (!tokensRefreshed) {
+        const mcpCount = Object.keys(mcpServers).length
+        const apiCount = Object.keys(apiServers).length
+        if (mcpCount > 0 || apiCount > 0 || managed.enabledSourceSlugs.length > 0) {
+          const intendedSlugs = sources.filter(isSourceUsable).map(s => s.config.slug)
+          const usableSources = sources.filter(isSourceUsable)
+          await agent.setSourceServers(mcpServers, apiServers, intendedSlugs)
+          await applyBridgeUpdates(agent, sessionPath, usableSources, mcpServers, sessionId, workspaceRootPath, 'send message', managed.poolServer?.url)
+          sessionLog.info(`Applied ${mcpCount} MCP + ${apiCount} API sources to session ${sessionId} (${allSources.length} total)`)
+        }
+      }
+      sendSpan.mark('servers.applied')
     }
 
     try {
@@ -4795,35 +5340,43 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Get output from a background task or shell
+   * Get output from a background task
    *
-   * NOT YET IMPLEMENTED - This is a placeholder.
-   *
-   * Background task output retrieval requires infrastructure that doesn't exist yet:
-   * 1. Storing shell output streams as they come in (tool_result events only have final output)
-   * 2. Associating outputs with task/shell IDs in a queryable store
-   * 3. Handling the BashOutput tool results for ongoing shells
-   *
-   * Current workaround: Users can view task output in the main chat panel where
-   * tool results are displayed inline with the conversation.
+   * Looks up the output file stored when a task_completed event was received,
+   * reads its contents, and returns them. Falls back to the SDK-provided summary
+   * if the file cannot be read.
    *
    * @param taskId - The task or shell ID
-   * @returns Placeholder message explaining the limitation
+   * @returns Task output content, or null if task not found
    */
   async getTaskOutput(taskId: string): Promise<string | null> {
-    sessionLog.info(`Getting output for task: ${taskId} (not implemented)`)
+    // O(1) lookup via taskOutputIndex
+    const sessionId = this.taskOutputIndex.get(taskId)
+    if (!sessionId) {
+      sessionLog.info(`No output found for task: ${taskId} (task may still be running)`)
+      return null
+    }
 
-    // This functionality requires a dedicated output tracking system.
-    // The SDK manages shells internally but doesn't expose an API for querying
-    // their output history outside of tool_result events.
-    return `Background task output retrieval is not yet implemented.
+    const managed = this.sessions.get(sessionId)
+    const info = managed?.backgroundTaskOutputs.get(taskId)
+    if (!info) {
+      // Index out of sync — clean up stale entry
+      this.taskOutputIndex.delete(taskId)
+      return null
+    }
 
-Task ID: ${taskId}
-
-To view this task's output:
-• Check the main chat panel where tool results are displayed
-• Look for the tool_result message associated with this task
-• For ongoing shells, the agent can use BashOutput to check status`
+    sessionLog.info(`Found output for task ${taskId}: file=${info.outputFile}, status=${info.status}`)
+    try {
+      const content = await readFile(info.outputFile, 'utf-8')
+      // Delete after successful read to prevent memory leak
+      managed!.backgroundTaskOutputs.delete(taskId)
+      this.taskOutputIndex.delete(taskId)
+      return content
+    } catch (err) {
+      sessionLog.error(`Failed to read task output file: ${info.outputFile}`, err)
+      // Fall back to SDK-provided summary
+      return info.summary || null
+    }
   }
 
   /**
@@ -4903,16 +5456,36 @@ To view this task's output:
   setSessionPermissionMode(sessionId: string, mode: PermissionMode): void {
     const managed = this.sessions.get(sessionId)
     if (managed) {
-      // No-op when unchanged to avoid duplicate logs/events
-      if (managed.permissionMode === mode) {
+      const previousManagedMode = managed.permissionMode ?? 'ask'
+      const diagnosticsBefore = getPermissionModeDiagnostics(sessionId)
+      const previousEffectiveMode = diagnosticsBefore.permissionMode
+
+      // No-op only when BOTH managed state and mode-manager state already match.
+      // If managed state matches but diagnostics drifted, heal authoritative mode state.
+      if (previousManagedMode === mode && previousEffectiveMode === mode) {
         return
       }
 
-      // Update permission mode
+      if (previousManagedMode === mode && previousEffectiveMode !== mode) {
+        sessionLog.warn('Permission mode drift detected on same-mode update; reconciling authoritative mode state', {
+          sessionId,
+          managedMode: previousManagedMode,
+          diagnosticsMode: previousEffectiveMode,
+          targetMode: mode,
+          modeVersion: diagnosticsBefore.modeVersion,
+          changedBy: diagnosticsBefore.lastChangedBy,
+        })
+      }
+
+      // Update in-memory managed mode first
       managed.permissionMode = mode
 
-      // Update the mode state for this specific session via mode manager
-      setPermissionMode(sessionId, mode, { changedBy: 'user' })
+      // Reconcile mode-manager state for this specific session.
+      if (previousEffectiveMode !== mode) {
+        const changedBy = previousManagedMode === mode ? 'restore' : 'user'
+        setPermissionMode(sessionId, mode, { changedBy })
+      }
+
       const diagnostics = getPermissionModeDiagnostics(sessionId)
       managed.previousPermissionMode = diagnostics.previousPermissionMode
       sessionLog.info('Permission mode changed', {
@@ -4923,8 +5496,7 @@ To view this task's output:
         changedAt: diagnostics.lastChangedAt,
       })
 
-      // Forward to the agent instance so backends (e.g. PiAgent) can
-      // propagate the mode change to their subprocess
+      // Forward to the agent instance so backends can propagate mode changes downstream.
       if (managed.agent) {
         managed.agent.setPermissionMode(mode)
       }
@@ -5012,6 +5584,11 @@ To view this task's output:
       }, managed.workspace.id)
       // Persist to disk
       this.persistSession(managed)
+      // Workaround: Bun's fs.watch({ recursive: true }) on Linux doesn't track
+      // directories created after the watcher started.
+      // https://github.com/oven-sh/bun/issues/15939
+      const watcher = this.configWatchers.get(managed.workspace.rootPath)
+      watcher?.notifyFileChange(`sessions/${sessionId}/session.jsonl`)
     }
   }
 
@@ -5090,7 +5667,8 @@ To view this task's output:
     }
 
     try {
-      const title = await agent.generateTitle(userMessage)
+      const preferences = loadPreferences()
+      const title = await agent.generateTitle(userMessage, { language: preferences.language })
       if (title) {
         managed.name = title
         this.persistSession(managed)
@@ -5161,6 +5739,28 @@ To view this task's output:
         if (!event.isIntermediate) {
           managed.lastMessageRole = 'assistant'
           managed.lastFinalMessageId = assistantMessage.id
+
+          const sessionPath = getSessionStoragePath(managed.workspace.rootPath, sessionId)
+
+          // Claude branch-cutoff support: persist message UUID + SDK session lineage in sidecar.
+          // Used to guard resumeSessionAt so we only send anchors valid for the parent SDK session.
+          if (event.turnId && managed.sdkSessionId && isClaudeMessageUuid(event.turnId)) {
+            try {
+              await saveClaudeTurnAnchor(sessionPath, assistantMessage.id, managed.sdkSessionId, event.turnId)
+            } catch (error) {
+              sessionLog.warn(`Failed to persist Claude turn anchor for session ${sessionId}:`, error)
+            }
+          }
+
+          // Pi branch-cutoff support: persist provider-native turn anchor in session sidecar.
+          // Keeps session.jsonl schema unchanged while enabling strict branch cutoffs later.
+          if (event.sdkTurnAnchor) {
+            try {
+              await savePiTurnAnchor(sessionPath, assistantMessage.id, event.sdkTurnAnchor)
+            } catch (error) {
+              sessionLog.warn(`Failed to persist Pi turn anchor for session ${sessionId}:`, error)
+            }
+          }
         }
 
         this.sendEvent({ type: 'text_complete', sessionId, text: event.text, isIntermediate: event.isIntermediate, turnId: event.turnId, parentToolUseId: event.parentToolUseId, timestamp: assistantMessage.timestamp, messageId: assistantMessage.id }, workspaceId)
@@ -5326,7 +5926,7 @@ To view this task's output:
         const parentToolUseId = existingToolMsg?.parentToolUseId || event.parentToolUseId
 
         if (existingToolMsg) {
-          existingToolMsg.content = formattedResult
+          // Keep lightweight status text in `content` and store full payload in `toolResult` only.
           existingToolMsg.toolResult = formattedResult
           existingToolMsg.toolStatus = inferredError ? 'error' : 'completed'
           existingToolMsg.isError = inferredError
@@ -5347,7 +5947,7 @@ To view this task's output:
           const toolMessage: Message = {
             id: generateMessageId(),
             role: 'tool',
-            content: formattedResult,
+            content: '',
             timestamp: this.monotonic(),
             toolName: toolName,
             toolUseId: event.toolUseId,
@@ -5382,8 +5982,7 @@ To view this task's output:
         // Safety net: when a parent Task completes, mark all its still-pending child tools as completed.
         // This handles the case where child tool_result events never arrive (e.g., subagent internal tools
         // whose results aren't surfaced through the parent stream).
-        const PARENT_TOOLS_FOR_CLEANUP = ['Task', 'TaskOutput']
-        if (PARENT_TOOLS_FOR_CLEANUP.includes(toolName)) {
+        if (isParentTaskTool(toolName) || toolName === 'TaskOutput') {
           const pendingChildren = managed.messages.filter(
             m => m.parentToolUseId === event.toolUseId
               && m.toolStatus !== 'completed'
@@ -5563,6 +6162,36 @@ To view this task's output:
         }, workspaceId)
         break
 
+      case 'task_completed':
+        // Store output for later retrieval via getTaskOutput()
+        if (managed) {
+          managed.backgroundTaskOutputs.set(event.taskId, {
+            outputFile: event.outputFile || '',
+            summary: event.summary || '',
+            status: event.status,
+            completedAt: Date.now(),
+          })
+          // O(1) index for getTaskOutput() — avoids scanning all sessions
+          this.taskOutputIndex.set(event.taskId, sessionId)
+          sessionLog.info(`Background task ${event.taskId} completed (status=${event.status})`)
+
+          // Evict stale entries older than 1 hour to bound memory growth
+          const ONE_HOUR = 3_600_000
+          const now = Date.now()
+          for (const [tid, info] of managed.backgroundTaskOutputs) {
+            if (now - info.completedAt > ONE_HOUR) {
+              managed.backgroundTaskOutputs.delete(tid)
+              this.taskOutputIndex.delete(tid)
+            }
+          }
+        }
+        // Forward to renderer for UI update
+        this.sendEvent({
+          ...event,
+          sessionId,
+        }, workspaceId)
+        break
+
       case 'shell_backgrounded':
         // Store the command for later process killing
         if (event.command && managed) {
@@ -5734,7 +6363,7 @@ To view this task's output:
     workspaceRootPath: string,
     prompt: string,
     labels?: string[],
-    permissionMode?: 'safe' | 'ask' | 'allow-all',
+    permissionMode?: PermissionMode,
     mentions?: string[],
     llmConnection?: string,
     model?: string,
@@ -5751,6 +6380,11 @@ To view this task's output:
     // Resolve @mentions to source/skill slugs
     const resolved = mentions ? this.resolveAutomationMentions(workspaceRootPath, mentions) : undefined
 
+    // Ensure labels exist in workspace config before assigning to session
+    const resolvedLabels = labels?.length
+      ? ensureLabelsExist(workspaceRootPath, labels)
+      : labels
+
     // Use automation name if provided, otherwise fall back to prompt snippet
     const fallback = `Automation: ${prompt.slice(0, 50)}${prompt.length > 50 ? '...' : ''}`
     const sessionName = automationName || fallback
@@ -5758,7 +6392,7 @@ To view this task's output:
     // Create a new session for this automation
     const session = await this.createSession(workspaceId, {
       name: sessionName,
-      labels,
+      labels: resolvedLabels,
       permissionMode: permissionMode || 'safe',
       enabledSourceSlugs: resolved?.sourceSlugs,
       llmConnection,

@@ -48,7 +48,8 @@ import { OnboardingWizard, type ApiSetupMethod } from '@/components/onboarding'
 import { RenameDialog } from '@/components/ui/rename-dialog'
 import { useAppShellContext } from '@/context/AppShellContext'
 import { getModelShortName, type ModelDefinition } from '@config/models'
-import { getModelsForProviderType } from '@config/llm-connections'
+import { getModelsForProviderType, type CustomEndpointApi } from '@config/llm-connections'
+import { toast } from 'sonner'
 
 /**
  * Derive model dropdown options from a connection's models array,
@@ -181,6 +182,16 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
   const [menuOpen, setMenuOpen] = useState(false)
   const [piBaseUrl, setPiBaseUrl] = useState<string | undefined>(undefined)
 
+  // Opening dialog/overlay flows directly from a dropdown item can race with
+  // menu teardown and leave a transient interaction lock behind on some systems.
+  // Force menu close first, then trigger action on next frame.
+  const runAfterMenuClose = useCallback((action: () => void) => {
+    setMenuOpen(false)
+    requestAnimationFrame(() => {
+      action()
+    })
+  }, [])
+
   // Load Pi provider base URL via IPC (Pi SDK can't run in renderer)
   useEffect(() => {
     const provider = connection.providerType || connection.type
@@ -261,7 +272,7 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
       )}
       description={getDescription()}
     >
-      <DropdownMenu modal={true} onOpenChange={setMenuOpen}>
+      <DropdownMenu modal={false} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <button
             className="p-1.5 rounded-md hover:bg-foreground/[0.05] data-[state=open]:bg-foreground/[0.05] transition-colors"
@@ -271,7 +282,7 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
           </button>
         </DropdownMenuTrigger>
         <StyledDropdownMenuContent align="end">
-          <StyledDropdownMenuItem onClick={onRenameClick}>
+          <StyledDropdownMenuItem onClick={() => runAfterMenuClose(onRenameClick)}>
             <Pencil className="h-3.5 w-3.5" />
             <span>Rename</span>
           </StyledDropdownMenuItem>
@@ -282,12 +293,12 @@ function ConnectionRow({ connection, isLastConnection, onRenameClick, onDelete, 
             </StyledDropdownMenuItem>
           )}
           {connection.authType === 'oauth' ? (
-            <StyledDropdownMenuItem onClick={onReauthenticate}>
+            <StyledDropdownMenuItem onClick={() => runAfterMenuClose(onReauthenticate)}>
               <RefreshCcw className="h-3.5 w-3.5" />
               <span>Re-authenticate</span>
             </StyledDropdownMenuItem>
           ) : (
-            <StyledDropdownMenuItem onClick={onEdit}>
+            <StyledDropdownMenuItem onClick={() => runAfterMenuClose(onEdit)}>
               <Settings2 className="h-3.5 w-3.5" />
               <span>Edit</span>
             </StyledDropdownMenuItem>
@@ -324,6 +335,12 @@ interface WorkspaceOverrideCardProps {
   onSettingsChange: () => void
 }
 
+const WORKSPACE_SETTING_LABELS: Partial<Record<keyof WorkspaceSettings, string>> = {
+  defaultLlmConnection: 'workspace connection override',
+  model: 'workspace model override',
+  thinkingLevel: 'workspace thinking override',
+}
+
 function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: WorkspaceOverrideCardProps) {
   const [isExpanded, setIsExpanded] = useState(false)
   const [settings, setSettings] = useState<WorkspaceSettings | null>(null)
@@ -349,17 +366,30 @@ function WorkspaceOverrideCard({ workspace, llmConnections, onSettingsChange }: 
     loadSettings()
   }, [workspace.id])
 
-  // Save workspace setting helper
+  // Save workspace setting helper (optimistic update with rollback)
   const updateSetting = useCallback(async <K extends keyof WorkspaceSettings>(key: K, value: WorkspaceSettings[K]) => {
     if (!window.electronAPI) return
+
+    const previousValue = settings?.[key]
+
+    // Optimistic UI update for immediate feedback
+    setSettings(prev => prev ? { ...prev, [key]: value } : prev)
+
     try {
       await window.electronAPI.updateWorkspaceSetting(workspace.id, key, value)
-      setSettings(prev => prev ? { ...prev, [key]: value } : null)
       onSettingsChange()
     } catch (error) {
-      console.error(`Failed to save ${key}:`, error)
+      // Roll back only the changed key
+      setSettings(prev => prev ? { ...prev, [key]: previousValue } : prev)
+
+      const message = error instanceof Error ? error.message : 'Unknown error'
+      const settingLabel = WORKSPACE_SETTING_LABELS[key] ?? String(key)
+      console.error(`Failed to save ${String(key)}:`, error)
+      toast.error(`Failed to save ${settingLabel}`, {
+        description: message,
+      })
     }
-  }, [workspace.id, onSettingsChange])
+  }, [workspace.id, onSettingsChange, settings])
 
   const handleConnectionChange = useCallback((slug: string) => {
     // 'global' means use app default (clear workspace override)
@@ -534,6 +564,7 @@ export default function AiSettingsPage() {
     connectionDefaultModel?: string
     activePreset?: string
     models?: string[]
+    customApi?: CustomEndpointApi
   } | undefined>(undefined)
   const setFullscreenOverlayOpen = useSetAtom(fullscreenOverlayOpenAtom)
 
@@ -564,6 +595,9 @@ export default function AiSettingsPage() {
       try {
         const ws = await window.electronAPI.getWorkspaces()
         setWorkspaces(ws)
+
+        const defaultThinkingLevel = await window.electronAPI.getDefaultThinkingLevel()
+        setDefaultThinking(defaultThinkingLevel)
 
         // Check credential health for potential issues (corruption, machine migration)
         const health = await window.electronAPI.getCredentialHealth()
@@ -709,12 +743,15 @@ export default function AiSettingsPage() {
       ?.map((m: string | ModelDefinition) => typeof m === 'string' ? m : m.id)
       .filter(Boolean)
 
+    const isCustomEndpointConnection = !!connection.customEndpoint && !!connection.baseUrl?.trim()
+
     setEditInitialValues({
       apiKey,
       baseUrl: connection.baseUrl,
       connectionDefaultModel: modelStr,
-      activePreset: connection.piAuthProvider || undefined,
+      activePreset: isCustomEndpointConnection ? 'custom' : (connection.piAuthProvider || undefined),
       models: modelIds,
+      customApi: connection.customEndpoint?.api,
     })
 
     // Open overlay and jump directly to credentials step (no reset — jumpToCredentials sets state)
@@ -807,9 +844,22 @@ export default function AiSettingsPage() {
   }, [defaultConnection, refreshLlmConnections])
 
   const handleDefaultThinkingChange = useCallback(async (level: ThinkingLevel) => {
+    if (!window.electronAPI) return
+
+    const previous = defaultThinking
     setDefaultThinking(level)
-    // TODO: Add app-level thinking level storage
-  }, [])
+
+    try {
+      const result = await window.electronAPI.setDefaultThinkingLevel(level)
+      if (!result.success) {
+        console.error('Failed to set default thinking level:', result.error)
+        setDefaultThinking(previous)
+      }
+    } catch (error) {
+      console.error('Failed to set default thinking level:', error)
+      setDefaultThinking(previous)
+    }
+  }, [defaultThinking])
 
   // Refresh callback for workspace cards
   const handleWorkspaceSettingsChange = useCallback(() => {

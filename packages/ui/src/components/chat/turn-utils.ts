@@ -6,6 +6,10 @@
  */
 
 import type { Message, StoredMessage, MessageRole } from '@craft-agent/core'
+import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
+import { storedToMessage } from '@craft-agent/core'
+
+export { storedToMessage }
 import type { ActivityItem, ActivityStatus, ActivityType, ResponseContent, TodoItem } from './TurnCard'
 
 // Re-export ActivityItem for consumers
@@ -29,55 +33,6 @@ function stripErrorTags(content: string | undefined): string | undefined {
     .replace(/<\/?tool_use_error>/gi, '')
     .replace(/^\[ERROR]\s*/i, '')
     .trim()
-}
-
-/** Convert StoredMessage to Message format for turn processing */
-export function storedToMessage(stored: StoredMessage): Message {
-  return {
-    id: stored.id,
-    role: stored.type,
-    content: stored.content,
-    timestamp: stored.timestamp ?? Date.now(),
-    toolName: stored.toolName,
-    toolUseId: stored.toolUseId,
-    toolInput: stored.toolInput,
-    toolResult: stored.toolResult,
-    toolStatus: stored.toolStatus,
-    toolDuration: stored.toolDuration,
-    toolIntent: stored.toolIntent,
-    toolDisplayName: stored.toolDisplayName,
-    toolDisplayMeta: stored.toolDisplayMeta,  // Includes base64 icon for viewer
-    parentToolUseId: stored.parentToolUseId,
-    taskId: stored.taskId,
-    shellId: stored.shellId,
-    elapsedSeconds: stored.elapsedSeconds,
-    isBackground: stored.isBackground,
-    attachments: stored.attachments,
-    badges: stored.badges,
-    isError: stored.isError,
-    isIntermediate: stored.isIntermediate,
-    turnId: stored.turnId,
-    errorCode: stored.errorCode,
-    errorTitle: stored.errorTitle,
-    errorDetails: stored.errorDetails,
-    errorOriginal: stored.errorOriginal,
-    errorCanRetry: stored.errorCanRetry,
-    planPath: stored.planPath,
-    // Auth-request fields
-    authRequestId: stored.authRequestId,
-    authRequestType: stored.authRequestType,
-    authSourceSlug: stored.authSourceSlug,
-    authSourceName: stored.authSourceName,
-    authStatus: stored.authStatus,
-    authCredentialMode: stored.authCredentialMode,
-    authHeaderName: stored.authHeaderName,
-    authLabels: stored.authLabels,
-    authDescription: stored.authDescription,
-    authHint: stored.authHint,
-    authError: stored.authError,
-    authEmail: stored.authEmail,
-    authWorkspace: stored.authWorkspace,
-  }
 }
 
 // ============================================================================
@@ -242,6 +197,9 @@ function getToolStatus(message: Message): ActivityStatus {
   // response_too_large is success (data was saved, just too large for inline display)
   if (message.errorCode === 'response_too_large') return 'completed'
   if (message.isError) return 'error'
+  // Backgrounded takes priority — tool_result arrives before task_backgrounded,
+  // so toolResult is set but the task is still running in the background
+  if (message.toolStatus === 'backgrounded') return 'backgrounded'
   // Check explicit toolStatus first (set by tool_result handler)
   if (message.toolStatus === 'completed') return 'completed'
   // Fallback: check if toolResult exists (handles empty string results)
@@ -276,6 +234,11 @@ function messageToActivity(message: Message, existingActivities: ActivityItem[] 
     // This is tracked by session manager's parentToolStack, NOT the SDK's
     // parent_tool_use_id which is for result-matching, not hierarchy.
     parentId: message.parentToolUseId,
+    // Background task fields
+    taskId: message.taskId,
+    shellId: message.shellId,
+    elapsedSeconds: message.elapsedSeconds,
+    isBackground: message.isBackground,
   }
 
   // Calculate depth incrementally using existing activities
@@ -554,6 +517,8 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
         type: 'plan' as ActivityType,
         status: 'completed',
         content: message.content,
+        messageId: message.id,
+        annotations: message.annotations,
         displayName: 'Plan',
         timestamp: message.timestamp,
       })
@@ -565,8 +530,8 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
 
     // Tool messages belong to current assistant turn
     if (message.role === 'tool') {
-      // Tool is complete if toolStatus is 'completed' OR toolResult exists
-      const isToolComplete = message.toolStatus === 'completed' || message.toolResult !== undefined
+      // Tool is complete if toolStatus is 'completed' OR toolResult exists (but NOT if backgrounded)
+      const isToolComplete = (message.toolStatus === 'completed' || message.toolResult !== undefined) && message.toolStatus !== 'backgrounded'
       if (!currentTurn) {
         // Start a new turn
         currentTurn = {
@@ -655,6 +620,7 @@ export function groupMessagesByTurn(messages: Message[]): Turn[] {
         isStreaming: !!message.isStreaming,
         streamStartTime: message.isStreaming ? message.timestamp : undefined,
         messageId: message.id,
+        annotations: message.annotations,
       }
       currentTurn.isStreaming = !!message.isStreaming
       currentTurn.isComplete = !message.isStreaming
@@ -692,7 +658,7 @@ export function getTurnIntent(turn: AssistantTurn): string | undefined {
  * Check if any activity in the turn is still running
  */
 export function hasPendingActivities(turn: AssistantTurn): boolean {
-  return turn.activities.some(a => a.status === 'running' || a.status === 'pending')
+  return turn.activities.some(a => a.status === 'running' || a.status === 'pending' || a.status === 'backgrounded')
 }
 
 /**
@@ -1097,7 +1063,7 @@ export function groupActivitiesByParent(
   // First, build a set of valid Task toolUseIds (parents that actually exist)
   const taskToolUseIds = new Set<string>()
   for (const activity of activities) {
-    if (activity.toolName === 'Task' && activity.toolUseId) {
+    if (isParentTaskTool(activity.toolName ?? '') && activity.toolUseId) {
       taskToolUseIds.add(activity.toolUseId)
     }
   }
@@ -1142,7 +1108,7 @@ export function groupActivitiesByParent(
   // When Task runs with run_in_background: true, the result contains "agentId: xyz"
   const taskToAgentId = new Map<string, string>()
   for (const activity of activities) {
-    if (activity.toolName === 'Task' && activity.status === 'completed' && activity.content) {
+    if (isParentTaskTool(activity.toolName ?? '') && (activity.status === 'completed' || activity.status === 'backgrounded') && activity.content) {
       // Parse agent ID from Task result - look for "agentId: xyz" pattern
       const agentIdMatch = activity.content.match(/agentId:\s*([a-zA-Z0-9_-]+)/)
       const capturedAgentId = agentIdMatch?.[1]
@@ -1166,8 +1132,8 @@ export function groupActivitiesByParent(
       continue
     }
 
-    // Task tools become groups with their children
-    if (activity.toolName === 'Task') {
+    // Task/Agent tools become groups with their children
+    if (isParentTaskTool(activity.toolName ?? '')) {
       const children = activity.toolUseId
         ? (childrenByParent.get(activity.toolUseId) || [])
         : []

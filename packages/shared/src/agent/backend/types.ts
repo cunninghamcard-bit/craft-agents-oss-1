@@ -212,6 +212,15 @@ export interface CoreBackendConfig {
   getRecoveryMessages?: () => RecoveryMessage[];
 
   /**
+   * Callback to get branch seed messages (up to branch cutoff) for first turn in seeded branch mode.
+   * When provided and non-empty, BaseAgent injects a hidden context block before the first user turn.
+   */
+  getBranchSeedMessages?: () => RecoveryMessage[];
+
+  /** Callback invoked after branch seed context has been injected. */
+  markBranchSeedApplied?: () => void;
+
+  /**
    * Optional callback to resize an oversized image for API compatibility.
    * Called from PreToolUse when Read targets an image exceeding the base64 size limit.
    * Returns path to the resized temp file, or null if resize not possible.
@@ -479,10 +488,10 @@ export interface AgentBackend {
   getSourceManager(): SourceManager;
 
   /** Generate a session title from user message */
-  generateTitle(message: string): Promise<string | null>;
+  generateTitle(message: string, options?: { language?: string }): Promise<string | null>;
 
   /** Regenerate a session title from recent conversation */
-  regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string): Promise<string | null>;
+  regenerateTitle(recentUserMessages: string[], lastAssistantResponse: string, options?: { language?: string }): Promise<string | null>;
 
   // ============================================================
   // Permission Resolution
