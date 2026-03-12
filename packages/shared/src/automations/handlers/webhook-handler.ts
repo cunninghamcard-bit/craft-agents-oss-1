@@ -255,7 +255,7 @@ export class WebhookHandler implements AutomationHandler {
           durationMs: result.durationMs ?? 0,
           ...(result.attempts && result.attempts > 1 ? { attempts: result.attempts } : {}),
           ...(result.error ? { error: result.error.slice(0, 200) } : {}),
-          ...(result.responseBody ? { responseBody: result.responseBody.slice(0, 500) } : {}),
+          ...(result.responseBody ? { responseBody: result.responseBody.slice(0, 1000) } : {}),
         },
       };
       appendFile(historyPath, JSON.stringify(entry) + '\n', 'utf-8')

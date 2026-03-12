@@ -163,7 +163,7 @@ export function useAutomations(
     try {
       const entries = await window.electronAPI.getAutomationHistory(activeWorkspaceId, automationId, 20)
       const automation = findAutomation(automationId)
-      return entries.map((e: { id: string; ts: number; ok: boolean; sessionId?: string; prompt?: string; error?: string; webhook?: { method: string; url: string; statusCode: number; durationMs: number; attempts?: number; error?: string } }) => ({
+      return entries.map((e) => ({
         id: `${e.id}-${e.ts}`,
         automationId: e.id,
         event: automation?.event ?? 'LabelAdd',
@@ -175,6 +175,15 @@ export function useAutomations(
           ? `Webhook ${e.webhook.method} ${e.webhook.url}${e.webhook.attempts && e.webhook.attempts > 1 ? ` (${e.webhook.attempts} attempts)` : ''}`
           : e.prompt,
         error: e.webhook?.error ?? e.error,
+        webhookDetails: e.webhook ? {
+          method: e.webhook.method,
+          url: e.webhook.url,
+          statusCode: e.webhook.statusCode,
+          durationMs: e.webhook.durationMs,
+          attempts: e.webhook.attempts,
+          error: e.webhook.error,
+          responseBody: e.webhook.responseBody,
+        } : undefined,
       }))
     } catch {
       return []
