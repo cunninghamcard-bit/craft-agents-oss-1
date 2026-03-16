@@ -12,6 +12,22 @@ import { useRegisterModal } from '@/context/ModalContext'
 import type { DirectoryListingResult } from '../../shared/types'
 import { FolderIcon, FolderSymlinkIcon, ChevronRightIcon, Loader2Icon } from 'lucide-react'
 
+/**
+ * Detect paths that are clearly from the wrong platform.
+ * The server directory browser runs against the server's filesystem,
+ * so Windows-style paths are invalid when the server is macOS/Linux and vice versa.
+ * We infer the server platform from the home directory path.
+ */
+function isWrongPlatformPath(path: string, serverHomePath: string | null): boolean {
+  if (!serverHomePath) return false
+  const serverIsUnix = serverHomePath.startsWith('/')
+  if (serverIsUnix) {
+    return /^[A-Za-z]:[/\\]/.test(path) || path.startsWith('\\\\')
+  }
+  // Server is Windows — reject Unix absolute paths
+  return path.startsWith('/')
+}
+
 interface ServerDirectoryBrowserProps {
   open: boolean
   mode: 'browse' | 'manual'
@@ -34,6 +50,7 @@ export function ServerDirectoryBrowser({
   const [error, setError] = useState<string | null>(null)
   const [pathInput, setPathInput] = useState('')
   const [selectedEntry, setSelectedEntry] = useState<string | null>(null)
+  const [serverHomePath, setServerHomePath] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Navigate to a directory (for browse mode)
@@ -61,16 +78,22 @@ export function ServerDirectoryBrowser({
       setError(null)
       setSelectedEntry(null)
       setPathInput('')
+      setServerHomePath(null)
       return
     }
 
-    if (mode === 'browse') {
-      const loadInitial = async () => {
-        const startPath = initialPath || await window.electronAPI.getHomeDir()
-        void navigateTo(startPath)
+    const init = async () => {
+      // Always fetch server home dir — needed for platform detection in both modes
+      const homeDir = await window.electronAPI.getHomeDir()
+      setServerHomePath(homeDir)
+
+      if (mode === 'browse') {
+        // Only use initialPath if it matches the server's platform
+        const useInitial = initialPath && !isWrongPlatformPath(initialPath, homeDir)
+        void navigateTo(useInitial ? initialPath : homeDir)
       }
-      void loadInitial()
     }
+    void init()
   }, [open, mode, initialPath, navigateTo])
 
   // Handle path input submission (Enter key or navigate button)
@@ -78,13 +101,19 @@ export function ServerDirectoryBrowser({
     const trimmed = pathInput.trim()
     if (!trimmed) return
 
+    // Client-side rejection of wrong-platform paths (avoids round-trip)
+    if (isWrongPlatformPath(trimmed, serverHomePath)) {
+      setError('This looks like a path from a different OS. Enter a path that exists on the server.')
+      return
+    }
+
     if (mode === 'browse') {
       void navigateTo(trimmed)
     } else {
       // Manual mode — just select the path
       onSelect(trimmed)
     }
-  }, [pathInput, mode, navigateTo, onSelect])
+  }, [pathInput, mode, navigateTo, onSelect, serverHomePath])
 
   // Handle selecting the current directory (or highlighted entry)
   const handleSelect = useCallback(() => {

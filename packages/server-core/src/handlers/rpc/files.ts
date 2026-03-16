@@ -1,5 +1,6 @@
 import { readFile, writeFile, unlink, mkdir, readdir, stat } from 'fs/promises'
-import { join, isAbsolute, resolve, dirname, parse as parsePath } from 'path'
+import { join, resolve, dirname, parse as parsePath } from 'path'
+import { validatePathFormat } from '../../utils/path-validation'
 import { randomUUID } from 'crypto'
 import { RPC_CHANNELS, type FileAttachment, type DirectoryListingResult } from '@craft-agent/shared/protocol'
 import type { StoredAttachment } from '@craft-agent/core/types'
@@ -460,9 +461,10 @@ export function registerFilesHandlers(server: RpcServer, deps: HandlerDeps): voi
   // List directories in a given path (for remote directory browsing).
   // Returns only directories (not files) — this is a folder picker.
   server.handle(RPC_CHANNELS.fs.LIST_DIRECTORY, async (_ctx, dirPath: string) => {
-    // Security: input must already be absolute — reject relative paths before resolve()
-    if (!isAbsolute(dirPath)) {
-      throw new Error('Path must be absolute')
+    // Reject cross-platform and relative paths before resolve() can concatenate with cwd
+    const pathCheck = validatePathFormat(dirPath)
+    if (!pathCheck.valid) {
+      throw new Error(pathCheck.reason!)
     }
 
     // Normalize (collapses .. segments, trailing slashes, etc.)
