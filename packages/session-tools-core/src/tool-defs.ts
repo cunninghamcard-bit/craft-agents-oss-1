@@ -237,7 +237,7 @@ This tool initiates the OAuth 2.0 + PKCE flow for sources that require authentic
 
 Opens a browser window for the user to sign in with their Google account.
 
-**Supported services:** Gmail, Calendar, Drive
+**Supported services:** Gmail, Calendar, Drive, Docs, Sheets, YouTube, Search Console
 
 **IMPORTANT:** After calling this tool, execution will be paused while OAuth completes.`,
 
