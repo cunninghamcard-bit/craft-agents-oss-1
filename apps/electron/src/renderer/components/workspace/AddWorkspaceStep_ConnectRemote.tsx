@@ -14,11 +14,9 @@ interface AddWorkspaceStep_ConnectRemoteProps {
 /**
  * AddWorkspaceStep_ConnectRemote - Connect to a remote Craft Agent Server
  *
- * Fields:
- * - Workspace name (required)
- * - Server URL (ws:// or wss://)
- * - Token (password field)
- * - Test Connection button
+ * Flow: URL + Token → Test Connection → (name auto-fills from remote) → Create
+ * The workspace name is optional — defaults to the remote workspace name.
+ * The local folder is auto-created under ~/.craft-agent/workspaces/{slug}.
  */
 export function AddWorkspaceStep_ConnectRemote({
   onBack,
@@ -32,13 +30,16 @@ export function AddWorkspaceStep_ConnectRemote({
   const [testState, setTestState] = useState<'idle' | 'testing' | 'ok' | 'error'>('idle')
   const [testError, setTestError] = useState<string | null>(null)
   const [remoteWorkspaceId, setRemoteWorkspaceId] = useState<string | null>(null)
+  const [remoteWorkspaceName, setRemoteWorkspaceName] = useState<string | null>(null)
   const [slugError, setSlugError] = useState<string | null>(null)
 
   useEffect(() => {
     window.electronAPI.getHomeDir().then(setHomeDir)
   }, [])
 
-  const slug = slugify(name)
+  // Effective name: user override or remote workspace name
+  const effectiveName = name.trim() || remoteWorkspaceName || ''
+  const slug = slugify(effectiveName)
   const defaultBasePath = homeDir ? `${homeDir}/.craft-agent/workspaces` : '~/.craft-agent/workspaces'
   const finalPath = slug ? `${defaultBasePath}/${slug}` : null
 
@@ -71,6 +72,7 @@ export function AddWorkspaceStep_ConnectRemote({
     setTestState('idle')
     setTestError(null)
     setRemoteWorkspaceId(null)
+    setRemoteWorkspaceName(null)
   }, [serverUrl, token])
 
   const handleTestConnection = useCallback(async () => {
@@ -82,10 +84,7 @@ export function AddWorkspaceStep_ConnectRemote({
       if (result.ok) {
         setTestState('ok')
         setRemoteWorkspaceId(result.remoteWorkspaceId ?? null)
-        // Auto-fill name from remote workspace if user hasn't entered one
-        if (!name.trim() && result.remoteWorkspaceName) {
-          setName(result.remoteWorkspaceName)
-        }
+        setRemoteWorkspaceName(result.remoteWorkspaceName ?? null)
       } else {
         setTestState('error')
         setTestError(result.error || 'Connection failed')
@@ -97,11 +96,11 @@ export function AddWorkspaceStep_ConnectRemote({
   }, [serverUrl, token])
 
   const handleCreate = useCallback(async () => {
-    if (!name.trim() || !finalPath || !serverUrl || !token || !remoteWorkspaceId || slugError) return
-    await onCreate(finalPath, name.trim(), { url: serverUrl, token, remoteWorkspaceId })
-  }, [name, finalPath, serverUrl, token, remoteWorkspaceId, slugError, onCreate])
+    if (!effectiveName || !finalPath || !serverUrl || !token || !remoteWorkspaceId || slugError) return
+    await onCreate(finalPath, effectiveName, { url: serverUrl, token, remoteWorkspaceId })
+  }, [effectiveName, finalPath, serverUrl, token, remoteWorkspaceId, slugError, onCreate])
 
-  const canCreate = name.trim() && finalPath && serverUrl && token && remoteWorkspaceId && !slugError && !isCreating
+  const canCreate = effectiveName && finalPath && serverUrl && token && remoteWorkspaceId && !slugError && !isCreating
 
   return (
     <AddWorkspaceContainer>
@@ -125,26 +124,6 @@ export function AddWorkspaceStep_ConnectRemote({
       />
 
       <div className="mt-6 w-full space-y-5">
-        {/* Workspace name */}
-        <div className="space-y-2">
-          <label className="block text-sm font-medium text-foreground">
-            Workspace name
-          </label>
-          <div className="bg-background shadow-minimal rounded-lg">
-            <Input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My Remote Workspace"
-              disabled={isCreating}
-              autoFocus
-              className="border-0 bg-transparent shadow-none"
-            />
-          </div>
-          {slugError && (
-            <p className="text-xs text-destructive">{slugError}</p>
-          )}
-        </div>
-
         {/* Server URL */}
         <div className="space-y-2">
           <label className="block text-sm font-medium text-foreground">
@@ -156,6 +135,7 @@ export function AddWorkspaceStep_ConnectRemote({
               onChange={(e) => setServerUrl(e.target.value)}
               placeholder="ws://192.168.1.100:3001"
               disabled={isCreating}
+              autoFocus
               className="border-0 bg-transparent shadow-none font-mono text-sm"
             />
           </div>
@@ -189,7 +169,7 @@ export function AddWorkspaceStep_ConnectRemote({
           {testState === 'ok' && (
             <span className="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
               <CheckCircle className="h-3.5 w-3.5" />
-              Connected
+              Connected{remoteWorkspaceName ? ` — ${remoteWorkspaceName}` : ''}
             </span>
           )}
           {testState === 'error' && (
@@ -199,6 +179,28 @@ export function AddWorkspaceStep_ConnectRemote({
             </span>
           )}
         </div>
+
+        {/* Workspace name — shown after successful test, optional override */}
+        {testState === 'ok' && (
+          <div className="space-y-2">
+            <label className="block text-sm font-medium text-foreground">
+              Workspace name
+              <span className="ml-1 text-xs font-normal text-muted-foreground">(optional)</span>
+            </label>
+            <div className="bg-background shadow-minimal rounded-lg">
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder={remoteWorkspaceName || 'Remote Workspace'}
+                disabled={isCreating}
+                className="border-0 bg-transparent shadow-none"
+              />
+            </div>
+            {slugError && (
+              <p className="text-xs text-destructive">{slugError}</p>
+            )}
+          </div>
+        )}
 
         {/* Create button */}
         <AddWorkspacePrimaryButton
