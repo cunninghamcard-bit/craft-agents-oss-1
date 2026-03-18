@@ -18,7 +18,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { resolveAutomationsConfigPath, generateShortId } from './resolve-config-path.ts';
-import { AUTOMATIONS_HISTORY_FILE, AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER, AUTOMATION_HISTORY_MAX_ENTRIES } from './constants.ts';
+import { compactAutomationHistorySync } from './history-store.ts';
 import { createLogger } from '../utils/debug.ts';
 import { WorkspaceEventBus, type EventPayloadMap } from './event-bus.ts';
 import { PromptHandler, EventLogHandler, WebhookHandler, type AutomationsConfigProvider } from './handlers/index.ts';
@@ -206,48 +206,8 @@ export class AutomationSystem implements AutomationsConfigProvider {
    * Runs synchronously during init — single-threaded, no race with concurrent appends.
    */
   private rotateHistory(): void {
-    const historyPath = join(this.options.workspaceRootPath, AUTOMATIONS_HISTORY_FILE);
     try {
-      if (!existsSync(historyPath)) return;
-      const content = readFileSync(historyPath, 'utf-8');
-      const lines = content.trim().split('\n').filter(Boolean);
-      if (lines.length === 0) return;
-
-      // Parse entries, dropping malformed lines
-      const entries: Array<{ raw: string; id: string }> = [];
-      for (const line of lines) {
-        try {
-          const parsed = JSON.parse(line);
-          entries.push({ raw: line, id: parsed.id ?? '' });
-        } catch { /* drop malformed */ }
-      }
-
-      // 1) Per-automation cap
-      const byId = new Map<string, number[]>();
-      for (let i = 0; i < entries.length; i++) {
-        const id = entries[i]!.id;
-        let group = byId.get(id);
-        if (!group) { group = []; byId.set(id, group); }
-        group.push(i);
-      }
-      const keepIndices = new Set<number>();
-      for (const indices of byId.values()) {
-        for (const idx of indices.slice(-AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER)) {
-          keepIndices.add(idx);
-        }
-      }
-      let trimmed = entries.filter((_, i) => keepIndices.has(i));
-
-      // 2) Global cap
-      if (trimmed.length > AUTOMATION_HISTORY_MAX_ENTRIES) {
-        trimmed = trimmed.slice(-AUTOMATION_HISTORY_MAX_ENTRIES);
-      }
-
-      if (trimmed.length === entries.length) return;
-
-      const output = trimmed.map(e => e.raw).join('\n') + '\n';
-      writeFileSync(historyPath, output, 'utf-8');
-      log.debug(`[AutomationSystem] Compacted automations-history.jsonl: ${entries.length} → ${trimmed.length} entries`);
+      compactAutomationHistorySync(this.options.workspaceRootPath);
     } catch {
       // Non-critical — compaction failure doesn't affect functionality
     }

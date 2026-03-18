@@ -1,18 +1,19 @@
 /**
- * History Store — single source of truth for automations-history.jsonl writes.
+ * History Store — single source of truth for automations-history.jsonl writes
+ * and compaction.
  *
  * Provides:
  * - `appendAutomationHistoryEntry()` — serialized append, triggers compaction at the global cap
- * - `compactAutomationHistory()` — two-tier retention: per-automation + global cap
+ * - `compactAutomationHistory()` — async two-tier retention (runtime, under mutex)
+ * - `compactAutomationHistorySync()` — sync two-tier retention (startup, no mutex needed)
  *
- * Compaction runs on startup (AutomationSystem.rotateHistory) and at runtime when
- * appends reach the global cap (AUTOMATION_HISTORY_MAX_ENTRIES).
- * All history writes across the codebase should go through `appendAutomationHistoryEntry`
- * so the mutex prevents concurrent file corruption.
+ * Both sync and async compaction share the same pure algorithm (`compactEntries`).
+ * All history writes should go through `appendAutomationHistoryEntry` so the mutex
+ * prevents concurrent file corruption.
  */
 
 import { appendFile, readFile, writeFile } from 'fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'path';
 import { createLogger } from '../utils/debug.ts';
 import {
@@ -77,10 +78,7 @@ export async function appendAutomationHistoryEntry(
 // ============================================================================
 
 /**
- * Compact the history file in-place: enforce per-automation and global caps.
- *
- * Called on startup (AutomationSystem.rotateHistory) to migrate legacy files
- * and enforce retention limits.
+ * Compact the history file asynchronously (runtime path, under mutex).
  */
 export async function compactAutomationHistory(
   workspaceRootPath: string,
@@ -93,7 +91,30 @@ export async function compactAutomationHistory(
 }
 
 /**
- * Internal compaction — must be called inside withMutex.
+ * Compact the history file synchronously (startup path).
+ * Safe to call without the mutex — startup is single-threaded and runs
+ * before any async appends.
+ */
+export function compactAutomationHistorySync(
+  workspaceRootPath: string,
+  maxPerMatcher: number = AUTOMATION_HISTORY_MAX_RUNS_PER_MATCHER,
+  maxTotal: number = AUTOMATION_HISTORY_MAX_ENTRIES,
+): void {
+  const historyPath = join(workspaceRootPath, AUTOMATIONS_HISTORY_FILE);
+  if (!existsSync(historyPath)) return;
+
+  let content: string;
+  try { content = readFileSync(historyPath, 'utf-8'); } catch { return; }
+
+  const result = compactEntries(content, maxPerMatcher, maxTotal);
+  if (!result) return;
+
+  writeFileSync(historyPath, result, 'utf-8');
+  log.debug(`[HistoryStore] Startup compaction complete`);
+}
+
+/**
+ * Internal async compaction — must be called inside withMutex.
  */
 async function runCompaction(
   historyPath: string,
@@ -108,8 +129,33 @@ async function runCompaction(
     return;
   }
 
+  const result = compactEntries(content, maxPerMatcher, maxTotal);
+  if (!result) return;
+
+  await writeFile(historyPath, result, 'utf-8');
+  log.debug(`[HistoryStore] Compacted history`);
+}
+
+// ============================================================================
+// Pure compaction algorithm — shared by sync and async paths
+// ============================================================================
+
+/**
+ * Apply two-tier retention to JSONL content:
+ * 1. Per-automation cap: keep last `maxPerMatcher` entries per automation ID
+ * 2. Global cap: keep last `maxTotal` entries overall
+ *
+ * Also drops malformed JSON lines.
+ *
+ * Returns the compacted output string, or `null` if no compaction was needed.
+ */
+function compactEntries(
+  content: string,
+  maxPerMatcher: number,
+  maxTotal: number,
+): string | null {
   const lines = content.trim().split('\n').filter(Boolean);
-  if (lines.length === 0) return;
+  if (lines.length === 0) return null;
 
   // Parse all lines, dropping malformed ones
   const entries: Array<{ raw: string; id: string }> = [];
@@ -125,8 +171,8 @@ async function runCompaction(
   // Track original line count (including malformed) for dirty-check
   const originalLineCount = lines.length;
 
-  // 1) Per-automation cap: keep only last N per ID (iterate in order, slice per group)
-  const byId = new Map<string, number[]>(); // id → indices
+  // 1) Per-automation cap: keep only last N per ID
+  const byId = new Map<string, number[]>();
   for (let i = 0; i < entries.length; i++) {
     const id = entries[i]!.id;
     let group = byId.get(id);
@@ -152,9 +198,7 @@ async function runCompaction(
     trimmed = trimmed.slice(-maxTotal);
   }
 
-  if (trimmed.length === originalLineCount) return; // nothing to trim
+  if (trimmed.length === originalLineCount) return null;
 
-  const output = trimmed.map(e => e.raw).join('\n') + '\n';
-  await writeFile(historyPath, output, 'utf-8');
-  log.debug(`[HistoryStore] Compacted: ${originalLineCount} → ${trimmed.length} entries`);
+  return trimmed.map(e => e.raw).join('\n') + '\n';
 }
