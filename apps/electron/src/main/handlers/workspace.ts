@@ -44,10 +44,21 @@ export function registerWorkspaceGuiHandlers(server: RpcServer, deps: HandlerDep
         return { ok: false, error: state.lastError?.message ?? 'Connection failed' }
       }
 
-      // Resolve workspace — remote server must have exactly one workspace
-      const workspaces = await client.invoke('workspaces:get') as Array<{ id: string; name: string }>
+      // Resolve workspace — use existing or create one on fresh servers
+      let workspaces = await client.invoke('workspaces:get') as Array<{ id: string; name: string }>
+
       if (workspaces.length === 0) {
-        return { ok: false, error: 'No workspace configured on remote server' }
+        // Fresh server with no workspaces — create a default one remotely.
+        // The remote server's workspaces:create handler will auto-create the folder
+        // at its own default location (~/.craft-agent/workspaces/default).
+        const homeDir = await client.invoke('system:homeDir') as string
+        const defaultPath = `${homeDir}/.craft-agent/workspaces/default`
+        await client.invoke('workspaces:create', defaultPath, 'Default')
+        workspaces = await client.invoke('workspaces:get') as Array<{ id: string; name: string }>
+      }
+
+      if (workspaces.length === 0) {
+        return { ok: false, error: 'Failed to create workspace on remote server' }
       }
       if (workspaces.length > 1) {
         return { ok: false, error: 'Multiple workspaces not supported yet' }
