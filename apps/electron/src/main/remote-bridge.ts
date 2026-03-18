@@ -20,6 +20,7 @@ import type { RpcServer } from '@craft-agent/server-core/transport'
 export class RemoteClientBridge {
   readonly localClientId: string
   readonly workspaceId: string
+  private remoteWorkspaceId: string
   private client: WsRpcClient
   private destroyed = false
 
@@ -31,6 +32,7 @@ export class RemoteClientBridge {
   ) {
     this.localClientId = localClientId
     this.workspaceId = workspaceId
+    this.remoteWorkspaceId = remoteConfig.remoteWorkspaceId
 
     this.client = new WsRpcClient(remoteConfig.url, {
       token: remoteConfig.token,
@@ -70,9 +72,23 @@ export class RemoteClientBridge {
   private setupEventForwarding(): void {
     this.client.onAnyEvent((channel: string, ...args: unknown[]) => {
       if (isRemoteEligible(channel)) {
-        this.localServer.push(channel, { to: 'client', clientId: this.localClientId }, ...args)
+        // Rewrite remote workspace IDs back to local in event payloads
+        const rewritten = args.map(arg => this.rewriteWorkspaceIds(arg))
+        this.localServer.push(channel, { to: 'client', clientId: this.localClientId }, ...rewritten)
       }
     })
+  }
+
+  /** Rewrite workspaceId fields from remote→local in event/response data. */
+  private rewriteWorkspaceIds(data: unknown): unknown {
+    if (data == null || typeof data !== 'object') return data
+    if (Array.isArray(data)) return data.map(item => this.rewriteWorkspaceIds(item))
+
+    const obj = data as Record<string, unknown>
+    if (obj.workspaceId === this.remoteWorkspaceId) {
+      obj.workspaceId = this.workspaceId
+    }
+    return obj
   }
 
   get connectionState(): TransportConnectionState {

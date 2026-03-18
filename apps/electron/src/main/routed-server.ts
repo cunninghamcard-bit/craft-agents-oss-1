@@ -23,6 +23,21 @@ import type { BridgeManager } from './remote-bridge-manager'
 
 const SWITCH_WORKSPACE_CHANNEL = RPC_CHANNELS.window.SWITCH_WORKSPACE
 
+/**
+ * Recursively rewrite `workspaceId` fields in response data from remote→local.
+ * Handles session objects, arrays of sessions, and nested structures.
+ */
+function rewriteWorkspaceIds(data: unknown, remoteId: string, localId: string): unknown {
+  if (data == null || typeof data !== 'object') return data
+  if (Array.isArray(data)) return data.map(item => rewriteWorkspaceIds(item, remoteId, localId))
+
+  const obj = data as Record<string, unknown>
+  if (obj.workspaceId === remoteId) {
+    obj.workspaceId = localId
+  }
+  return obj
+}
+
 export class RoutedServer implements RpcServer {
   constructor(
     private inner: RpcServer,
@@ -81,7 +96,13 @@ export class RoutedServer implements RpcServer {
       if (typeof remoteArgs[0] === 'string' && remoteArgs[0] === workspace.id) {
         remoteArgs[0] = workspace.remoteServer.remoteWorkspaceId
       }
-      return bridge.invoke(channel, ...remoteArgs)
+
+      const result = await bridge.invoke(channel, ...remoteArgs)
+
+      // Rewrite workspace IDs in the response: the remote returns its own
+      // workspace ID in session objects etc. The renderer filters by the local
+      // workspace ID, so we must translate back.
+      return rewriteWorkspaceIds(result, workspace.remoteServer.remoteWorkspaceId, workspace.id)
     })
   }
 
