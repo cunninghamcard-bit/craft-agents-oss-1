@@ -314,6 +314,29 @@ export class PiAgent extends BaseAgent {
       args.unshift('--require', interceptorPath);
     }
 
+    // Build AWS env vars for Bedrock IAM credentials.
+    // The Pi SDK's Bedrock provider reads from the AWS default credential chain
+    // (env vars), not from Pi AuthStorage. Inject at spawn time so credentials
+    // are scoped to this subprocess and don't leak to the main process.
+    const awsEnv: Record<string, string> = {};
+    if (runtime.piAuthProvider === 'amazon-bedrock' && this.config.authType === 'iam_credentials') {
+      const slug = this.config.connectionSlug || 'pi';
+      const iam = await getCredentialManager().getLlmIamCredentials(slug);
+      if (iam) {
+        awsEnv.AWS_ACCESS_KEY_ID = iam.accessKeyId;
+        awsEnv.AWS_SECRET_ACCESS_KEY = iam.secretAccessKey;
+        if (iam.region) awsEnv.AWS_REGION = iam.region;
+        if (iam.sessionToken) awsEnv.AWS_SESSION_TOKEN = iam.sessionToken;
+        this.debug('Injecting IAM credentials into subprocess env for AWS SDK');
+      }
+    }
+    // Defensive: force HTTP/1.1 for Bedrock. AWS SDK v3 defaults to HTTP/2
+    // (NodeHttp2Handler) which can be incompatible with Bun/Electron runtimes.
+    // The Pi SDK's amazon-bedrock.js already checks this env var.
+    if (runtime.piAuthProvider === 'amazon-bedrock' && !process.env.AWS_BEDROCK_FORCE_HTTP1) {
+      awsEnv.AWS_BEDROCK_FORCE_HTTP1 = '1';
+    }
+
     // Spawn the subprocess
     const child = spawn(nodePath, args, {
       cwd,
@@ -322,6 +345,7 @@ export class PiAgent extends BaseAgent {
         ...process.env,
         ...getProxyEnvVars(),
         ...this.config.envOverrides,
+        ...awsEnv,
         // Pass session dir for cross-process toolMetadataStore
         ...(sessionDir ? { CRAFT_SESSION_DIR: sessionDir } : {}),
         // Propagate debug mode
@@ -475,7 +499,13 @@ export class PiAgent extends BaseAgent {
    * modules use directly. The OAuth exchange happens on the Craft side; by the time
    * it reaches Pi, it's just an access token.
    */
-  private async getPiAuth(): Promise<{ provider: string; credential: { type: 'api_key'; key: string } | { type: 'oauth'; access: string; refresh: string; expires: number } } | null> {
+  private async getPiAuth(): Promise<{
+    provider: string;
+    credential:
+      | { type: 'api_key'; key: string }
+      | { type: 'oauth'; access: string; refresh: string; expires: number }
+      | { type: 'iam'; accessKeyId: string; secretAccessKey: string; region?: string; sessionToken?: string }
+  } | null> {
     const piAuthProvider = getBackendRuntime(this.config).piAuthProvider;
     if (!piAuthProvider) return null;
 
@@ -507,6 +537,24 @@ export class PiAgent extends BaseAgent {
           return {
             provider: piAuthProvider,
             credential: { type: 'api_key', key: oauth.accessToken },
+          };
+        }
+      } else if (this.config.authType === 'iam_credentials') {
+        // AWS IAM credentials — pass structured fields so the subprocess can
+        // identify the credential type. Actual AWS env var injection happens
+        // at spawn time (see spawnSubprocess) for proper process isolation.
+        const iam = await credentialManager.getLlmIamCredentials(slug);
+        if (iam) {
+          this.debug(`Retrieved IAM credentials for Pi provider: ${piAuthProvider}`);
+          return {
+            provider: piAuthProvider,
+            credential: {
+              type: 'iam',
+              accessKeyId: iam.accessKeyId,
+              secretAccessKey: iam.secretAccessKey,
+              region: iam.region,
+              sessionToken: iam.sessionToken,
+            },
           };
         }
       } else {
