@@ -97,7 +97,7 @@ import { getPiModelsForAuthProvider, getAllPiModels } from '@craft-agent/shared/
 import { initNotificationService, initBadgeIcon, initInstanceBadge, updateBadgeCount } from './notifications'
 import { checkForUpdatesOnLaunch, setAutoUpdateEventSink, isUpdating } from './auto-update'
 import type { EventSink } from '@craft-agent/server-core/transport'
-import { validateGitBashPath } from '@craft-agent/server-core/services'
+import { validateGitBashPath, checkVCRedistInstalled } from '@craft-agent/server-core/services'
 
 // Initialize electron-log for renderer process support
 log.initialize()
@@ -452,6 +452,29 @@ app.whenReady().then(async () => {
             delete process.env.CLAUDE_CODE_GIT_BASH_PATH
             mainLog.warn(`Cleared invalid persisted Git Bash path: ${gitBashPath}`)
           }
+        }
+      }
+
+      // Check for VC++ Redistributable on Windows (required by onnxruntime / markitdown).
+      // Without it, document conversion tools (PDF, PPTX, DOCX, XLSX) crash with DLL errors.
+      if (process.platform === 'win32') {
+        const vcCheck = checkVCRedistInstalled()
+        if (!vcCheck.installed) {
+          mainLog.warn('[vcredist]', vcCheck.message)
+          process.env.CRAFT_VCREDIST_MISSING = '1'
+          // Show a non-blocking warning dialog so the user knows document tools won't work
+          dialog.showMessageBox({
+            type: 'warning',
+            title: 'Missing Dependency',
+            message: 'Microsoft Visual C++ Redistributable not found',
+            detail:
+              'Document conversion tools (PDF, PPTX, DOCX, XLSX) require the Visual C++ Redistributable to work.\n\n' +
+              'Please download and install it from:\nhttps://aka.ms/vs/17/release/vc_redist.x64.exe\n\n' +
+              'Restart Craft Agents after installation.',
+            buttons: ['OK'],
+          }).catch(() => {})
+        } else if (isDebugMode) {
+          mainLog.info('[vcredist]', vcCheck.message)
         }
       }
 
