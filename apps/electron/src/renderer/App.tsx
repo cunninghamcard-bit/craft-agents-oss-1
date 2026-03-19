@@ -56,6 +56,7 @@ import {
 } from '@craft-agent/ui'
 import { useLinkInterceptor, type FilePreviewState } from '@/hooks/useLinkInterceptor'
 import { useTransportConnectionState } from '@/hooks/useTransportConnectionState'
+import { useStaleSessionRecovery } from '@/hooks/useStaleSessionRecovery'
 import { TransportConnectionBanner, shouldShowTransportConnectionBanner } from '@/components/app-shell/TransportConnectionBanner'
 import { getFileManagerName } from '@/lib/platform'
 import { ActionRegistryProvider } from '@/actions'
@@ -324,7 +325,14 @@ export default function App() {
   }, [applyPermissionModeState])
 
   // Event processor hook - handles all agent events through pure functions
-  const { processAgentEvent } = useEventProcessor()
+  const { processAgentEvent, clearStreamingState } = useEventProcessor()
+
+  // Stale session watchdog — catches stuck sessions that the reconnect protocol misses
+  const { trackSessionActivity } = useStaleSessionRecovery({
+    store,
+    updateSessionDirect,
+    clearStreamingState,
+  })
 
   const DRAFT_SAVE_DEBOUNCE_MS = 500
 
@@ -679,6 +687,9 @@ export default function App() {
 
       const agentEvent = event as unknown as AgentEvent
 
+      // Track activity for stale session watchdog
+      trackSessionActivity(sessionId)
+
       // Dispatch window event when compaction completes
       // This allows FreeFormInput to sequence the plan execution message after compaction
       // Note: markCompactionComplete is called on the backend (sessions.ts) to ensure
@@ -769,6 +780,7 @@ export default function App() {
     return cleanup
   }, [
     processAgentEvent,
+    trackSessionActivity,
     windowWorkspaceId,
     store,
     updateSessionDirect,
@@ -779,6 +791,50 @@ export default function App() {
     applyPermissionModeState,
     reconcilePermissionModeState,
   ])
+
+  // Transport reconnect recovery — refresh stale sessions after WS reconnection
+  useEffect(() => {
+    const cleanup = window.electronAPI.onReconnected(async (isStale: boolean) => {
+      if (!isStale) {
+        // Server replayed buffered events — we're caught up, nothing to do
+        console.info('[App] Reconnected with event replay — no refresh needed')
+        return
+      }
+
+      // Stale: buffer evicted or old server — full state refresh needed
+      console.warn('[App] Stale reconnect — refreshing active sessions')
+
+      // Collect sessions that need refresh (processing or currently active)
+      const allMeta = store.get(sessionMetaMapAtom)
+      const refreshIds: string[] = []
+
+      for (const [id, meta] of allMeta) {
+        if (meta.isProcessing) {
+          // Clear stale streaming state before refresh to avoid conflicts
+          clearStreamingState(id)
+          refreshIds.push(id)
+        }
+      }
+
+      // Refresh each stale session from server-persisted state
+      for (const sessionId of refreshIds) {
+        try {
+          const fresh = await window.electronAPI.getSessionMessages(sessionId)
+          if (fresh) {
+            updateSessionDirect(sessionId, () => fresh)
+            const metaMap = store.get(sessionMetaMapAtom)
+            const newMetaMap = new Map(metaMap)
+            newMetaMap.set(sessionId, extractSessionMeta(fresh))
+            store.set(sessionMetaMapAtom, newMetaMap)
+          }
+        } catch (err) {
+          console.error(`[App] Failed to refresh session ${sessionId}:`, err)
+        }
+      }
+    })
+
+    return cleanup
+  }, [store, updateSessionDirect, clearStreamingState])
 
   // Listen for menu bar events
   useEffect(() => {

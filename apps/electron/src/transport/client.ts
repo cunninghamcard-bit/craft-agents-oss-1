@@ -9,6 +9,7 @@
 import {
   PROTOCOL_VERSION,
   REQUEST_TIMEOUT_MS,
+  SEQUENCE_ACK_INTERVAL_MS,
   type MessageEnvelope,
 } from '@craft-agent/shared/protocol'
 import type { RpcClient } from '@craft-agent/server-core/transport'
@@ -107,6 +108,9 @@ export class WsRpcClient implements RpcClient {
   private clientId: string | null = null
   private connected = false
   private reconnectAttempt = 0
+  private lastSeenSeq = 0
+  private ackTimer: ReturnType<typeof setInterval> | null = null
+  private previousClientId: string | null = null
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private connectTimer: ReturnType<typeof setTimeout> | null = null
   private destroyed = false
@@ -311,7 +315,7 @@ export class WsRpcClient implements RpcClient {
 
     ws.onopen = () => {
       if (this.ws !== ws) return // stale socket — ignore
-      // Send handshake
+      // Send handshake (includes reconnection info if available)
       const handshake: MessageEnvelope = {
         id: crypto.randomUUID(),
         type: 'handshake',
@@ -320,6 +324,8 @@ export class WsRpcClient implements RpcClient {
         webContentsId: this.webContentsId,
         token: this.token,
         clientCapabilities: this.clientCapabilities.length > 0 ? this.clientCapabilities : undefined,
+        reconnectClientId: this.previousClientId ?? undefined,
+        lastSeq: this.previousClientId ? this.lastSeenSeq : undefined,
       }
       ws.send(serializeEnvelope(handshake))
     }
@@ -359,6 +365,10 @@ export class WsRpcClient implements RpcClient {
     if (this.connectTimer) {
       clearTimeout(this.connectTimer)
       this.connectTimer = null
+    }
+    if (this.ackTimer) {
+      clearInterval(this.ackTimer)
+      this.ackTimer = null
     }
 
     this.failReady(new Error('Client destroyed'))
@@ -402,7 +412,8 @@ export class WsRpcClient implements RpcClient {
     }
 
     switch (envelope.type) {
-      case 'handshake_ack':
+      case 'handshake_ack': {
+        const wasReconnectAttempt = this.reconnectAttempt > 0
         this.clientId = envelope.clientId ?? null
         this.serverChannels = envelope.registeredChannels
           ? new Set(envelope.registeredChannels)
@@ -421,11 +432,28 @@ export class WsRpcClient implements RpcClient {
           lastError: undefined,
           lastClose: undefined,
         })
+        this.startAckTimer()
         this.resolveReady?.()
         this.resolveReady = null
         this.rejectReady = null
         this.readyPromise = null
+
+        // Notify listeners about reconnection AFTER resolveReady
+        if (wasReconnectAttempt) {
+          // envelope.reconnected === true means server supports replay protocol.
+          // If absent, server is old — treat as stale (safe fallback for backward compat).
+          const serverSupportsReplay = envelope.reconnected === true
+          const isStale = !serverSupportsReplay || !!envelope.stale
+
+          const set = this.listeners.get('__transport:reconnected')
+          if (set) {
+            for (const cb of set) {
+              try { cb(isStale) } catch { /* listener errors must not break transport */ }
+            }
+          }
+        }
         break
+      }
 
       case 'response': {
         const req = this.pending.get(envelope.id)
@@ -470,6 +498,14 @@ export class WsRpcClient implements RpcClient {
       }
 
       case 'event': {
+        // Track sequence numbers for reliable delivery
+        if (typeof envelope.seq === 'number') {
+          if (this.lastSeenSeq > 0 && envelope.seq > this.lastSeenSeq + 1) {
+            console.warn(`[WsRpc] Sequence gap: expected ${this.lastSeenSeq + 1}, got ${envelope.seq}`)
+          }
+          this.lastSeenSeq = envelope.seq
+        }
+
         if (envelope.channel) {
           const set = this.listeners.get(envelope.channel)
           if (set) {
@@ -526,10 +562,21 @@ export class WsRpcClient implements RpcClient {
   // -------------------------------------------------------------------------
 
   private onDisconnect(closeEvent?: { code?: number; reason?: string; wasClean?: boolean }): void {
+    // Preserve clientId for reconnect handshake
+    if (this.clientId) {
+      this.previousClientId = this.clientId
+    }
+
     const wasConnected = this.connected
     this.connected = false
     this.clientId = null
     this.ws = null
+
+    // Stop ack timer
+    if (this.ackTimer) {
+      clearInterval(this.ackTimer)
+      this.ackTimer = null
+    }
 
     if (this.connectTimer) {
       clearTimeout(this.connectTimer)
@@ -603,6 +650,21 @@ export class WsRpcClient implements RpcClient {
       this.reconnectTimer = null
       this.connect()
     }, delay)
+  }
+
+  /** Periodically send sequence_ack so server can evict acknowledged events. */
+  private startAckTimer(): void {
+    if (this.ackTimer) clearInterval(this.ackTimer)
+    this.ackTimer = setInterval(() => {
+      if (this.connected && this.ws && this.lastSeenSeq > 0) {
+        const ack: MessageEnvelope = {
+          id: crypto.randomUUID(),
+          type: 'sequence_ack',
+          lastSeq: this.lastSeenSeq,
+        }
+        this.ws.send(serializeEnvelope(ack))
+      }
+    }, SEQUENCE_ACK_INTERVAL_MS)
   }
 
   private createReadyPromise(): void {
