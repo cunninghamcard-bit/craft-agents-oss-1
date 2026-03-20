@@ -306,6 +306,42 @@ function copyDependencyTree(
   }
 }
 
+/**
+ * Scan all .ts files in a directory tree for import/require statements
+ * and return the set of external npm package names (not relative paths,
+ * not node: builtins, not workspace @craft-agent/* packages).
+ */
+function scanImports(dir: string): Set<string> {
+  const packages = new Set<string>();
+  // Match: import ... from 'pkg', require('pkg'), import('pkg')
+  const importRe = /(?:from\s+['"]|require\s*\(\s*['"]|import\s*\(\s*['"])([^'"]+)['"]/g;
+
+  function walk(d: string): void {
+    if (!existsSync(d)) return;
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      const full = join(d, entry.name);
+      if (entry.isDirectory() && entry.name !== 'node_modules' && entry.name !== 'tests' && entry.name !== '__tests__') {
+        walk(full);
+      } else if (entry.isFile() && (entry.name.endsWith('.ts') || entry.name.endsWith('.js'))) {
+        const content = readFileSync(full, 'utf-8');
+        let match: RegExpExecArray | null;
+        while ((match = importRe.exec(content)) !== null) {
+          const spec = match[1]!;
+          // Skip relative imports, node: builtins, workspace packages
+          if (spec.startsWith('.') || spec.startsWith('node:') || spec.startsWith('@craft-agent/')) continue;
+          // Extract package name (handle scoped: @scope/name)
+          const parts = spec.split('/');
+          const pkgName = spec.startsWith('@') ? `${parts[0]}/${parts[1]}` : parts[0]!;
+          packages.add(pkgName);
+        }
+      }
+    }
+  }
+
+  walk(dir);
+  return packages;
+}
+
 function copyProductionDeps(config: ServerBuildConfig): void {
   const { rootDir, outputDir, platform, arch } = config;
   const srcModules = join(rootDir, 'node_modules');
@@ -315,58 +351,45 @@ function copyProductionDeps(config: ServerBuildConfig): void {
   const copied = new Set<string>();
 
   // -------------------------------------------------------------------------
-  // 1. Automatically resolve deps from workspace packages
-  //    This is the primary mechanism — reads each workspace package's
-  //    package.json and recursively copies all declared dependencies.
-  //    Workspace refs (workspace:*) are skipped (they live in packages/).
+  // 1. Scan source code for ALL external imports across server packages
+  //    This catches everything — declared deps, undeclared deps, transitive
+  //    imports that happen to work due to hoisting. No more whack-a-mole.
   // -------------------------------------------------------------------------
   const SERVER_PACKAGES = ['server', 'server-core', 'shared', 'core', 'session-tools-core', 'session-mcp-server'];
 
+  const allImports = new Set<string>();
+  for (const pkg of SERVER_PACKAGES) {
+    const pkgSrc = join(rootDir, 'packages', pkg, 'src');
+    const imports = scanImports(pkgSrc);
+    for (const imp of imports) allImports.add(imp);
+  }
+  console.log(`  Found ${allImports.size} external packages referenced in source`);
+
+  // Also include declared dependencies (catches deps used only at runtime / dynamically)
   for (const pkg of SERVER_PACKAGES) {
     const pkgJsonPath = join(rootDir, 'packages', pkg, 'package.json');
     if (!existsSync(pkgJsonPath)) continue;
-
     try {
       const pkgJson = JSON.parse(readFileSync(pkgJsonPath, 'utf-8'));
-      const deps = Object.entries(pkgJson.dependencies || {}) as [string, string][];
-      for (const [dep, version] of deps) {
-        // Skip workspace references — those are in packages/, not node_modules
+      for (const [dep, version] of Object.entries(pkgJson.dependencies || {}) as [string, string][]) {
         if (typeof version === 'string' && version.startsWith('workspace:')) continue;
-        copyDependencyTree(dep, srcModules, destModules, copied);
+        allImports.add(dep);
       }
-    } catch {
-      console.warn(`  Warning: could not parse ${pkgJsonPath}`);
-    }
+      // Also peer dependencies (they're real runtime deps)
+      for (const dep of Object.keys(pkgJson.peerDependencies || {})) {
+        allImports.add(dep);
+      }
+    } catch { /* skip */ }
   }
-  console.log(`  Workspace package deps: ${copied.size} packages`);
 
-  // -------------------------------------------------------------------------
-  // 2. Root-level deps used by server code but only declared in root package.json
-  //    (not in any workspace package's dependencies)
-  // -------------------------------------------------------------------------
-  const ROOT_LEVEL_DEPS = [
-    // SDK (core AI functionality + ripgrep)
-    '@anthropic-ai/claude-agent-sdk',
-    // Document conversion (used by server-core/handlers/rpc/files.ts)
-    'markitdown-js',
-    // Content type / raw body parsing (used by server-core HTTP handling)
-    'content-type',
-    'raw-body',
-    // JS-YAML (used by shared config parsing at runtime)
-    'js-yaml',
-  ];
-
-  for (const dep of ROOT_LEVEL_DEPS) {
-    const before = copied.size;
+  // Copy each discovered package and its full transitive dependency tree
+  for (const dep of allImports) {
     copyDependencyTree(dep, srcModules, destModules, copied);
-    const added = copied.size - before;
-    if (added > 0) {
-      console.log(`  ${dep}: copied ${added} packages (recursive)`);
-    }
   }
+  console.log(`  Source imports + declared deps: ${copied.size} packages`);
 
   // -------------------------------------------------------------------------
-  // 3. Platform-specific native binaries (optionalDependencies, not in dep trees)
+  // 2. Platform-specific native binaries (optionalDependencies, not in dep trees)
   // -------------------------------------------------------------------------
   const PLATFORM_DEPS = [
     `@img/sharp-${platform === 'darwin' ? 'darwin' : 'linux'}-${arch}`,
