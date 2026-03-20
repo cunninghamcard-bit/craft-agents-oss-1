@@ -219,7 +219,6 @@ export function WorkspaceSwitcher({
             return (
               <StyledDropdownMenuItem
                 key={workspace.id}
-                disabled={disconnected}
                 onClick={(e) => {
                   if (disconnected) return
                   const openInNewWindow = e.metaKey || e.ctrlKey
@@ -228,6 +227,7 @@ export function WorkspaceSwitcher({
                 className={cn(
                   "justify-between group",
                   activeWorkspaceId === workspace.id && "bg-foreground/10",
+                  disconnected && "opacity-60",
                 )}
               >
                 <div className="flex items-center gap-3 font-sans min-w-0 flex-1">
