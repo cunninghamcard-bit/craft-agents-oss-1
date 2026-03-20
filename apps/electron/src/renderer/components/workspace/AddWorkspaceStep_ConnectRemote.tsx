@@ -291,14 +291,14 @@ export function AddWorkspaceStep_ConnectRemote({
           </div>
         )}
 
-        {/* Create button */}
+        {/* Connect / Create and Connect */}
         <AddWorkspacePrimaryButton
           onClick={handleCreate}
           disabled={!canCreate}
           loading={isCreating}
-          loadingText="Creating..."
+          loadingText={needsWorkspace ? 'Creating...' : 'Connecting...'}
         >
-          Create
+          {needsWorkspace ? 'Create and Connect' : 'Connect'}
         </AddWorkspacePrimaryButton>
       </div>
     </AddWorkspaceContainer>
