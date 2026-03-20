@@ -212,9 +212,39 @@ export function createWebApi(options: WebApiOptions): {
 
     // Relaunch — reload page
     relaunchApp: () => { window.location.reload(); return Promise.resolve() },
+    removeWorkspace: () => Promise.resolve(false), // not supported in web UI
+    invokeOnServer: () => Promise.reject(new Error('Cross-server RPC not available in web UI')),
   }
 
-  const api = { ...baseApi, ...webOverrides } as ElectronAPI
+  // OAuth overrides — web-compatible browser opening
+  // The Electron preload uses shell.openExternal() which isn't available in browsers.
+  const oauthOverrides: Partial<ElectronAPI> = {
+    // Claude OAuth — server returns authUrl, we open it in a new tab
+    startClaudeOAuth: async () => {
+      try {
+        const result = await client.invoke('onboarding:startClaudeOAuth')
+        if (result.success && result.authUrl) {
+          window.open(result.authUrl, '_blank', 'noopener')
+        }
+        return result
+      } catch (err) {
+        return {
+          success: false,
+          error: err instanceof Error ? err.message : 'Claude OAuth failed',
+        }
+      }
+    },
+
+    // ChatGPT OAuth — requires localhost callback server, not possible in browser
+    startChatGptOAuth: async () => {
+      return {
+        success: false,
+        error: 'ChatGPT OAuth is not available in the web UI. Use the desktop app or set up an API key instead.',
+      }
+    },
+  }
+
+  const api = { ...baseApi, ...webOverrides, ...oauthOverrides } as ElectronAPI
 
   return { api, client }
 }
