@@ -85,20 +85,32 @@ export function ServerDirectoryBrowser({
 
     const init = async () => {
       if (mode === 'browse') {
-        // Navigate to initial path or ~ (server resolves ~ to its own home directory).
+        // Start from initialPath or ~ (server resolves ~ to its own home directory).
         // This ensures the directory browser starts from the REMOTE server's home,
         // not the client's local home directory.
         const startPath = initialPath || '~'
+        setLoading(true)
         try {
           const result = await window.electronAPI.listServerDirectory(startPath)
           setListing(result)
           setPathInput(result.currentPath)
-          setServerHomePath(result.currentPath) // Use resolved path for platform detection
-        } catch {
-          // If initialPath fails (e.g. wrong platform), fall back to ~
+          setServerHomePath(result.currentPath)
+        } catch (err) {
+          // If initialPath failed, try ~ as fallback
           if (initialPath) {
-            void navigateTo('~')
+            try {
+              const result = await window.electronAPI.listServerDirectory('~')
+              setListing(result)
+              setPathInput(result.currentPath)
+              setServerHomePath(result.currentPath)
+            } catch (fallbackErr) {
+              setError(fallbackErr instanceof Error ? fallbackErr.message : 'Failed to list directory')
+            }
+          } else {
+            setError(err instanceof Error ? err.message : 'Failed to list directory')
           }
+        } finally {
+          setLoading(false)
         }
       } else {
         // Manual mode — fetch home dir for platform detection
