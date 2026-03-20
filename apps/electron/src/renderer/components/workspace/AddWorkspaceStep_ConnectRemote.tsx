@@ -230,6 +230,14 @@ export function AddWorkspaceStep_ConnectRemote({
           )}
         </div>
 
+        {/* Old server warning */}
+        {testState === 'ok' && !serverVersion && (
+          <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-yellow-500/10 border border-yellow-500/20 text-xs text-yellow-700 dark:text-yellow-400">
+            <XCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+            <span>This server is running an older version. Some features like remote directory browsing may not work correctly. Update the server for full functionality.</span>
+          </div>
+        )}
+
         {/* Workspace selector — pick existing or create new */}
         {testState === 'ok' && remoteWorkspaces.length > 0 && (
           <div className="space-y-2">
