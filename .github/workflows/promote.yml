@@ -25,9 +25,15 @@ on:
         required: false
         type: boolean
         default: true
+      build_docker:
+        description: 'Build and push server Docker image (linux/amd64 + linux/arm64)'
+        required: false
+        type: boolean
+        default: true
 
 permissions:
   contents: write
+  packages: write
 
 concurrency:
   group: promote-${{ inputs.version }}
@@ -188,3 +194,75 @@ jobs:
           echo "Install:"
           echo "  macOS/Linux: curl -fsSL https://agents.craft.do/install-app.sh | bash"
           echo "  Windows:     irm https://agents.craft.do/install-app.ps1 | iex"
+          echo ""
+          echo "Docker:"
+          echo "  docker pull ghcr.io/lukilabs/craft-agents-oss:$VERSION"
+          echo "  docker pull ghcr.io/lukilabs/craft-agents-oss:latest"
+
+  # Build and push multi-platform server Docker image to ghcr.io
+  docker:
+    needs: promote
+    if: inputs.build_docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.OSS_REPO_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.server
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/lukilabs/craft-agents-oss:${{ needs.promote.outputs.version }}
+            ghcr.io/lukilabs/craft-agents-oss:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # Smoke test the pushed Docker image
+  docker-smoke-test:
+    needs: [promote, docker]
+    if: inputs.build_docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.10"
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.OSS_REPO_TOKEN }}
+
+      - name: Run smoke test
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.CRAFT_ANTHROPIC_API_KEY }}
+          STITCH_API_KEY: ${{ secrets.STITCH_API_KEY }}
+        run: bash scripts/docker-smoke-test.sh ghcr.io/lukilabs/craft-agents-oss:${{ needs.promote.outputs.version }}

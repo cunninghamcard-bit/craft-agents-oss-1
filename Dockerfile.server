@@ -1,0 +1,87 @@
+# =============================================================================
+# Craft Agent Server — multi-platform Docker image
+#
+# Build:
+#   docker buildx build -f Dockerfile.server -t craft-agent-server .
+#
+# Run:
+#   docker run -e CRAFT_SERVER_TOKEN=<secret> -p 9100:9100 craft-agent-server
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Stage 1: Build the self-contained server distribution
+# ---------------------------------------------------------------------------
+FROM oven/bun:1.3-slim AS builder
+
+WORKDIR /build
+
+# Install git (needed by some dependency resolution) and ca-certificates
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git ca-certificates curl unzip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copy dependency manifests first for better layer caching
+COPY package.json bun.lock ./
+COPY packages/server/package.json packages/server/
+COPY packages/server-core/package.json packages/server-core/
+COPY packages/shared/package.json packages/shared/
+COPY packages/core/package.json packages/core/
+COPY packages/session-tools-core/package.json packages/session-tools-core/
+COPY packages/session-mcp-server/package.json packages/session-mcp-server/
+COPY packages/pi-agent-server/package.json packages/pi-agent-server/
+COPY packages/craft-agents-commands/package.json packages/craft-agents-commands/
+COPY packages/craft-cli/package.json packages/craft-cli/
+COPY packages/ui/package.json packages/ui/
+COPY apps/electron/package.json apps/electron/
+COPY apps/cli/package.json apps/cli/
+COPY apps/marketing/package.json apps/marketing/
+COPY apps/viewer/package.json apps/viewer/
+
+RUN bun install --frozen-lockfile
+
+# Copy full source for the build
+COPY . .
+
+# Build the self-contained server distribution
+# build-server.ts detects platform/arch from the runtime environment,
+# which is correct under buildx QEMU emulation for multi-platform builds.
+RUN bun run scripts/build-server.ts --platform=linux
+
+# ---------------------------------------------------------------------------
+# Stage 2: Minimal runtime image
+# ---------------------------------------------------------------------------
+FROM debian:bookworm-slim
+
+LABEL org.opencontainers.image.source="https://github.com/lukilabs/craft-agents-oss"
+LABEL org.opencontainers.image.description="Craft Agent Server — headless AI workflow server"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy the self-contained distribution from the builder
+COPY --from=builder /build/dist/server/ .
+
+# Ensure all binaries are executable
+RUN chmod +x bin/craft-server start.sh install.sh && \
+    [ -f vendor/bun/bun ] && chmod +x vendor/bun/bun || true && \
+    [ -f resources/bin/uv ] && chmod +x resources/bin/uv || true && \
+    for f in resources/bin/*; do [ -f "$f" ] && chmod +x "$f"; done
+
+# Runtime environment
+ENV CRAFT_IS_PACKAGED=true
+ENV CRAFT_BUNDLED_ASSETS_ROOT=/app
+ENV CRAFT_APP_ROOT=/app
+ENV CRAFT_RESOURCES_PATH=/app/resources
+ENV CRAFT_UV=/app/resources/bin/uv
+ENV CRAFT_SCRIPTS=/app/resources/scripts
+ENV CRAFT_RPC_HOST=0.0.0.0
+ENV CRAFT_RPC_PORT=9100
+ENV PATH="/app/resources/bin:/app/vendor/bun:${PATH}"
+
+EXPOSE 9100
+
+ENTRYPOINT ["/app/bin/craft-server"]
