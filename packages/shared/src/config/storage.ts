@@ -69,6 +69,8 @@ export interface StoredConfig {
   keepAwakeWhileRunning?: boolean;  // Prevent screen sleep while sessions are running (default: false)
   // Tool metadata
   richToolDescriptions?: boolean;  // Add intent/action metadata to all tool calls (default: true)
+  // Prompt caching
+  extendedPromptCache?: boolean;  // Use 1h prompt cache TTL instead of 5m (default: false)
   // Network proxy
   networkProxy?: import('./types.ts').NetworkProxySettings;
   // Windows: path to Git Bash (bash.exe) for the SDK subprocess
@@ -376,6 +378,26 @@ export function setRichToolDescriptions(enabled: boolean): void {
   const config = loadStoredConfig();
   if (!config) return;
   config.richToolDescriptions = enabled;
+  saveConfig(config);
+}
+
+/**
+ * Get whether extended prompt cache (1h TTL) is enabled.
+ * When enabled, the interceptor upgrades cache_control TTL from 5m to 1h.
+ * Defaults to false if not set.
+ */
+export function getExtendedPromptCache(): boolean {
+  const config = loadStoredConfig();
+  return config?.extendedPromptCache ?? false;
+}
+
+/**
+ * Set whether extended prompt cache (1h TTL) is enabled.
+ */
+export function setExtendedPromptCache(enabled: boolean): void {
+  const config = loadStoredConfig();
+  if (!config) return;
+  config.extendedPromptCache = enabled;
   saveConfig(config);
 }
 

@@ -275,6 +275,10 @@ export const CHANNEL_MAP = {
   getRichToolDescriptions: invoke(RPC_CHANNELS.appearance.GET_RICH_TOOL_DESCRIPTIONS),
   setRichToolDescriptions: invoke(RPC_CHANNELS.appearance.SET_RICH_TOOL_DESCRIPTIONS),
 
+  // Prompt caching
+  getExtendedPromptCache: invoke(RPC_CHANNELS.caching.GET_EXTENDED_PROMPT_CACHE),
+  setExtendedPromptCache: invoke(RPC_CHANNELS.caching.SET_EXTENDED_PROMPT_CACHE),
+
   // Badge
   refreshBadge: invoke(RPC_CHANNELS.badge.REFRESH),
   setDockIconWithBadge: invoke(RPC_CHANNELS.badge.SET_ICON),

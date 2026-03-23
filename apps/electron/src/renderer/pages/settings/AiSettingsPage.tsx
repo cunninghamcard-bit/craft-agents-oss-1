@@ -41,6 +41,7 @@ import {
   SettingsCard,
   SettingsRow,
   SettingsMenuSelectRow,
+  SettingsToggle,
 } from '@/components/settings'
 import { useOnboarding } from '@/hooks/useOnboarding'
 import { useWorkspaceIcon } from '@/hooks/useWorkspaceIcon'
@@ -573,6 +574,7 @@ export default function AiSettingsPage() {
 
   // Default settings state (app-level)
   const [defaultThinking, setDefaultThinking] = useState<ThinkingLevel>(DEFAULT_THINKING_LEVEL)
+  const [extendedPromptCache, setExtendedPromptCache] = useState(false)
 
   // Validation state per connection
   const [validationStates, setValidationStates] = useState<Record<string, {
@@ -598,6 +600,9 @@ export default function AiSettingsPage() {
 
         const defaultThinkingLevel = await window.electronAPI.getDefaultThinkingLevel()
         setDefaultThinking(defaultThinkingLevel)
+
+        const extendedCache = await window.electronAPI.getExtendedPromptCache()
+        setExtendedPromptCache(extendedCache)
 
         // Check credential health for potential issues (corruption, machine migration)
         const health = await window.electronAPI.getCredentialHealth()
@@ -861,6 +866,11 @@ export default function AiSettingsPage() {
     }
   }, [defaultThinking])
 
+  const handleExtendedPromptCacheChange = useCallback(async (enabled: boolean) => {
+    setExtendedPromptCache(enabled)
+    await window.electronAPI?.setExtendedPromptCache(enabled)
+  }, [])
+
   // Refresh callback for workspace cards
   const handleWorkspaceSettingsChange = useCallback(() => {
     // Refresh context so changes propagate immediately
@@ -977,6 +987,18 @@ export default function AiSettingsPage() {
                     + Add Connection
                   </button>
                 </div>
+              </SettingsSection>
+
+              {/* Performance */}
+              <SettingsSection title="Performance" description="Cost and caching options.">
+                <SettingsCard>
+                  <SettingsToggle
+                    label="Extended prompt cache (1 hour)"
+                    description="Cache prompts for 1 hour instead of 5 minutes. Reduces cost for long sessions but increases cache write cost. Recommended for sessions longer than 10 minutes."
+                    checked={extendedPromptCache}
+                    onCheckedChange={handleExtendedPromptCacheChange}
+                  />
+                </SettingsCard>
               </SettingsSection>
 
               {/* API Setup Fullscreen Overlay */}

@@ -23,6 +23,7 @@ import {
   DEBUG,
   debugLog,
   isRichToolDescriptionsEnabled,
+  isExtendedPromptCacheEnabled,
   setStoredError,
   toolMetadataStore,
   displayNameSchema,
@@ -232,6 +233,59 @@ export function sanitizeEmptyTextCacheControl(body: Record<string, unknown>): nu
     debugLog(`[Anthropic] Stripped cache_control from ${stripped} empty text block(s)`);
   }
   return stripped;
+}
+
+/**
+ * Upgrade all cache_control blocks from 5m (default) to 1h TTL.
+ * Only active when extendedPromptCache is enabled in config.
+ *
+ * Walks system prompt blocks, message content blocks, and the top-level
+ * cache_control field (auto-caching mode). Only upgrades blocks with
+ * type: "ephemeral" — leaves other types untouched.
+ *
+ * Exported for focused unit tests.
+ */
+export function upgradePromptCacheTtl(body: Record<string, unknown>): number {
+  if (!isExtendedPromptCacheEnabled()) return 0;
+
+  let upgraded = 0;
+
+  // Upgrade system prompt cache_control
+  const system = body.system as Array<Record<string, unknown>> | undefined;
+  if (Array.isArray(system)) {
+    for (const block of system) {
+      if (block.cache_control && (block.cache_control as Record<string, unknown>).type === 'ephemeral') {
+        (block.cache_control as Record<string, unknown>).ttl = '1h';
+        upgraded++;
+      }
+    }
+  }
+
+  // Upgrade message content cache_control
+  const messages = body.messages as Array<{ content?: unknown }> | undefined;
+  if (messages) {
+    for (const message of messages) {
+      if (!Array.isArray(message.content)) continue;
+      for (const block of message.content as Array<Record<string, unknown>>) {
+        if (block.cache_control && (block.cache_control as Record<string, unknown>).type === 'ephemeral') {
+          (block.cache_control as Record<string, unknown>).ttl = '1h';
+          upgraded++;
+        }
+      }
+    }
+  }
+
+  // Upgrade top-level cache_control (auto-caching mode)
+  const topLevel = body.cache_control as Record<string, unknown> | undefined;
+  if (topLevel?.type === 'ephemeral') {
+    topLevel.ttl = '1h';
+    upgraded++;
+  }
+
+  if (upgraded > 0) {
+    debugLog(`[Anthropic] Upgraded ${upgraded} cache_control block(s) to 1h TTL`);
+  }
+  return upgraded;
 }
 
 /**
@@ -575,6 +629,7 @@ const anthropicAdapter: ApiAdapter = {
 
   modifyRequest(_url: string, init: RequestInit, body: Record<string, unknown>): { init: RequestInit; body: Record<string, unknown> } {
     sanitizeEmptyTextCacheControl(body);
+    upgradePromptCacheTtl(body);
 
     const fastMode = shouldEnableFastMode(body.model);
     if (fastMode) {

@@ -278,6 +278,10 @@ export const RPC_CHANNELS = {
     GET_RICH_TOOL_DESCRIPTIONS: 'appearance:getRichToolDescriptions',
     SET_RICH_TOOL_DESCRIPTIONS: 'appearance:setRichToolDescriptions',
   },
+  caching: {
+    GET_EXTENDED_PROMPT_CACHE: 'caching:getExtendedPromptCache',
+    SET_EXTENDED_PROMPT_CACHE: 'caching:setExtendedPromptCache',
+  },
   badge: {
     REFRESH: 'badge:refresh',
     SET_ICON: 'badge:setIcon',
