@@ -13,6 +13,23 @@
 // Duplicated from llm-connections.ts to avoid circular imports (llm-connections imports models).
 // Must stay in sync with BEDROCK_MODEL_MAP in llm-connections.ts.
 const BEDROCK_TO_BARE: Record<string, string> = {
+  // US inference profile IDs (primary)
+  'us.anthropic.claude-opus-4-6-v1': 'claude-opus-4-6',
+  'us.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
+  'us.anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
+  'us.anthropic.claude-opus-4-5-20251101-v1:0': 'claude-opus-4-5-20251101',
+  'us.anthropic.claude-sonnet-4-5-20250929-v1:0': 'claude-sonnet-4-5-20250929',
+  // EU inference profile IDs
+  'eu.anthropic.claude-opus-4-6-v1': 'claude-opus-4-6',
+  'eu.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
+  'eu.anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
+  'eu.anthropic.claude-opus-4-5-20251101-v1:0': 'claude-opus-4-5-20251101',
+  'eu.anthropic.claude-sonnet-4-5-20250929-v1:0': 'claude-sonnet-4-5-20250929',
+  // Global inference profile IDs
+  'global.anthropic.claude-opus-4-6-v1': 'claude-opus-4-6',
+  'global.anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
+  'global.anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
+  // Base IDs (no region prefix)
   'anthropic.claude-opus-4-6-v1': 'claude-opus-4-6',
   'anthropic.claude-sonnet-4-6': 'claude-sonnet-4-6',
   'anthropic.claude-haiku-4-5-20251001-v1:0': 'claude-haiku-4-5-20251001',
