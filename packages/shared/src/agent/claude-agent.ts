@@ -16,7 +16,10 @@ import { mapClaudeSdkAssistantError, type ClaudeSdkApiError } from './claude-sdk
 import { runErrorDiagnostics } from './diagnostics.ts';
 import { loadStoredConfig, loadConfigDefaults, type Workspace, type AuthType, getDefaultLlmConnection, getLlmConnection } from '../config/storage.ts';
 import { getValidClaudeOAuthToken } from '../auth/state.ts';
-import { resolveAuthEnvVars } from '../config/llm-connections.ts';
+import {
+  clearClaudeBedrockRoutingEnvVars,
+  resolveAuthEnvVars,
+} from '../config/llm-connections.ts';
 import type { McpClientPool } from '../mcp/mcp-pool.ts';
 import { loadPlanFromPath, type SessionConfig as Session } from '../sessions/storage.ts';
 import { DEFAULT_MODEL, isClaudeModel, getDefaultSummarizationModel, getModelContextWindow } from '../config/models.ts';
@@ -625,10 +628,13 @@ export class ClaudeAgent extends BaseAgent {
       return { authInjected: false, authWarning: `Connection not found: ${slug}`, authWarningLevel: 'error' };
     }
 
-    // Clear all auth env vars first for clean state
+    // Clear all auth env vars first for clean state.
+    // Claude subprocesses must never inherit Bedrock-routing toggles from a
+    // previous connection or parent process environment.
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
     delete process.env.ANTHROPIC_BASE_URL;
+    clearClaudeBedrockRoutingEnvVars();
 
     // Resolve auth env vars via shared utility
     const manager = getCredentialManager();

@@ -633,13 +633,21 @@ export function migrateAuthType(
 // Auth Environment Variable Resolution
 // ============================================================
 
+const CLAUDE_BEDROCK_ROUTING_ENV_KEYS = [
+  'CLAUDE_CODE_USE_BEDROCK',
+  'AWS_BEARER_TOKEN_BEDROCK',
+  'ANTHROPIC_BEDROCK_BASE_URL',
+] as const
+
+const CLAUDE_BEDROCK_ROUTING_ENV_KEY_SET = new Set<string>(
+  CLAUDE_BEDROCK_ROUTING_ENV_KEYS,
+)
+
 const MANAGED_ANTHROPIC_AUTH_ENV_KEYS = [
   'ANTHROPIC_API_KEY',
   'CLAUDE_CODE_OAUTH_TOKEN',
   'ANTHROPIC_BASE_URL',
-  'CLAUDE_CODE_USE_BEDROCK',
-  'AWS_BEARER_TOKEN_BEDROCK',
-  'ANTHROPIC_BEDROCK_BASE_URL',
+  ...CLAUDE_BEDROCK_ROUTING_ENV_KEYS,
   'AWS_REGION',
   'AWS_ACCESS_KEY_ID',
   'AWS_SECRET_ACCESS_KEY',
@@ -657,9 +665,19 @@ const MANAGED_ANTHROPIC_AUTH_ENV_BASELINE: Record<string, string | undefined> =
   Object.fromEntries(
     MANAGED_ANTHROPIC_AUTH_ENV_KEYS.map((key) => [
       key,
-      getRuntimeEnvValue(key),
+      CLAUDE_BEDROCK_ROUTING_ENV_KEY_SET.has(key)
+        ? undefined
+        : getRuntimeEnvValue(key),
     ]),
   )
+
+export function clearClaudeBedrockRoutingEnvVars(
+  targetEnv: Record<string, string | undefined> = process.env,
+): void {
+  for (const key of CLAUDE_BEDROCK_ROUTING_ENV_KEYS) {
+    delete targetEnv[key]
+  }
+}
 
 export function resetManagedAnthropicAuthEnvVars(): void {
   if (typeof process === 'undefined' || !process?.env) {
@@ -720,7 +738,8 @@ export async function resolveAuthEnvVars(
   }
 
   if (connection.providerType === 'bedrock') {
-    envVars.CLAUDE_CODE_USE_BEDROCK = '1'
+    // Bedrock is handled by the Pi SDK in product architecture.
+    // Do not enable Claude SDK Bedrock routing here.
 
     if (connection.baseUrl) {
       envVars.ANTHROPIC_BEDROCK_BASE_URL = connection.baseUrl
