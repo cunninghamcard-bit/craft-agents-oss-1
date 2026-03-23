@@ -2582,6 +2582,17 @@ export class SessionManager implements ISessionManager {
         }))
       }
 
+      const getBranchFallbackMessages = () => {
+        if (!managed.branchFromMessageId) return []
+        return managed.messages
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .filter(m => !m.isIntermediate)
+          .map(m => ({
+            type: m.role as 'user' | 'assistant',
+            content: m.content,
+          }))
+      }
+
       const getBranchSeedMessages = () => {
         if (managed.branchContextStrategy !== 'seeded-fresh-session') return []
         if (managed.branchSeedApplied) return []
@@ -2621,6 +2632,7 @@ export class SessionManager implements ISessionManager {
         onSdkSessionIdUpdate,
         onSdkSessionIdCleared,
         getRecoveryMessages,
+        getBranchFallbackMessages,
         getBranchSeedMessages,
         markBranchSeedApplied,
         mcpPool: managed.mcpPool,
