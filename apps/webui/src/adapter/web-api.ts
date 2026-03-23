@@ -129,7 +129,11 @@ export function createWebApi(options: WebApiOptions): {
     // Workspace operations — web UI works with a single connection
     getWindowWorkspace: () => Promise.resolve(workspaceId ?? null),
     getWindowMode: () => Promise.resolve('main'),
-    switchWorkspace: async () => {},
+    // switchWorkspace must call the server so it registers the client's
+    // workspaceId — otherwise push events (session updates) won't arrive.
+    switchWorkspace: async (wsId: string) => {
+      await client.invoke('window:switchWorkspace', wsId)
+    },
     openWorkspace: async () => {},
     openSessionInNewWindow: async (_wsId: string, sessionId: string) => {
       // Open in new tab
