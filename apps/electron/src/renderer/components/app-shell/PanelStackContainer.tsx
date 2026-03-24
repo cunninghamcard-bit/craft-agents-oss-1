@@ -20,7 +20,7 @@ import { useRef, useEffect } from 'react'
 import { useAtomValue } from 'jotai'
 import { motion } from 'motion/react'
 import { cn } from '@/lib/utils'
-import { panelStackAtom, focusedPanelIdAtom } from '@/atoms/panel-stack'
+import { panelStackAtom, focusedPanelIdAtom, focusedSessionIdAtom } from '@/atoms/panel-stack'
 import { PanelSlot } from './PanelSlot'
 import { PanelResizeSash } from './PanelResizeSash'
 import {
@@ -58,13 +58,16 @@ export function PanelStackContainer({
 }: PanelStackContainerProps) {
   const panelStack = useAtomValue(panelStackAtom)
   const focusedPanelId = useAtomValue(focusedPanelIdAtom)
+  const focusedSessionId = useAtomValue(focusedSessionIdAtom)
 
   const contentPanels = panelStack
 
-  // Compact mode: only show the focused content panel (single-panel mode).
-  // Also controls navigator visibility — when a session is selected, show content;
-  // when no session is selected, show navigator (list).
-  const hasSelectedContent = isCompact && contentPanels.some(e => e.id === focusedPanelId)
+  // Compact mode: show list OR content based on the focused panel's ROUTE,
+  // not just whether a panel exists. When the route has a session selected
+  // (e.g., allSessions/session/abc), show content. When on a list view
+  // (e.g., allSessions), show navigator. This allows back-navigation to
+  // return to the session list.
+  const hasSelectedContent = isCompact && !!focusedSessionId
   const visiblePanels = isCompact
     ? contentPanels.filter(e => e.id === focusedPanelId).slice(0, 1)
     : contentPanels
