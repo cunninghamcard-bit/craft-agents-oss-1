@@ -171,6 +171,14 @@ export interface ClaudeAgentConfig {
   getRecoveryMessages?: () => RecoveryMessage[];
   /** All parent messages for branch fork fallback (summarized via mini on fork failure). */
   getBranchFallbackMessages?: () => RecoveryMessage[];
+  /** Branch seed messages for seeded-fresh-session context strategy. */
+  getBranchSeedMessages?: () => RecoveryMessage[];
+  /** Mark branch seed as applied (called after first injection). */
+  markBranchSeedApplied?: () => void;
+  /** Get transferred session summary for cross-server session context. */
+  getTransferredSessionSummary?: () => string | null;
+  /** Mark transferred session summary as applied. */
+  markTransferredSessionSummaryApplied?: () => void;
   isHeadless?: boolean;        // Running in headless mode (disables interactive tools)
   debugMode?: {                // Debug mode configuration (when running in dev)
     enabled: boolean;          // Whether debug mode is active
@@ -543,6 +551,10 @@ export class ClaudeAgent extends BaseAgent {
       onSdkSessionIdCleared: config.onSdkSessionIdCleared,
       getRecoveryMessages: config.getRecoveryMessages,
       getBranchFallbackMessages: config.getBranchFallbackMessages,
+      getBranchSeedMessages: config.getBranchSeedMessages,
+      markBranchSeedApplied: config.markBranchSeedApplied,
+      getTransferredSessionSummary: config.getTransferredSessionSummary,
+      markTransferredSessionSummaryApplied: config.markTransferredSessionSummaryApplied,
       envOverrides: config.envOverrides,
       miniModel: config.miniModel,
       mcpPool: config.mcpPool,

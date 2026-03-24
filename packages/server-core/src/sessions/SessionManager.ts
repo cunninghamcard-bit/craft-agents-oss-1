@@ -18,7 +18,7 @@ import {
   type BackendHostRuntimeContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
-import { getLlmConnection, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars } from '@craft-agent/shared/config'
+import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
@@ -6819,7 +6819,7 @@ export class SessionManager implements ISessionManager {
     const storedSession: StoredSession = {
       id: sessionId,
       workspaceRootPath,
-      sdkSessionId: mode === 'move' ? header.sdkSessionId : undefined,
+      sdkSessionId: header.sdkSessionId, // Preserved initially; fork logic below may clear it
       // Always regenerate sdkCwd for the target workspace.
       // The source sdkCwd points to a path on the originating server
       // which doesn't exist here (cross-server transfer).
@@ -6853,17 +6853,35 @@ export class SessionManager implements ISessionManager {
       storedSession.branchFromSdkCwd = bundle.branchInfo.sdkCwd
     }
 
-    // Fork-specific: clear sharing state and connection lock (fork is a new session)
+    // Fork-specific: clear sharing state and attempt resume-first strategy
     if (mode === 'fork') {
       storedSession.sharedUrl = undefined
       storedSession.sharedId = undefined
-      // Clear LLM connection — forked session should use target workspace's default,
-      // not the source server's connection (even if same slug exists, auth may differ)
-      if (storedSession.llmConnection) {
-        sessionLog.info(`[import] Fork: clearing source LLM connection "${storedSession.llmConnection}" — will use workspace default`)
+
+      // Resume-first: try to find a compatible LLM connection on the target workspace.
+      // If found and the session has an sdkSessionId, preserve it for API-level resume.
+      // If not, clear SDK state and fall back to transferred session summary.
+      const sourceProviderType = header.llmConnection
+        ? getLlmConnection(header.llmConnection)?.providerType
+        : undefined
+      const compatibleConnection = sourceProviderType
+        ? this.findCompatibleLlmConnection(workspaceRootPath, sourceProviderType)
+        : null
+
+      if (compatibleConnection && storedSession.sdkSessionId) {
+        // Resume path: compatible credentials exist — preserve SDK session ID
+        sessionLog.info(`[import] Fork: compatible ${sourceProviderType} connection "${compatibleConnection}" found — preserving sdkSessionId for resume`)
+        storedSession.llmConnection = compatibleConnection
+        storedSession.connectionLocked = false
+      } else {
+        // Summary path: no compatible connection or no SDK session — clear for fresh start
+        if (storedSession.llmConnection) {
+          sessionLog.info(`[import] Fork: no compatible ${sourceProviderType ?? 'unknown'} connection — clearing, will use summary context`)
+        }
+        storedSession.sdkSessionId = undefined
+        storedSession.llmConnection = undefined
+        storedSession.connectionLocked = false
       }
-      storedSession.llmConnection = undefined
-      storedSession.connectionLocked = false
       // Clear thinking level so the session inherits the workspace default
       storedSession.thinkingLevel = undefined
     }
@@ -6941,6 +6959,23 @@ export class SessionManager implements ISessionManager {
 
     sessionLog.info(`[import] Complete: sessionId=${sessionId}, transferredSummary=${managed.transferredSessionSummary ? `${managed.transferredSessionSummary.length} chars` : 'none'}, applied=${managed.transferredSessionSummaryApplied}, warnings=${warnings.length > 0 ? warnings.join('; ') : 'none'}`)
     return { sessionId, warnings: warnings.length > 0 ? warnings : undefined }
+  }
+
+  /**
+   * Find an LLM connection on this server that matches the given provider type.
+   * Checks workspace default first, then falls back to any matching connection.
+   */
+  private findCompatibleLlmConnection(workspaceRootPath: string, providerType: string): string | null {
+    const wsConfig = loadWorkspaceConfig(workspaceRootPath)
+    const defaultSlug = wsConfig?.defaults?.defaultLlmConnection
+    if (defaultSlug) {
+      const conn = getLlmConnection(defaultSlug)
+      if (conn?.providerType === providerType) return defaultSlug
+    }
+    // Fall back: any connection with matching provider type
+    const connections = getLlmConnections()
+    const match = connections.find(c => c.providerType === providerType)
+    return match?.slug ?? null
   }
 
   /**
