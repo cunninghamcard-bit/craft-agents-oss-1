@@ -1753,7 +1753,7 @@ export function FreeFormInput({
                   <button
                     type="button"
                     className={cn(
-                      "inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors select-none",
+                      "input-toolbar-btn inline-flex items-center h-7 px-1.5 gap-0.5 text-[13px] shrink-0 rounded-[6px] hover:bg-foreground/5 transition-colors select-none",
                       modelDropdownOpen && "bg-foreground/5",
                       connectionUnavailable && "text-destructive",
                     )}
@@ -2020,7 +2020,7 @@ Model
               type="button"
               size="icon"
               variant="secondary"
-              className="h-7 w-7 rounded-full shrink-0 hover:bg-foreground/15 active:bg-foreground/20 ml-2"
+              className="send-btn h-7 w-7 rounded-full shrink-0 hover:bg-foreground/15 active:bg-foreground/20 ml-2"
               onClick={() => handleStop(false)}
             >
               <Square className="h-3 w-3 fill-current" />
@@ -2029,7 +2029,7 @@ Model
             <Button
               type="submit"
               size="icon"
-              className="h-7 w-7 rounded-full shrink-0 ml-2"
+              className="send-btn h-7 w-7 rounded-full shrink-0 ml-2"
               disabled={!hasContent || disabled || disableSend}
               data-tutorial="send-button"
             >

@@ -110,6 +110,7 @@ export function PanelSlot({
       <div
         onPointerDown={handlePointerDown}
         data-panel-role="content"
+        data-compact={isCompact || undefined}
         className={cn(
           'h-full overflow-hidden relative @container/panel',
           !isOnly && isFocusedPanel ? 'shadow-panel-focused z-[1]' : 'shadow-middle z-0',
