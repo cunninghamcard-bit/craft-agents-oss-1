@@ -18,6 +18,7 @@ import { join } from 'node:path';
 
 import type { AgentEvent } from '@craft-agent/core/types';
 import type { FileAttachment } from '../utils/files.ts';
+import { buildTransferredSessionContext } from './conversation-summary.ts';
 import type { ThinkingLevel } from './thinking-levels.ts';
 import { DEFAULT_THINKING_LEVEL, normalizeThinkingLevel } from './thinking-levels.ts';
 import type { PermissionMode } from './mode-manager.ts';
@@ -969,15 +970,23 @@ ${formattedMessages}
       this.prerequisiteManager.registerSkillPrerequisites([...skillPaths.values()]);
     }
 
-    // Prepend branch seed context (for seeded branch sessions) and skill directive.
+    // Prepend branch seed context (for seeded branch sessions) and transferred-session summary.
     const branchSeedContext = this.buildBranchSeedContext(this.config.getBranchSeedMessages?.());
     if (branchSeedContext) {
       this.config.markBranchSeedApplied?.();
     }
 
+    const transferredSessionSummary = this.config.getTransferredSessionSummary?.();
+    const transferredSessionContext = transferredSessionSummary
+      ? buildTransferredSessionContext(transferredSessionSummary)
+      : null;
+    if (transferredSessionContext) {
+      this.config.markTransferredSessionSummaryApplied?.();
+    }
+
     // Prepend read directive to the message so the model reads SKILL.md first.
     const directive = this.formatSkillDirective(skillPaths);
-    const messageParts = [branchSeedContext, directive, cleanMessage].filter(Boolean);
+    const messageParts = [branchSeedContext, transferredSessionContext, directive, cleanMessage].filter(Boolean);
     const effectiveMessage = messageParts.join('\n\n');
 
     yield* this.chatImpl(effectiveMessage, attachments, options);

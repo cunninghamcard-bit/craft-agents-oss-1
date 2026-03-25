@@ -6,6 +6,8 @@ Primary desktop interface for Craft Agents:
 - Session/source/workspace management
 - Main-process integration with `@craft-agent/shared`
 
+Remote **Send to Workspace** handoffs use a summarized transfer payload, not a raw full-session bundle.
+
 ## Commands (run from repo root)
 ```bash
 # From project root - ALWAYS use @latest for Tailwind CSS v4 compatibility
@@ -441,6 +443,30 @@ apps/electron/
 ```
 
 **Note:** `src/transport/{server,codec,capabilities}` and `src/runtime/{platform,platform-headless}` are compatibility wrappers that re-export shared implementations from `@craft-agent/server-core`.
+
+## Container Query Responsive Layout
+
+The app uses CSS container queries for responsive layout that works in both the desktop Electron window (narrow panels, resized windows) and the web UI (mobile viewports).
+
+**Named containers:**
+- `@container/shell` — on `PanelStackContainer` scroll div. Used by AppShell to derive `isAutoCompact` via `ResizeObserver`.
+- `@container/panel` — on each `PanelSlot` div. Children (dropdowns, settings rows, chat input) adapt to panel width.
+
+**Data attributes for stable CSS hooks:**
+- `data-panel-role="sidebar|navigator|content"` — replaces fragile `nth-child` selectors
+- `data-layout="settings-row"` / `data-layout="settings-control"` — on `SettingsRow`, `SettingsToggle`, `SettingsSelectRow`, etc. for responsive stacking
+
+**Compact mode (`isAutoCompact`):**
+- Derived in `AppShell` from shell width < 768px via `useContainerWidth` hook
+- Auto-hides sidebar + navigator, switches to single-panel mode
+- Shows list OR content (not both) — navigator fills when no session selected
+- Mobile back button renders as fixed overlay
+
+**Container query rules** live in `index.css` under the "CONTAINER QUERY RESPONSIVE RULES" section:
+- Dropdown/select width constraints at `@container panel (max-width: 448px)`
+- Settings row vertical stacking at `@container panel (max-width: 448px)`
+
+**Custom breakpoints** (in `@theme inline`): `--container-panel-compact: 28rem`, `--container-panel-medium: 40rem`, `--container-mobile: 48rem`
 
 ## ⚠️ Common Mistake: Node.js APIs in Renderer
 
