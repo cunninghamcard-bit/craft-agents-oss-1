@@ -85,6 +85,6 @@ export default {
     }
 
     // Everything else → Pages marketing site
-    return fetch(`https://craft-agents-marketing.pages.dev${path}${url.search}`);
+    return fetch(`https://craft-agents-marketing-e8k.pages.dev${path}${url.search}`);
   },
 };
