@@ -6,7 +6,7 @@ import { initReactI18next } from 'react-i18next'
 import './index.css'
 
 // Initialize i18n before any React rendering
-await setupI18n([initReactI18next])
+setupI18n([initReactI18next])
 
 const container = document.getElementById('root')
 if (!container) throw new Error('Root element not found')

@@ -11,7 +11,7 @@ import LanguageDetector from 'i18next-browser-languagedetector'
 import './index.css'
 
 // Initialize i18n before any React rendering
-await setupI18n([LanguageDetector, initReactI18next])
+setupI18n([LanguageDetector, initReactI18next])
 
 function CrashFallback() {
   return (
