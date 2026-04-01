@@ -1,4 +1,5 @@
 import * as React from "react"
+import { useTranslation } from "react-i18next"
 import { useEffect, useState, useMemo, useCallback } from "react"
 import {
   AlertTriangle,
@@ -540,6 +541,8 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
   // Connection unavailable
   connectionUnavailable = false,
 }, ref) {
+  const { t } = useTranslation()
+
   // Panel focus state (for multi-panel auto-scroll behavior)
   const appShellContext = useAppShellContext()
   const isFocusedPanel = appShellContext?.isFocusedPanel ?? true
@@ -1373,7 +1376,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
     if (!session) return
 
     if (isInputDisabled || disableSend || connectionUnavailable) {
-      toast.error('Cannot send right now', {
+      toast.error(t('toast.cannotSendRightNow'), {
         description: 'Sending is currently disabled for this session.',
       })
       return
@@ -1773,7 +1776,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                               || rawMessage.includes('same provider/backend')
                               ? 'Branching is only supported within the same provider/backend. Switch this panel connection and try again.'
                               : rawMessage
-                            toast.error('Could not create branch', { description: message })
+                            toast.error(t('toast.couldNotCreateBranch'), { description: message })
                           }
                         } : undefined}
                         onAddAnnotation={async (messageId, annotation) => {
@@ -1785,7 +1788,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                               annotation,
                             })
                           } catch (error) {
-                            toast.error('Could not save highlight', {
+                            toast.error(t('toast.couldNotSaveHighlight'), {
                               description: error instanceof Error ? error.message : 'Unknown error',
                             })
                             throw error
@@ -1800,7 +1803,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                               annotationId,
                             })
                           } catch (error) {
-                            toast.error('Could not remove highlight', {
+                            toast.error(t('toast.couldNotRemoveHighlight'), {
                               description: error instanceof Error ? error.message : 'Unknown error',
                             })
                           }
@@ -1815,7 +1818,7 @@ export const ChatDisplay = React.forwardRef<ChatDisplayHandle, ChatDisplayProps>
                               patch,
                             })
                           } catch (error) {
-                            toast.error('Could not update highlight', {
+                            toast.error(t('toast.couldNotUpdateHighlight'), {
                               description: error instanceof Error ? error.message : 'Unknown error',
                             })
                             throw error

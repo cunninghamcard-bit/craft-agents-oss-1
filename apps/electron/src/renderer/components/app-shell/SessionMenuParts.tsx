@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from "react-i18next"
 import { Check, Globe, Copy, RefreshCw, Link2Off } from 'lucide-react'
 import { toast } from 'sonner'
 import type { MenuComponents } from '@/components/ui/menu-context'
@@ -13,6 +14,7 @@ export interface ShareMenuItemsProps {
 }
 
 export function ShareMenuItems({ sessionId, sharedUrl, menu }: ShareMenuItemsProps) {
+  const { t } = useTranslation()
   const { MenuItem, Separator } = menu
 
   const handleOpenInBrowser = () => {
@@ -48,20 +50,20 @@ export function ShareMenuItems({ sessionId, sharedUrl, menu }: ShareMenuItemsPro
     <>
       <MenuItem onClick={handleOpenInBrowser}>
         <Globe className="h-3.5 w-3.5" />
-        <span className="flex-1">Open in Browser</span>
+        <span className="flex-1">{t("sessionMenu.openInBrowser")}</span>
       </MenuItem>
       <MenuItem onClick={handleCopyLink}>
         <Copy className="h-3.5 w-3.5" />
-        <span className="flex-1">Copy Link</span>
+        <span className="flex-1">{t("sessionMenu.copyLink")}</span>
       </MenuItem>
       <MenuItem onClick={handleUpdateShare}>
         <RefreshCw className="h-3.5 w-3.5" />
-        <span className="flex-1">Update Share</span>
+        <span className="flex-1">{t("sessionMenu.updateShare")}</span>
       </MenuItem>
       <Separator />
       <MenuItem onClick={handleRevokeShare} variant="destructive">
         <Link2Off className="h-3.5 w-3.5" />
-        <span className="flex-1">Stop Sharing</span>
+        <span className="flex-1">{t("sessionMenu.stopSharing")}</span>
       </MenuItem>
     </>
   )

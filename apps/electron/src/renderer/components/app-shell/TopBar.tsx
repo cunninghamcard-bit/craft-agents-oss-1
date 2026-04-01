@@ -257,7 +257,7 @@ export function TopBar({
               <PanelLeftRounded className="h-[18px] w-[18px] text-foreground/70" />
             </TopBarButton>
           </TooltipTrigger>
-          <TooltipContent side="bottom">Toggle Sidebar</TooltipContent>
+          <TooltipContent side="bottom">{t("menu.toggleSidebar")}</TooltipContent>
         </Tooltip>
         )}
 
@@ -271,13 +271,13 @@ export function TopBar({
           <StyledDropdownMenuContent align="start" minWidth="min-w-48">
             <StyledDropdownMenuItem onClick={onNewChat}>
               <SquarePenRounded className="h-3.5 w-3.5" />
-              New Chat
+              {t("menu.newChat")}
               {newChatHotkey && <DropdownMenuShortcut className="pl-6">{newChatHotkey}</DropdownMenuShortcut>}
             </StyledDropdownMenuItem>
             {onNewWindow && (
               <StyledDropdownMenuItem onClick={onNewWindow}>
                 <Icons.AppWindow className="h-3.5 w-3.5" />
-                New Window
+                {t("menu.newWindow")}
                 {newWindowHotkey && <DropdownMenuShortcut className="pl-6">{newWindowHotkey}</DropdownMenuShortcut>}
               </StyledDropdownMenuItem>
             )}
@@ -293,12 +293,12 @@ export function TopBar({
             <DropdownMenuSub>
               <StyledDropdownMenuSubTrigger>
                 <Icons.Settings className="h-3.5 w-3.5" />
-                Settings
+                {t("sidebar.settings")}
               </StyledDropdownMenuSubTrigger>
               <StyledDropdownMenuSubContent>
                 <StyledDropdownMenuItem onClick={onOpenSettings}>
                   <Icons.Settings className="h-3.5 w-3.5" />
-                  Settings...
+                  {t("menu.settings")}
                   {settingsHotkey && <DropdownMenuShortcut className="pl-6">{settingsHotkey}</DropdownMenuShortcut>}
                 </StyledDropdownMenuItem>
                 <StyledDropdownMenuSeparator />
@@ -320,17 +320,17 @@ export function TopBar({
             <DropdownMenuSub>
               <StyledDropdownMenuSubTrigger>
                 <Icons.HelpCircle className="h-3.5 w-3.5" />
-                Help
+                {t("menu.help")}
               </StyledDropdownMenuSubTrigger>
               <StyledDropdownMenuSubContent>
                 <StyledDropdownMenuItem onClick={() => window.electronAPI.openUrl('https://agents.craft.do/docs')}>
                   <Icons.HelpCircle className="h-3.5 w-3.5" />
-                  Help & Documentation
+                  {t("menu.helpAndDocs")}
                   <Icons.ExternalLink className="h-3 w-3 ml-auto text-muted-foreground" />
                 </StyledDropdownMenuItem>
                 <StyledDropdownMenuItem onClick={onOpenKeyboardShortcuts}>
                   <Icons.Keyboard className="h-3.5 w-3.5" />
-                  Keyboard Shortcuts
+                  {t("menu.keyboardShortcuts")}
                   {keyboardShortcutsHotkey && <DropdownMenuShortcut className="pl-6">{keyboardShortcutsHotkey}</DropdownMenuShortcut>}
                 </StyledDropdownMenuItem>
               </StyledDropdownMenuSubContent>

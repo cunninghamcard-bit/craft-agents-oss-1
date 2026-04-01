@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from "react-i18next"
 import { ChevronDown, Square, ArrowUpRight } from 'lucide-react'
 import {
   DropdownMenu,
@@ -61,6 +62,7 @@ export interface TaskActionMenuProps {
  * - Stop Task: Kills shell tasks (agent tasks show warning)
  */
 export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, onShowTerminalOverlay, className }: TaskActionMenuProps) {
+  const { t } = useTranslation()
   const [open, setOpen] = React.useState(false)
 
   // Local timer for shell tasks (since they don't get task_progress events)
@@ -86,7 +88,7 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
 
   const handleViewOutput = async () => {
     if (!onShowTerminalOverlay) {
-      toast.error('Terminal overlay not available')
+      toast.error(t('toast.terminalOverlayNotAvailable'))
       return
     }
 
@@ -103,7 +105,7 @@ export function TaskActionMenu({ task, sessionId, onKillTask, onInsertMessage, o
       })
       setOpen(false)
     } catch (err) {
-      toast.error('Failed to load task output')
+      toast.error(t('toast.failedToLoadTaskOutput'))
     }
   }
 

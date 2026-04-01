@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from "react"
+import { useTranslation } from "react-i18next"
 import { Check, ExternalLink } from "lucide-react"
 import type { ApiSetupMethod } from "./APISetupStep"
 import { StepFormLayout, BackButton, ContinueButton } from "./primitives"
@@ -57,6 +58,7 @@ export function CredentialsStep({
   copilotDeviceCode,
   editInitialValues,
 }: CredentialsStepProps) {
+  const { t } = useTranslation()
   const isClaudeOAuth = apiSetupMethod === 'claude_oauth'
   const isChatGptOAuth = apiSetupMethod === 'pi_chatgpt_oauth'
   const isCopilotOAuth = apiSetupMethod === 'pi_copilot_oauth'
@@ -92,8 +94,8 @@ export function CredentialsStep({
   if (isChatGptOAuth) {
     return (
       <StepFormLayout
-        title="Connect ChatGPT"
-        description="Use your ChatGPT subscription to power Craft Agents."
+        title={t("onboarding.credentials.connectChatGPT")}
+        description={t("onboarding.credentials.connectChatGPTDesc")}
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -104,14 +106,14 @@ export function CredentialsStep({
               loadingText="Connecting..."
             >
               <ExternalLink className="size-4" />
-              Sign in with ChatGPT
+              {t("onboarding.credentials.signInChatGPT")}
             </ContinueButton>
           </>
         }
       >
         <div className="space-y-4">
           <div className="rounded-xl bg-foreground-2 p-4 text-sm text-muted-foreground">
-            <p>Click the button above to sign in with your OpenAI account. A browser window will open for authentication.</p>
+            <p>{t("onboarding.credentials.chatGPTInstructions")}</p>
           </div>
           {status === 'error' && errorMessage && (
             <div className="rounded-lg bg-destructive/10 text-destructive text-sm p-3">
@@ -120,7 +122,7 @@ export function CredentialsStep({
           )}
           {status === 'success' && (
             <div className="rounded-lg bg-success/10 text-success text-sm p-3">
-              Connected! Your ChatGPT subscription is ready.
+              {t("onboarding.credentials.chatGPTConnected")}
             </div>
           )}
         </div>
@@ -132,8 +134,8 @@ export function CredentialsStep({
   if (isCopilotOAuth) {
     return (
       <StepFormLayout
-        title="Connect GitHub Copilot"
-        description="Use your GitHub Copilot subscription to power Craft Agents."
+        title={t("onboarding.credentials.connectGitHub")}
+        description={t("onboarding.credentials.connectGitHubDesc")}
         actions={
           <>
             <BackButton onClick={onBack} disabled={status === 'validating'} />
@@ -141,10 +143,10 @@ export function CredentialsStep({
               onClick={() => onStartOAuth?.()}
               className="gap-2"
               loading={status === 'validating'}
-              loadingText="Waiting for authorization..."
+              loadingText={t("onboarding.credentials.waitingForAuth")}
             >
               <ExternalLink className="size-4" />
-              Sign in with GitHub
+              {t("onboarding.credentials.signInGitHub")}
             </ContinueButton>
           </>
         }
