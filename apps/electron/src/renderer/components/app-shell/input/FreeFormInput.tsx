@@ -78,6 +78,8 @@ import {
   removeRecentWorkingDir,
 } from './working-directory-history'
 import { CompactPermissionModeSelector } from './CompactPermissionModeSelector'
+import { CompactSourceSelector } from './CompactSourceSelector'
+import { CompactWorkingDirectorySelector } from './CompactWorkingDirectorySelector'
 
 /**
  * Format token count for display (e.g., 1500 -> "1.5k", 200000 -> "200k")
@@ -1651,7 +1653,7 @@ export function FreeFormInput({
             onChange={handleFileInputChange}
           />
 
-          {/* Compact mode: permission mode + icon-only attach & sources */}
+          {/* Compact mode: drawer-based selectors matching permission mode pattern */}
           {compactMode && (
           <>
           {onPermissionModeChange && (
@@ -1660,99 +1662,36 @@ export function FreeFormInput({
               onPermissionModeChange={onPermissionModeChange}
             />
           )}
-          <FreeFormInputContextBadge
-            icon={<Paperclip className="h-4 w-4" />}
-            label={attachments.length > 0
-              ? attachments.length === 1
-                ? "1 file"
-                : `${attachments.length} files`
-              : "Attach"
-            }
-            isExpanded={false}
-            hasSelection={attachments.length > 0}
-            showChevron={false}
+          <button
+            type="button"
+            aria-label={attachments.length > 0 ? `${attachments.length} file${attachments.length > 1 ? 's' : ''} attached` : 'Attach files'}
+            className="h-7 pl-2 pr-2.5 text-xs font-medium rounded-[6px] flex items-center gap-1.5 shadow-tinted outline-none select-none shrink-0 bg-foreground/5 text-foreground/60"
+            style={{ '--shadow-color': 'var(--foreground-rgb)' } as React.CSSProperties}
             onClick={handleAttachClick}
-            tooltip="Attach files"
             disabled={disabled}
-          />
+          >
+            <Paperclip className="h-3.5 w-3.5" />
+            {attachments.length > 0 && <span>{attachments.length}</span>}
+          </button>
           {onSourcesChange && (
-            <div className="relative shrink min-w-0">
-              <FreeFormInputContextBadge
-                buttonRef={sourceButtonRef}
-                icon={
-                  optimisticSourceSlugs.length === 0 ? (
-                    <DatabaseZap className="h-4 w-4" />
-                  ) : (
-                    <div className="flex items-center -ml-0.5">
-                      {(() => {
-                        const enabledSources = sources.filter(s => optimisticSourceSlugs.includes(s.config.slug))
-                        const displaySources = enabledSources.slice(0, 3)
-                        const remainingCount = enabledSources.length - 3
-                        return (
-                          <>
-                            {displaySources.map((source, index) => (
-                              <div
-                                key={source.config.slug}
-                                className={cn("relative h-5 w-5 rounded-[4px] bg-background shadow-minimal flex items-center justify-center", index > 0 && "-ml-1")}
-                                style={{ zIndex: index + 1 }}
-                              >
-                                <SourceAvatar source={source} size="xs" />
-                              </div>
-                            ))}
-                            {remainingCount > 0 && (
-                              <div
-                                className="-ml-1 h-5 w-5 rounded-[4px] bg-background shadow-minimal flex items-center justify-center text-[8px] font-medium text-muted-foreground"
-                                style={{ zIndex: displaySources.length + 1 }}
-                              >
-                                +{remainingCount}
-                              </div>
-                            )}
-                          </>
-                        )
-                      })()}
-                    </div>
-                  )
-                }
-                label={
-                  optimisticSourceSlugs.length === 0
-                    ? "Sources"
-                    : (() => {
-                        const enabledSources = sources.filter(s => optimisticSourceSlugs.includes(s.config.slug))
-                        if (enabledSources.length === 1) return enabledSources[0].config.name
-                        return `${enabledSources.length} sources`
-                      })()
-                }
-                isExpanded={false}
-                hasSelection={optimisticSourceSlugs.length > 0}
-                showChevron={false}
-                isOpen={sourceDropdownOpen}
-                disabled={disabled}
-                onClick={() => setSourceDropdownOpen(prev => !prev)}
-                tooltip="Sources"
-              />
-              <SourceSelectorPopover
-                open={sourceDropdownOpen}
-                onOpenChange={setSourceDropdownOpen}
-                anchorRef={sourceButtonRef}
-                sources={sources}
-                selectedSlugs={optimisticSourceSlugs}
-                onToggleSlug={(slug) => {
-                  const isEnabled = optimisticSourceSlugs.includes(slug)
-                  const newSlugs = isEnabled
-                    ? optimisticSourceSlugs.filter(currentSlug => currentSlug !== slug)
-                    : [...optimisticSourceSlugs, slug]
-                  setOptimisticSourceSlugs(newSlugs)
-                  onSourcesChange?.(newSlugs)
-                }}
-              />
-            </div>
+            <CompactSourceSelector
+              sources={sources}
+              selectedSlugs={optimisticSourceSlugs}
+              onToggleSlug={(slug) => {
+                const isEnabled = optimisticSourceSlugs.includes(slug)
+                const newSlugs = isEnabled
+                  ? optimisticSourceSlugs.filter(currentSlug => currentSlug !== slug)
+                  : [...optimisticSourceSlugs, slug]
+                setOptimisticSourceSlugs(newSlugs)
+                onSourcesChange?.(newSlugs)
+              }}
+            />
           )}
           {onWorkingDirectoryChange && (
-            <WorkingDirectoryBadge
+            <CompactWorkingDirectorySelector
               workingDirectory={workingDirectory}
               onWorkingDirectoryChange={onWorkingDirectoryChange}
               sessionFolderPath={sessionFolderPath}
-              isEmptySession={false}
               workspaceId={workspaceId}
             />
           )}
