@@ -189,6 +189,8 @@ function SessionLoadErrorScreen({
 }
 
 export default function App() {
+  const { t } = useTranslation()
+
   // Initialize renderer perf tracking early (debug mode = running from source)
   // Uses useEffect with empty deps to run once on mount before any session switches
   useEffect(() => {

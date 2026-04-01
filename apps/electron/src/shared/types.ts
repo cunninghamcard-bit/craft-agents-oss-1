@@ -628,6 +628,9 @@ export interface ElectronAPI {
 
   // Automations change listener
   onAutomationsChanged(callback: (workspaceId: string) => void): () => void
+
+  // Language
+  changeLanguage(lang: string): Promise<void>
 }
 
 // =============================================================================

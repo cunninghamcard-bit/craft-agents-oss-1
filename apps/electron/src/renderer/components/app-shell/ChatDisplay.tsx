@@ -2220,6 +2220,8 @@ function MessageBubble({
   onPopOut,
   compactMode,
 }: MessageBubbleProps) {
+  const { t } = useTranslation()
+
   // === USER MESSAGE: Right-aligned bubble with attachments above ===
   if (message.role === 'user') {
     return (
