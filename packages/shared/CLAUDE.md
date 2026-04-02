@@ -86,6 +86,11 @@ Keys use **flat dot-notation** with a category prefix:
 5. **Use `<Trans>` component** for translations containing HTML tags (e.g. `<strong>`).
 6. **Use `i18n.resolvedLanguage`** (not `i18n.language`) when comparing against supported language codes.
 7. **Keys must exist in both `en.json` and `es.json`** (and all future locale files). Keep alphabetically sorted.
+8. **Watch translation length for constrained UI elements.** Translations can be 20-100%+ longer than English. For buttons, badges, tab labels, and dropdown items, keep translations concise — use shorter synonyms if needed. High-risk areas:
+   - Permission mode badges (3-5 characters max)
+   - Settings tab labels (≤10 characters ideal)
+   - Button labels (avoid exceeding 2x the English length)
+   - Menu items (flexible, but avoid 3x+ growth)
 
 ### Adding a new translated string
 
