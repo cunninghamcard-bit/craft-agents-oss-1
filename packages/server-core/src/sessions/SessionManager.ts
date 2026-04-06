@@ -1062,6 +1062,21 @@ export class SessionManager implements ISessionManager {
   /** Monotonic clock to ensure strictly increasing message timestamps */
   private lastTimestamp = 0
 
+  /**
+   * Centralized setter for session processing state.
+   * Automatically notifies the power manager on transitions (true→false, false→true)
+   * so callers don't need to remember to call onSessionStarted/onSessionStopped.
+   */
+  private setProcessing(managed: ManagedSession, processing: boolean): void {
+    const was = managed.isProcessing
+    managed.isProcessing = processing
+    if (!was && processing) {
+      sessionRuntimeHooks.onSessionStarted()
+    } else if (was && !processing) {
+      sessionRuntimeHooks.onSessionStopped()
+    }
+  }
+
   /** Wait until initialize() has completed (sessions loaded from disk).
    *  Resolves immediately if already initialized. */
   waitForInit(): Promise<void> {
@@ -3302,7 +3317,7 @@ export class SessionManager implements ISessionManager {
           if (managed.isProcessing && managed.agent) {
             sessionLog.info(`Interrupting for plan submission in session ${managed.id}`)
             managed.agent.interruptForHandoff(AbortReason.PlanSubmitted)
-            managed.isProcessing = false
+            this.setProcessing(managed, false)
 
             // Release browser overlay + session binding because the agent is no longer running.
             // Plan submission pauses execution until user review, so browser ownership should not remain locked.
@@ -3358,7 +3373,7 @@ export class SessionManager implements ISessionManager {
         if (managed.isProcessing && managed.agent) {
           sessionLog.info(`Interrupting for auth request in session ${managed.id}`)
           managed.agent.interruptForHandoff(AbortReason.AuthRequest)
-          managed.isProcessing = false
+          this.setProcessing(managed, false)
 
           // Release browser overlay + session binding because the agent is paused awaiting user auth.
           void releaseBrowserOwnershipOnForcedStop(this.browserPaneManager, managed.id)
@@ -4860,14 +4875,10 @@ export class SessionManager implements ISessionManager {
     }
 
     managed.lastMessageAt = Date.now()
-    managed.isProcessing = true
+    this.setProcessing(managed, true)
     managed.streamingText = ''
     managed.processingGeneration++
     managed.turnStartFinalMessageId = this.getLastFinalAssistantMessageId(managed.messages)
-
-    // Notify power manager that a session started processing
-    // (may prevent display sleep if setting enabled)
-    sessionRuntimeHooks.onSessionStarted()
 
     // Reset auth retry flag for this new message (allows one retry per message)
     // IMPORTANT: Skip reset if this is an auth retry call - the flag is already true
@@ -5354,7 +5365,7 @@ export class SessionManager implements ISessionManager {
 
         if (retryMessage) {
           sessionLog.info(`[auth-retry] Retrying message for session ${sessionId}`)
-          managed.isProcessing = false
+          this.setProcessing(managed, false)
 
           // Remove the user message that was added for this failed attempt
           // so we don't get duplicate messages when retrying
@@ -5420,7 +5431,7 @@ export class SessionManager implements ISessionManager {
     sessionLog.info(`Processing stopped for session ${sessionId}: ${reason}`)
 
     // 1. Cleanup state
-    managed.isProcessing = false
+    this.setProcessing(managed, false)
     managed.stopRequested = false  // Reset for next turn
 
     const turnStartFinalMessageId = managed.turnStartFinalMessageId
@@ -5432,10 +5443,6 @@ export class SessionManager implements ISessionManager {
     if (this.browserPaneManager) {
       await this.browserPaneManager.clearVisualsForSession(sessionId)
     }
-
-    // Notify power manager that a session stopped processing
-    // (may allow display sleep if no other sessions are active)
-    sessionRuntimeHooks.onSessionStopped()
 
     // 2. Handle unread state based on whether user is viewing this session
     //    This is the explicit state machine for NEW badge:
