@@ -385,7 +385,8 @@ async function buildServersFromSources(
   // Uses TokenRefreshManager for unified refresh logic (DRY principle)
   const getTokenForSource = (source: LoadedSource) => {
     const provider = source.config.provider
-    if (isApiOAuthProvider(provider)) {
+    // Provider-specific OAuth (Google, Slack, Microsoft) or generic OAuth (authType: 'oauth')
+    if (isApiOAuthProvider(provider) || source.config.api?.authType === 'oauth') {
       // Use TokenRefreshManager if provided, otherwise create temporary one
       const manager = tokenRefreshManager ?? new TokenRefreshManager(credManager, {
         log: (msg) => sessionLog.debug(msg),
@@ -2194,11 +2195,29 @@ export class SessionManager implements ISessionManager {
     // Get default enabled sources from workspace config
     const defaultEnabledSourceSlugs = options?.enabledSourceSlugs ?? wsConfig?.defaults?.enabledSourceSlugs
 
+    // Resolve model tier hints ('fast' / 'default') to actual model IDs.
+    // EditPopover uses tier hints instead of hardcoded Anthropic model names
+    // so the right model is selected regardless of the active LLM provider.
+    let resolvedModelOption = options?.model || defaultModel
+    if (resolvedModelOption === 'fast' || resolvedModelOption === 'default') {
+      const tierConnection = resolveSessionConnection(
+        options?.llmConnection,
+        wsConfig?.defaults?.defaultLlmConnection,
+      )
+      if (tierConnection) {
+        resolvedModelOption = resolvedModelOption === 'fast'
+          ? (getMiniModel(tierConnection) ?? tierConnection.defaultModel ?? defaultModel)
+          : (tierConnection.defaultModel ?? defaultModel)
+      } else {
+        resolvedModelOption = defaultModel
+      }
+    }
+
     // Resolve backend target early for branching policy checks.
     const targetBackendContext = resolveBackendContext({
       sessionConnectionSlug: options?.llmConnection,
       workspaceDefaultConnectionSlug: wsConfig?.defaults?.defaultLlmConnection,
-      managedModel: options?.model || defaultModel,
+      managedModel: resolvedModelOption,
     })
     const targetProviderType = targetBackendContext.connection?.providerType
       ?? (targetBackendContext.provider === 'pi' ? 'pi' : 'anthropic')
