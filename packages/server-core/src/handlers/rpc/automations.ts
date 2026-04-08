@@ -55,6 +55,7 @@ async function withAutomationMatcher(workspaceId: string, eventName: string, mat
 }
 
 export const HANDLED_CHANNELS = [
+  RPC_CHANNELS.automations.GET,
   RPC_CHANNELS.automations.TEST,
   RPC_CHANNELS.automations.SET_ENABLED,
   RPC_CHANNELS.automations.DUPLICATE,
@@ -66,6 +67,26 @@ export const HANDLED_CHANNELS = [
 
 export function registerAutomationsHandlers(server: RpcServer, deps: HandlerDeps): void {
   const log = deps.platform.logger
+
+  // Get automations config for a workspace (read-only, resolves path server-side)
+  server.handle(RPC_CHANNELS.automations.GET, async (_ctx, workspaceId: string) => {
+    const workspace = getWorkspaceByNameOrId(workspaceId)
+    if (!workspace) {
+      log.error(`AUTOMATIONS_GET: Workspace not found: ${workspaceId}`)
+      return null
+    }
+    try {
+      const { resolveAutomationsConfigPath } = await import('@craft-agent/shared/automations/resolve-config-path')
+      const configPath = resolveAutomationsConfigPath(workspace.rootPath)
+      const content = await readFile(configPath, 'utf-8')
+      return JSON.parse(content)
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return null // No automations configured yet
+      }
+      throw error
+    }
+  })
 
   server.handle(RPC_CHANNELS.automations.TEST, async (_ctx, payload: import('@craft-agent/shared/protocol').TestAutomationPayload) => {
     const workspace = getWorkspaceByNameOrId(payload.workspaceId)
