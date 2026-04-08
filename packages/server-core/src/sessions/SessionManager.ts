@@ -1424,6 +1424,15 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
+   * Manually notify the ConfigWatcher of a file change.
+   * Workaround for Bun's fs.watch on Linux not detecting atomic renames.
+   */
+  notifyConfigFileChange(workspaceRootPath: string, relativePath: string): void {
+    const watcher = this.configWatchers.get(workspaceRootPath)
+    watcher?.notifyFileChange(relativePath)
+  }
+
+  /**
    * Reload sources for all sessions in a workspace, skipping those currently processing.
    */
   private async reloadSourcesForWorkspace(workspaceRootPath: string): Promise<void> {
