@@ -228,35 +228,55 @@ export function SendToWorkspaceDialog({
           >
             Cancel
           </Button>
-          <Button
-            onClick={handleTransfer}
-            disabled={!selectedWorkspaceId || isTransferring}
-          >
-            {isTransferring ? (
-              <span className="flex items-center gap-2">
-                <svg className="h-4 w-4 shrink-0" viewBox="0 0 20 20">
-                  {/* Background ring */}
-                  <circle cx="10" cy="10" r="8" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.2" />
-                  {/* Progress arc — fills clockwise as chunks are sent */}
-                  <circle
-                    cx="10" cy="10" r="8" fill="none"
-                    stroke="#8B5CF6"
-                    strokeWidth="2.5"
-                    strokeDasharray={`${(transferProgress ? transferProgress.sent / transferProgress.total : 0) * 50.26} 50.26`}
-                    strokeLinecap="round"
-                    transform="rotate(-90 10 10)"
-                    style={{ transition: 'stroke-dasharray 0.15s ease-out' }}
-                  />
-                </svg>
-                {transferProgress
-                  ? `${Math.round((transferProgress.sent / transferProgress.total) * 100)}%`
-                  : 'Sending…'
-                }
-              </span>
-            ) : 'Send'}
-          </Button>
+          {/* Wrapper: purple LED border traces around the button during transfer */}
+          <div className="relative">
+            {isTransferring && (
+              <TransferProgressBorder progress={transferProgress ? transferProgress.sent / transferProgress.total : 0} />
+            )}
+            <Button
+              onClick={handleTransfer}
+              disabled={!selectedWorkspaceId || isTransferring}
+            >
+              {isTransferring ? 'Sending…' : 'Send'}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Purple LED border that traces around the button proportional to transfer progress */
+function TransferProgressBorder({ progress }: { progress: number }) {
+  const rectRef = useRef<SVGRectElement>(null)
+  const [perim, setPerim] = useState(0)
+
+  useEffect(() => {
+    if (rectRef.current) {
+      setPerim(rectRef.current.getTotalLength())
+    }
+  }, [])
+
+  return (
+    <svg
+      className="absolute inset-0 w-full h-full pointer-events-none z-10"
+      style={{ overflow: 'visible' }}
+    >
+      <rect
+        ref={rectRef}
+        x="0" y="0"
+        width="100%" height="100%"
+        rx="8" ry="8"
+        fill="none"
+        stroke="#8B5CF6"
+        strokeWidth="2"
+        strokeDasharray={perim > 0 ? `${progress * perim} ${perim}` : '0 999'}
+        strokeDashoffset="0"
+        style={{
+          transition: 'stroke-dasharray 0.2s ease-out',
+          filter: 'drop-shadow(0 0 4px #8B5CF6) drop-shadow(0 0 8px rgba(139,92,246,0.4))',
+        }}
+      />
+    </svg>
   )
 }
