@@ -244,6 +244,9 @@ export interface ElectronAPI {
   removeWorkspace(workspaceId: string): Promise<boolean>
   invokeOnServer(url: string, token: string, channel: string, ...args: any[]): Promise<any>
 
+  // Remote session transfer (main-process orchestrated, supports chunked upload)
+  transferSessionToWorkspace(sessionId: string, targetWorkspaceId: string): Promise<{ sessionId: string }>
+
   // Session export/import (cross-workspace transfer)
   exportSession(sessionId: string): Promise<unknown>
   importSession(targetWorkspaceId: string, bundle: unknown, mode: 'move' | 'fork'): Promise<{ sessionId: string; warnings?: string[] }>

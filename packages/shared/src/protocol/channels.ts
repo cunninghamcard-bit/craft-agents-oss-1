@@ -48,6 +48,11 @@ export const RPC_CHANNELS = {
     EXPORT_REMOTE_TRANSFER: 'sessions:exportRemoteTransfer',
     IMPORT_REMOTE_TRANSFER: 'sessions:importRemoteTransfer',
   },
+  transfer: {
+    START: 'transfer:start',
+    CHUNK: 'transfer:chunk',
+    COMMIT: 'transfer:commit',
+  },
   tasks: {
     GET_OUTPUT: 'tasks:getOutput',
   },

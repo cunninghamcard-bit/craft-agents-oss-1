@@ -108,7 +108,6 @@ export function SendToWorkspaceDialog({
     setIsTransferring(true)
     const targetName = targetWorkspace.name
     const count = sessionIds.length
-    const { url, token, remoteWorkspaceId } = targetWorkspace.remoteServer
 
     const toastId = toast.loading(t('sendToWorkspace.sending', { count, target: targetName }))
 
@@ -116,32 +115,8 @@ export function SendToWorkspaceDialog({
       const newSessionIds: string[] = []
 
       for (const sessionId of sessionIds) {
-        // 1. Export full session bundle (messages + metadata for UI)
-        const bundle = await window.electronAPI.exportSession(sessionId) as any
-        if (!bundle) throw new Error(`Failed to export session ${sessionId}`)
-
-        // 2. Generate conversation summary so the AI has context after fork
-        //    (forked sessions lose SDK context — the AI starts fresh without this)
-        try {
-          console.log(`[SendToWorkspace] Generating summary for session ${sessionId}...`)
-          const transferPayload = await window.electronAPI.exportRemoteSessionTransfer(sessionId)
-          console.log(`[SendToWorkspace] Summary result: ${transferPayload?.summary ? `${transferPayload.summary.length} chars` : 'null/empty'}`)
-          if (transferPayload?.summary && bundle.session?.header) {
-            bundle.session.header.transferredSessionSummary = transferPayload.summary
-            bundle.session.header.transferredSessionSummaryApplied = false
-          }
-        } catch (err) {
-          console.error('[SendToWorkspace] Summary generation failed:', err)
-          // Summary generation failed — transfer without AI context (messages still visible)
-        }
-
-        // 3. Import full bundle on remote server via cross-server RPC (fork mode)
-        const result = await window.electronAPI.invokeOnServer(
-          url, token,
-          'sessions:import',
-          remoteWorkspaceId, bundle, 'fork',
-        ) as { sessionId: string }
-
+        // Main process handles export + summary + transport (chunked for large bundles)
+        const result = await window.electronAPI.transferSessionToWorkspace(sessionId, selectedWorkspaceId)
         newSessionIds.push(result.sessionId)
       }
 

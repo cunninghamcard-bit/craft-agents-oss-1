@@ -691,6 +691,60 @@ app.whenReady().then(async () => {
         }
       })
 
+      // Transfer session to remote workspace — orchestrated in main process
+      // to avoid shipping the full bundle through the renderer.
+      ipcMain.handle('session:transferToRemoteWorkspace', async (_event, sessionId: string, targetWorkspaceId: string) => {
+        const { getWorkspaceByNameOrId } = await import('@craft-agent/shared/config')
+        const workspace = getWorkspaceByNameOrId(targetWorkspaceId)
+        if (!workspace?.remoteServer) throw new Error(`Workspace ${targetWorkspaceId} has no remote server`)
+
+        const { url, token, remoteWorkspaceId } = workspace.remoteServer
+        if (!sessionManager) throw new Error('Session manager not initialized')
+
+        // 1. Export full session bundle (stays in main process memory)
+        const bundle = await sessionManager.exportSession(sessionId, workspace.id)
+        if (!bundle) throw new Error(`Failed to export session ${sessionId}`)
+
+        // 2. Generate summary and inject into bundle header
+        try {
+          const transferPayload = await sessionManager.exportRemoteSessionTransfer(sessionId, workspace.id)
+          if (transferPayload?.summary && bundle.session?.header) {
+            ;(bundle.session.header as any).transferredSessionSummary = transferPayload.summary
+            ;(bundle.session.header as any).transferredSessionSummaryApplied = false
+          }
+        } catch {
+          // Summary generation failed — transfer without AI context
+        }
+
+        // 3. Connect to remote server
+        const { connectToRemote } = await import('./handlers/workspace')
+        const { client, error } = await connectToRemote(url, token)
+        if (!client) throw new Error(error ?? 'Connection failed to remote server')
+
+        try {
+          // 4. Choose transport based on payload size
+          const json = JSON.stringify(bundle)
+          const payloadSize = Buffer.byteLength(json, 'utf-8')
+
+          const { CHUNKED_TRANSFER_THRESHOLD, invokeChunked } = await import('./chunked-rpc')
+
+          if (payloadSize < CHUNKED_TRANSFER_THRESHOLD) {
+            // Small bundle → direct RPC
+            return await client.invoke('sessions:import', remoteWorkspaceId, bundle, 'fork')
+          } else {
+            // Large bundle → chunked transfer
+            return await invokeChunked(
+              client,
+              'sessions:import',
+              [remoteWorkspaceId, bundle, 'fork'],
+              1,  // bundle is args[1]
+            )
+          }
+        } finally {
+          client.destroy()
+        }
+      })
+
       // App relaunch (for server config changes — NOT an update install)
       ipcMain.handle('app:relaunch', () => {
         app.relaunch()

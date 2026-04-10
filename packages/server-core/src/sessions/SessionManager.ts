@@ -75,6 +75,7 @@ import { getValidClaudeOAuthToken } from '@craft-agent/shared/auth'
 import { resolveAuthEnvVars } from '@craft-agent/shared/config'
 import { toolMetadataStore, getLastApiError } from '@craft-agent/shared/interceptor'
 import { isParentTaskTool } from '@craft-agent/shared/utils/toolNames'
+import { restoreFiles } from '@craft-agent/shared/utils/bundle-files'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
 import { CraftMcpClient, McpClientPool, McpPoolServer } from '@craft-agent/shared/mcp'
 import { type Session, type SessionEvent, type FileAttachment, type SendMessageOptions, type UnreadSummary, type RemoteSessionTransferPayload, type ImportRemoteSessionTransferResult, RPC_CHANNELS, generateMessageId } from '@craft-agent/shared/protocol'
@@ -7101,12 +7102,8 @@ export class SessionManager implements ISessionManager {
     writeSessionJsonl(sessionFile, storedSession)
 
     // Write all bundle files (attachments, plans, data, downloads, etc.)
-    for (const file of bundle.files) {
-      const targetPath = join(sessionDir, file.relativePath)
-      const targetDir = dirname(targetPath)
-      await mkdir(targetDir, { recursive: true })
-      await writeFile(targetPath, Buffer.from(file.contentBase64, 'base64'))
-    }
+    // Uses restoreFiles() for path traversal, size, and base64 validation.
+    restoreFiles(sessionDir, bundle.files)
 
     // Register in-memory — pass session metadata without messages to avoid
     // StoredMessage[] vs Message[] type mismatch, then convert messages separately
