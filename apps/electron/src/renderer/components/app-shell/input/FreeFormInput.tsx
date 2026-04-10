@@ -708,21 +708,26 @@ export function FreeFormInput({
     const executePendingPlan = async () => {
       if (hasExecuted) return
 
-      const pending = await window.electronAPI.getPendingPlanExecution(sessionId)
-      if (!pending || pending.awaitingCompaction) return
+      try {
+        const pending = await window.electronAPI.getPendingPlanExecution(sessionId)
+        if (!pending || pending.awaitingCompaction) return
 
-      // Compaction completed but we never sent the execution message (page reloaded).
-      // Send it now and clear the pending state.
-      hasExecuted = true
-      const executionMessage = buildPlanApprovalMessage({
-        planPath: pending.planPath,
-        draftInput: pending.draftInputSnapshot,
-      })
-      onSubmit(executionMessage, undefined)
+        // Compaction completed but we never sent the execution message (page reloaded).
+        // Send it now and clear the pending state.
+        hasExecuted = true
+        const executionMessage = buildPlanApprovalMessage({
+          planPath: pending.planPath,
+          draftInput: pending.draftInputSnapshot,
+        })
+        onSubmit(executionMessage, undefined)
 
-      await window.electronAPI.sessionCommand(sessionId, {
-        type: 'clearPendingPlanExecution',
-      })
+        await window.electronAPI.sessionCommand(sessionId, {
+          type: 'clearPendingPlanExecution',
+        })
+      } catch {
+        // Connection may be lost (e.g. after sleep/wake) — safe to ignore,
+        // the pending plan will be retried on next mount.
+      }
     }
 
     // Check immediately on mount (handles case where compaction already completed)

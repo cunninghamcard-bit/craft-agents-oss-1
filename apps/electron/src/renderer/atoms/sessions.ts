@@ -495,9 +495,13 @@ async function loadSessionMessages(
           // The `messages.length > 0` guard ensures Cmd+R reload works: after reload,
           // the atom starts with messages=[] from getSessions(), so IPC response
           // (which has full history from main process memory) must be used.
-          messages: existingSession.isProcessing && existingSession.messages.length > 0
+          // Also guard against sleep/wake edge case: the server may return
+          // empty messages if the session subprocess hasn't finished lazy-loading.
+          messages: existingSession.messages.length > 0 && (!loadedSession.messages || loadedSession.messages.length === 0)
             ? existingSession.messages
-            : loadedSession.messages,
+            : existingSession.isProcessing && existingSession.messages.length > 0
+              ? existingSession.messages
+              : loadedSession.messages,
           tokenUsage: loadedSession.tokenUsage ?? existingSession.tokenUsage,
           sessionFolderPath: loadedSession.sessionFolderPath ?? existingSession.sessionFolderPath,
         }

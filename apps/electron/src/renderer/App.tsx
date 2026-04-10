@@ -412,7 +412,17 @@ export default function App() {
       if (!fresh) return false
 
       clearStreamingState(sessionId)
-      updateSessionDirect(sessionId, () => fresh)
+      updateSessionDirect(sessionId, (prev) => {
+        // Guard: don't clobber existing messages with an empty array.
+        // After sleep/wake the server may return messages:[] if the session
+        // subprocess hasn't finished lazy-loading yet. Preserving the
+        // renderer's copy keeps the UI intact while a retry fetches the
+        // full data.
+        if (prev && prev.messages.length > 0 && (!fresh.messages || fresh.messages.length === 0)) {
+          return { ...fresh, messages: prev.messages }
+        }
+        return fresh
+      })
       syncSessionOptionsFromSession(fresh)
       void reconcilePermissionModeState(sessionId)
       return true
@@ -996,14 +1006,21 @@ export default function App() {
       const metaMap = refreshedMetaMap ?? store.get(sessionMetaMapAtom)
       const refreshIds = getSessionsToRefreshAfterStaleReconnect(metaMap, sessionSelection.selected)
 
+      console.info(`[App] Stale reconnect — refreshing ${refreshIds.length} session(s):`, refreshIds)
+
       // Refresh full message content only for the active session plus any
       // session still marked processing after the metadata refresh.
       for (const sessionId of refreshIds) {
-        const ok = await refreshSessionFromServer(sessionId)
+        let ok = await refreshSessionFromServer(sessionId)
         if (!ok) {
-          // Server may need time to restart session subprocess after reconnect — retry once
-          await new Promise(r => setTimeout(r, 2000))
-          await refreshSessionFromServer(sessionId)
+          // Server may need time to restart session subprocess after reconnect.
+          // Retry with increasing delays (2s, 4s) to give the server time.
+          for (const delay of [2000, 4000]) {
+            console.warn(`[App] Retrying session refresh for ${sessionId} after ${delay}ms`)
+            await new Promise(r => setTimeout(r, delay))
+            ok = await refreshSessionFromServer(sessionId)
+            if (ok) break
+          }
         }
       }
 
@@ -1014,6 +1031,8 @@ export default function App() {
         if (session && (!session.messages || session.messages.length === 0)) {
           console.warn('[App] Active session still has no messages after stale reconnect refresh — forcing message reload')
           await store.set(forceSessionMessagesReloadAtom, sessionSelection.selected)
+        } else if (session) {
+          console.info(`[App] Stale reconnect recovery complete — active session has ${session.messages?.length ?? 0} messages`)
         }
       }
     })
