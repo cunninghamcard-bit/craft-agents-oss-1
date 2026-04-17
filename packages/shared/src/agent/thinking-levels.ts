@@ -18,7 +18,23 @@
  *   so Craft's `max` saturates there.
  */
 
-export type ThinkingLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+/**
+ * Ordered list of valid thinking level IDs. Single source of truth — the
+ * `ThinkingLevel` type, `THINKING_LEVELS` metadata, the Zod schema in
+ * `validators.ts`, and runtime validation/error messages all derive from this.
+ *
+ * Order is significant: it determines UI ordering (low → max).
+ */
+export const THINKING_LEVEL_IDS = [
+  'off',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+export type ThinkingLevel = (typeof THINKING_LEVEL_IDS)[number];
 
 export interface ThinkingLevelDefinition {
   id: ThinkingLevel;
@@ -115,14 +131,7 @@ export function getThinkingLevelNameKey(level: ThinkingLevel): string {
  * Validate that a value is a valid ThinkingLevel.
  */
 export function isValidThinkingLevel(value: unknown): value is ThinkingLevel {
-  return (
-    value === 'off' ||
-    value === 'low' ||
-    value === 'medium' ||
-    value === 'high' ||
-    value === 'xhigh' ||
-    value === 'max'
-  );
+  return typeof value === 'string' && (THINKING_LEVEL_IDS as readonly string[]).includes(value);
 }
 
 /**

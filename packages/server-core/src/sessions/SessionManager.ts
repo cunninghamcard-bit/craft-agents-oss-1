@@ -5915,7 +5915,7 @@ export class SessionManager implements ISessionManager {
   }
 
   /**
-   * Set the thinking level for a session ('off', 'low', 'medium', 'high', 'xhigh', 'max')
+   * Set the thinking level for a session. See {@link ThinkingLevel} for valid values.
    * This is sticky and persisted across messages.
    */
   setSessionThinkingLevel(sessionId: string, level: ThinkingLevel): void {
