@@ -337,7 +337,7 @@
   "dialog.whatsapp.description": "このワークスペースからメッセージを送受信するために WhatsApp アカウントをリンクします。",
   "dialog.whatsapp.loggedOut": "WhatsApp からログアウトしました。再接続してください。",
   "dialog.whatsapp.qrInstructions": "スマートフォンで: WhatsApp → 設定 → リンク済みデバイス → デバイスをリンク。上の QR コードをスキャンしてください。",
-  "dialog.whatsapp.selfChatHint": "セルフチャットに対応しています：接続後、自分自身との WhatsApp チャットを開き、/new と入力してセッションを開始するか、/pair <コード> と入力してアプリのセッションとリンクできます。エージェントの返信には 🤖 が付きます。",
+  "dialog.whatsapp.selfChatHint": "セルフチャットに対応しています：接続後、自分自身との WhatsApp チャットを開き、/new と入力してセッションを開始するか、/pair <コード> と入力してアプリのセッションとリンクできます。",
   "dialog.whatsapp.starting": "WhatsApp サービスを起動しています…",
   "dialog.whatsapp.title": "WhatsApp を接続",
   "diff.disableBackground": "背景ハイライトを無効にする",

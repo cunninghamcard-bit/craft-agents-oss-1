@@ -337,7 +337,7 @@
   "dialog.whatsapp.description": "Połącz swoje konto WhatsApp, aby otrzymywać i wysyłać wiadomości z tego obszaru roboczego.",
   "dialog.whatsapp.loggedOut": "Wylogowano z WhatsApp. Połącz ponownie.",
   "dialog.whatsapp.qrInstructions": "Na telefonie: WhatsApp → Ustawienia → Połączone urządzenia → Połącz urządzenie. Zeskanuj powyższy kod.",
-  "dialog.whatsapp.selfChatHint": "Obsługiwany jest czat z samym sobą: po połączeniu otwórz swój własny czat WhatsApp i wpisz /new, aby rozpocząć sesję, lub /pair <kod>, aby powiązać sesję z aplikacji. Odpowiedzi agenta są poprzedzone 🤖.",
+  "dialog.whatsapp.selfChatHint": "Obsługiwany jest czat z samym sobą: po połączeniu otwórz swój własny czat WhatsApp i wpisz /new, aby rozpocząć sesję, lub /pair <kod>, aby powiązać sesję z aplikacji.",
   "dialog.whatsapp.starting": "Uruchamianie usługi WhatsApp…",
   "dialog.whatsapp.title": "Połącz WhatsApp",
   "diff.disableBackground": "Wyłącz podświetlanie tła",

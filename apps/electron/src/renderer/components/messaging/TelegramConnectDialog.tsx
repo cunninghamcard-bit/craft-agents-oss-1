@@ -155,6 +155,7 @@ export function TelegramConnectDialog({
             {t('common.cancel')}
           </Button>
           <Button
+            variant="outline"
             size="sm"
             onClick={handleSave}
             disabled={!token.trim() || test.state !== 'success' || saving}

@@ -275,7 +275,7 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
               </StyledDropdownMenuContent>
             </DropdownMenu>
           ) : (
-            <Button size="sm" onClick={handleConnect}>
+            <Button variant="outline" size="sm" onClick={handleConnect}>
               <Plus className="h-3.5 w-3.5" />
               {t('common.connect', { defaultValue: 'Connect' })}
             </Button>

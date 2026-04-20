@@ -337,7 +337,7 @@
   "dialog.whatsapp.description": "Verknüpfen Sie Ihr WhatsApp-Konto, um Nachrichten aus diesem Workspace zu empfangen und zu senden.",
   "dialog.whatsapp.loggedOut": "WhatsApp abgemeldet. Bitte erneut verbinden.",
   "dialog.whatsapp.qrInstructions": "Auf Ihrem Telefon: WhatsApp → Einstellungen → Verknüpfte Geräte → Gerät verknüpfen. Scannen Sie den Code oben.",
-  "dialog.whatsapp.selfChatHint": "Selbstchat wird unterstützt: Öffnen Sie nach dem Verbinden Ihren eigenen WhatsApp-Chat und geben Sie /new ein, um eine Sitzung zu starten, oder /pair <code>, um eine Sitzung aus der App zu verknüpfen. Antworten des Agenten werden mit 🤖 eingeleitet.",
+  "dialog.whatsapp.selfChatHint": "Selbstchat wird unterstützt: Öffnen Sie nach dem Verbinden Ihren eigenen WhatsApp-Chat und geben Sie /new ein, um eine Sitzung zu starten, oder /pair <code>, um eine Sitzung aus der App zu verknüpfen.",
   "dialog.whatsapp.starting": "WhatsApp-Dienst wird gestartet…",
   "dialog.whatsapp.title": "WhatsApp verbinden",
   "diff.disableBackground": "Hintergrundhervorhebung deaktivieren",

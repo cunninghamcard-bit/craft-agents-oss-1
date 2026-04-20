@@ -92,9 +92,9 @@ export function WhatsAppConnectDialog({ open, onOpenChange, onConnected }: Whats
           <DialogDescription>{t('dialog.whatsapp.description')}</DialogDescription>
         </DialogHeader>
 
-        <div className="rounded-md border border-sky-500/30 bg-sky-500/10 p-3 text-xs text-sky-800 dark:text-sky-200">
+        <p className="text-xs text-muted-foreground">
           {t('dialog.whatsapp.selfChatHint')}
-        </div>
+        </p>
 
         <div className="flex flex-col gap-4 py-2">
           {phase.kind === 'starting' && (
