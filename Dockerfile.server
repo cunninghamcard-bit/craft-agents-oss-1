@@ -80,8 +80,11 @@ RUN bun build packages/session-mcp-server/src/index.ts \
 # Build the WhatsApp worker bundle (CJS, Node target — Bun cannot run it).
 RUN bun run scripts/build-wa-worker.ts
 
-# Build web UI assets (served by the server on the RPC port)
-RUN bunx vite build --config apps/webui/vite.config.ts
+# Build web UI assets (served by the server on the RPC port).
+# vite's bundler runs under Node (via shebang in vite's bin) and hits V8's
+# default ~2GB heap cap on the rendering phase (>5k modules). Raise to 4GB
+# so low-RAM build hosts (e.g. 4GB VPS) can complete the build.
+RUN NODE_OPTIONS="--max-old-space-size=4096" bunx vite build --config apps/webui/vite.config.ts
 
 # Pre-create .craft-agent so Docker named volumes inherit the correct permissions.
 RUN mkdir -p /home/craftagents/.craft-agent
