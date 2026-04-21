@@ -44,6 +44,7 @@ import {
   copyInterceptor,
   copyInterceptorBundle,
   buildMcpServers,
+  buildWhatsAppWorker,
   copySessionServer,
   copyPiAgentServer,
   verifyMcpServersExist,
@@ -181,9 +182,10 @@ async function main(): Promise<void> {
     copyInterceptor(config);
     copyInterceptorBundle(config);
 
-    // Build MCP servers (session + Pi agent)
-    console.log('\n[7/9] Building MCP servers...');
+    // Build MCP servers (session + Pi agent) and WhatsApp worker subprocess
+    console.log('\n[7/9] Building MCP servers and WhatsApp worker...');
     buildMcpServers(config);
+    buildWhatsAppWorker(config);
 
     // Build Electron app (Windows has special OAuth injection)
     console.log('\n[8/9] Building Electron app...');

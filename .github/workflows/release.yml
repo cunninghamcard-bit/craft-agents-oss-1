@@ -292,9 +292,9 @@ jobs:
             apps/electron/release/Craft-Agents-${{ matrix.arch }}.zip
           retention-days: 7
 
-  # Verify SDK is bundled in all artifacts before upload
+  # Verify SDK and WhatsApp worker are bundled in all artifacts before upload
   verify-bundles:
-    name: Verify SDK Bundling
+    name: Verify Bundled Resources
     needs: [prepare, build]
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -309,7 +309,8 @@ jobs:
         run: |
           cd artifacts/build-darwin-arm64
           unzip -q Craft-Agents-arm64.zip -d verify
-          APP="verify/Craft Agents.app/Contents/Resources/app"
+          RES="verify/Craft Agents.app/Contents/Resources"
+          APP="$RES/app"
           SDK="$APP/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"
           if [ ! -f "$SDK" ]; then
             echo "::error::SDK missing in macOS ARM64 bundle"
@@ -317,35 +318,53 @@ jobs:
             ls -la "$APP/node_modules/" || true
             exit 1
           fi
-          SIZE=$(stat -c%s "$SDK")
-          echo "✓ macOS ARM64: SDK found ($SIZE bytes)"
+          echo "✓ macOS ARM64: SDK found ($(stat -c%s "$SDK") bytes)"
+          WORKER="$RES/messaging-whatsapp-worker/worker.cjs"
+          if [ ! -f "$WORKER" ]; then
+            echo "::error::WhatsApp worker missing in macOS ARM64 bundle"
+            ls -la "$RES/" || true
+            exit 1
+          fi
+          echo "✓ macOS ARM64: WhatsApp worker found ($(stat -c%s "$WORKER") bytes)"
 
       - name: Verify macOS x64
         run: |
           cd artifacts/build-darwin-x64
           unzip -q Craft-Agents-x64.zip -d verify
-          APP="verify/Craft Agents.app/Contents/Resources/app"
+          RES="verify/Craft Agents.app/Contents/Resources"
+          APP="$RES/app"
           SDK="$APP/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"
           if [ ! -f "$SDK" ]; then
             echo "::error::SDK missing in macOS x64 bundle"
             exit 1
           fi
-          SIZE=$(stat -c%s "$SDK")
-          echo "✓ macOS x64: SDK found ($SIZE bytes)"
+          echo "✓ macOS x64: SDK found ($(stat -c%s "$SDK") bytes)"
+          WORKER="$RES/messaging-whatsapp-worker/worker.cjs"
+          if [ ! -f "$WORKER" ]; then
+            echo "::error::WhatsApp worker missing in macOS x64 bundle"
+            exit 1
+          fi
+          echo "✓ macOS x64: WhatsApp worker found ($(stat -c%s "$WORKER") bytes)"
 
       - name: Verify Linux
         run: |
           cd artifacts/build-linux-x64
           chmod +x Craft-Agents-x64.AppImage
           ./Craft-Agents-x64.AppImage --appimage-extract >/dev/null 2>&1
-          APP="squashfs-root/resources/app"
+          RES="squashfs-root/resources"
+          APP="$RES/app"
           SDK="$APP/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"
           if [ ! -f "$SDK" ]; then
             echo "::error::SDK missing in Linux bundle"
             exit 1
           fi
-          SIZE=$(stat -c%s "$SDK")
-          echo "✓ Linux: SDK found ($SIZE bytes)"
+          echo "✓ Linux: SDK found ($(stat -c%s "$SDK") bytes)"
+          WORKER="$RES/messaging-whatsapp-worker/worker.cjs"
+          if [ ! -f "$WORKER" ]; then
+            echo "::error::WhatsApp worker missing in Linux bundle"
+            exit 1
+          fi
+          echo "✓ Linux: WhatsApp worker found ($(stat -c%s "$WORKER") bytes)"
 
       - name: Verify Windows
         run: |
@@ -353,20 +372,26 @@ jobs:
           sudo apt-get install -qq p7zip-full
           7z x -y Craft-Agents-x64.exe -oextracted >/dev/null
           NSIS="extracted/\$PLUGINSDIR/app-64.7z"
-          if [ -f "$NSIS" ]; then
-            7z x -y "$NSIS" -oapp >/dev/null
-            APP="app/resources/app"
-            SDK_PATH="$APP/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"
-            if [ ! -f "$SDK_PATH" ]; then
-              echo "::error::SDK missing in Windows bundle"
-              exit 1
-            fi
-            SIZE=$(stat -c%s "$SDK_PATH")
-            echo "✓ Windows: SDK found ($SIZE bytes)"
-          else
+          if [ ! -f "$NSIS" ]; then
             echo "::error::Windows: Could not extract installer for verification"
             exit 1
           fi
+          7z x -y "$NSIS" -oapp >/dev/null
+          RES="app/resources"
+          APP="$RES/app"
+          SDK_PATH="$APP/node_modules/@anthropic-ai/claude-agent-sdk/cli.js"
+          if [ ! -f "$SDK_PATH" ]; then
+            echo "::error::SDK missing in Windows bundle"
+            exit 1
+          fi
+          echo "✓ Windows: SDK found ($(stat -c%s "$SDK_PATH") bytes)"
+          WORKER="$RES/messaging-whatsapp-worker/worker.cjs"
+          if [ ! -f "$WORKER" ]; then
+            echo "::error::WhatsApp worker missing in Windows bundle"
+            ls -la "$RES/" || true
+            exit 1
+          fi
+          echo "✓ Windows: WhatsApp worker found ($(stat -c%s "$WORKER") bytes)"
 
   # Build and push multi-arch Docker image to ghcr.io
   docker:
