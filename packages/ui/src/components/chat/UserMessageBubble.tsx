@@ -315,7 +315,7 @@ export interface UserMessageBubbleProps {
   attachments?: StoredAttachment[]
   /** Content badges for inline display (sources, skills) */
   badges?: ContentBadge[]
-  /** Whether the message is pending (shimmer animation) */
+  /** Whether the message is awaiting backend confirmation. User bubbles stay visually stable. */
   isPending?: boolean
   /** Whether the message is queued (badge shown) */
   isQueued?: boolean
@@ -336,7 +336,6 @@ export function UserMessageBubble({
   onFileClick,
   attachments,
   badges,
-  isPending,
   isQueued,
   compactMode,
 }: UserMessageBubbleProps) {
@@ -488,8 +487,7 @@ export function UserMessageBubble({
       <div
         className={cn(
           "max-w-[80%] bg-user-message-bubble rounded-[16px] break-words min-w-0 select-text [&_p]:m-0",
-          compactMode ? "px-4 py-2" : "px-5 py-3.5",
-          isPending && "animate-shimmer"
+          compactMode ? "px-4 py-2" : "px-5 py-3.5"
         )}
       >
         {showQueued && (
