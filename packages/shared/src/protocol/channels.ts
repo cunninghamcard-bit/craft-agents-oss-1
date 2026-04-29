@@ -400,6 +400,10 @@ export const RPC_CHANNELS = {
     GENERATE_CODE: 'messaging:generateCode',
     UNBIND: 'messaging:unbind',
     UNBIND_BINDING: 'messaging:unbindBinding',
+    /** Workspace-supergroup pairing (Telegram forum support). UI ↔ Server. */
+    GENERATE_SUPERGROUP_CODE: 'messaging:generateSupergroupCode',
+    GET_SUPERGROUP: 'messaging:getSupergroup',
+    UNBIND_SUPERGROUP: 'messaging:unbindSupergroup',
     // UI ↔ Server — WhatsApp pairing/connection flow (Baileys subprocess adapter)
     WA_START_CONNECT: 'messaging:wa:startConnect',
     WA_SUBMIT_PHONE: 'messaging:wa:submitPhone',

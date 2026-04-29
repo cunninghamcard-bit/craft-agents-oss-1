@@ -29,6 +29,7 @@ import { ConfigStore } from './config-store'
 import { PairingCodeManager } from './pairing'
 import { TelegramAdapter } from './adapters/telegram/index'
 import { WhatsAppAdapter, type WhatsAppEvent } from './adapters/whatsapp/index'
+import { TopicRegistry } from './topic-registry'
 import type { SessionEvent } from './renderer'
 import type { EventSinkFn } from './event-fanout'
 import type {
@@ -77,6 +78,7 @@ export interface MessagingGatewayRegistryOptions {
 interface WorkspaceState {
   gateway: MessagingGateway
   configStore: ConfigStore
+  topicRegistry: TopicRegistry
   botUsernames: Partial<Record<PlatformType, string>>
   whatsapp: WhatsAppAdapter | null
   whatsappOffEvent?: () => void
@@ -90,6 +92,24 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
 
   constructor(private readonly opts: MessagingGatewayRegistryOptions) {
     this.log = (opts.logger ?? consoleLogger).child({ component: 'registry' })
+
+    // Install the automation→topic binder hook on the SessionManager so
+    // executePromptAutomation can route topic-bound sessions without the
+    // SessionManager needing to import this package (avoids a package-level
+    // circular dependency).
+    opts.sessionManager.setAutomationBinder?.(async (input) => {
+      const result = await this.bindAutomationSession(input)
+      if (!result.ok) {
+        this.log.info('automation topic bind skipped', {
+          event: 'automation_topic_bind_skipped',
+          workspaceId: input.workspaceId,
+          sessionId: input.sessionId,
+          topicName: input.topicName,
+          reason: result.reason,
+          error: result.error,
+        })
+      }
+    })
   }
 
   // -------------------------------------------------------------------------
@@ -304,6 +324,239 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
       expiresAt: gen.expiresAt,
       botUsername: state.botUsernames[platform],
     }
+  }
+
+  /**
+   * Issue a workspace-supergroup pairing code. The user types
+   * `/pair <code>` from any topic of the desired Telegram supergroup; the
+   * bot captures `chat.id` and persists it as the workspace's accepted
+   * supergroup, after which the adapter starts accepting messages from it.
+   */
+  generateSupergroupPairingCode(
+    workspaceId: string,
+    platform: string,
+  ): { code: string; expiresAt: number; botUsername?: string } {
+    if (!isKnownPlatform(platform)) {
+      throw new Error(`Unknown messaging platform: ${platform}`)
+    }
+    if (platform !== 'telegram') {
+      throw new Error('Workspace-supergroup pairing is only supported on Telegram.')
+    }
+    const state = this.workspaces.get(workspaceId) ?? this.bootstrapWorkspace(workspaceId)
+    if (!state.gateway.hasConnectedAdapter(platform)) {
+      throw new Error(`${capitalize(platform)} is not connected`)
+    }
+    const gen = this.pairing.generateForSupergroup(workspaceId, platform)
+    this.log.info('supergroup pairing code generated', {
+      event: 'pairing_generated',
+      kind: 'workspace-supergroup',
+      workspaceId,
+      platform,
+      expiresAt: gen.expiresAt,
+    })
+    return {
+      code: gen.code,
+      expiresAt: gen.expiresAt,
+      botUsername: state.botUsernames[platform],
+    }
+  }
+
+  /**
+   * Persist a paired supergroup at the workspace level and tell the running
+   * adapter to start accepting its messages. Called from the gateway's
+   * `pairingConsumer.bindWorkspaceSupergroup` hook after the user types
+   * `/pair <code>` in the group, and also reachable directly via RPC for
+   * future programmatic flows.
+   */
+  async bindWorkspaceSupergroup(
+    workspaceId: string,
+    platform: PlatformType,
+    chatId: string,
+    fallbackTitle?: string,
+  ): Promise<{ title: string }> {
+    if (platform !== 'telegram') {
+      throw new Error('Workspace-supergroup pairing is only supported on Telegram.')
+    }
+    const state = this.workspaces.get(workspaceId) ?? this.bootstrapWorkspace(workspaceId)
+    const adapter = state.gateway.getAdapter('telegram') as TelegramAdapter | undefined
+    if (!adapter) {
+      throw new Error('Telegram adapter is not running. Connect the bot first.')
+    }
+
+    // Validate the chat is actually a forum supergroup before binding.
+    // Without this, `/pair` typed in a DM (or a basic group, or a regular
+    // supergroup without topics) "succeeds" at command level but breaks
+    // downstream when `createForumTopic` runs — Telegram returns
+    // `400: Bad Request: the chat is not a forum`.
+    const info = await adapter.getChatInfo(chatId)
+    if (!info) {
+      throw new Error(
+        'Cannot pair as supergroup: unable to read chat metadata. ' +
+          'The bot may have been removed from the chat or lost permission to read it.',
+      )
+    }
+    if (info.type !== 'supergroup') {
+      throw new Error(
+        `Cannot pair as supergroup: chat type is "${info.type}" — must be a supergroup. ` +
+          'DMs and basic groups cannot host topics.',
+      )
+    }
+    if (!info.isForum) {
+      throw new Error(
+        'Cannot pair as supergroup: the supergroup does not have topics enabled. ' +
+          'In Telegram, open the group → Edit → enable "Topics", then try /pair again.',
+      )
+    }
+
+    const title = info.title || fallbackTitle || `Group ${chatId}`
+
+    const cfg = state.configStore.get()
+    state.configStore.update({
+      enabled: true,
+      platforms: {
+        ...cfg.platforms,
+        telegram: {
+          enabled: cfg.platforms.telegram?.enabled ?? true,
+          supergroup: {
+            chatId,
+            title,
+            capturedAt: Date.now(),
+          },
+        },
+      },
+    })
+
+    adapter.setAcceptedSupergroupChatId(chatId)
+    this.log.info('workspace supergroup bound', {
+      event: 'workspace_supergroup_bound',
+      workspaceId,
+      platform,
+      chatId,
+      title,
+    })
+    return { title }
+  }
+
+  /**
+   * Forget the paired supergroup. Existing topic-bound bindings are kept on
+   * disk (they reference chatId only) but stop matching inbound updates
+   * because the adapter rejects messages from the chat. Reconnecting the
+   * same supergroup later restores routing.
+   */
+  async unbindWorkspaceSupergroup(workspaceId: string): Promise<void> {
+    const state = this.workspaces.get(workspaceId)
+    if (!state) return
+    const cfg = state.configStore.get()
+    const tg = cfg.platforms.telegram
+    if (!tg?.supergroup) return
+
+    state.configStore.update({
+      enabled: cfg.enabled,
+      platforms: {
+        ...cfg.platforms,
+        telegram: {
+          enabled: tg.enabled,
+          // omit supergroup
+        },
+      },
+    })
+
+    const adapter = state.gateway.getAdapter('telegram') as TelegramAdapter | undefined
+    adapter?.setAcceptedSupergroupChatId(undefined)
+    this.log.info('workspace supergroup unbound', {
+      event: 'workspace_supergroup_unbound',
+      workspaceId,
+    })
+  }
+
+  /** Read accessor for the current paired supergroup, if any. */
+  getWorkspaceSupergroup(workspaceId: string): { chatId: string; title: string; capturedAt: number } | null {
+    const state = this.workspaces.get(workspaceId) ?? this.bootstrapWorkspace(workspaceId)
+    const sg = state.configStore.get().platforms.telegram?.supergroup
+    return sg ? { ...sg } : null
+  }
+
+  /**
+   * Bind a freshly-spawned automation session to a Telegram forum topic in
+   * the workspace's paired supergroup. The topic is created on first use and
+   * reused thereafter.
+   *
+   * Best-effort: returns a discriminated result instead of throwing so the
+   * caller (SessionManager) can log + continue without blocking the session.
+   */
+  async bindAutomationSession(args: {
+    workspaceId: string
+    sessionId: string
+    topicName: string
+  }): Promise<
+    | { ok: true; chatId: string; threadId: number; reused: boolean }
+    | {
+        ok: false
+        reason: 'invalid-name' | 'no-supergroup' | 'no-adapter' | 'topic-create-failed'
+        error?: string
+      }
+  > {
+    const trimmed = args.topicName?.trim() ?? ''
+    if (trimmed.length === 0 || trimmed.length > 128) {
+      return { ok: false, reason: 'invalid-name' }
+    }
+
+    const state = this.workspaces.get(args.workspaceId) ?? this.bootstrapWorkspace(args.workspaceId)
+    const supergroup = state.configStore.get().platforms.telegram?.supergroup
+    if (!supergroup?.chatId) return { ok: false, reason: 'no-supergroup' }
+
+    const adapter = state.gateway.getAdapter('telegram') as TelegramAdapter | undefined
+    if (!adapter) return { ok: false, reason: 'no-adapter' }
+
+    const beforeCacheHit = state.topicRegistry.get(trimmed)
+
+    try {
+      const entry = await state.topicRegistry.findOrCreate({
+        topicName: trimmed,
+        chatId: supergroup.chatId,
+        createTopic: (name) => adapter.createForumTopic(supergroup.chatId, name),
+      })
+
+      state.gateway.getBindingStore().bind(
+        args.workspaceId,
+        args.sessionId,
+        'telegram',
+        entry.chatId,
+        trimmed,
+        undefined,
+        entry.threadId,
+      )
+      this.emitBindingChanged(args.workspaceId)
+
+      return {
+        ok: true,
+        chatId: entry.chatId,
+        threadId: entry.threadId,
+        reused: Boolean(beforeCacheHit),
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log.warn('automation topic bind failed', {
+        event: 'automation_topic_bind_failed',
+        workspaceId: args.workspaceId,
+        sessionId: args.sessionId,
+        topicName: trimmed,
+        error: message,
+      })
+      return { ok: false, reason: 'topic-create-failed', error: message }
+    }
+  }
+
+  /**
+   * Drop a cached topic entry. Does NOT delete the topic in Telegram (the
+   * bot has no signal that the user wants the history gone). Useful when
+   * an automation is renamed/removed and the user wants the next use of
+   * a topic name to create a fresh topic instead of reusing the cached one.
+   */
+  async removeAutomationTopic(workspaceId: string, topicName: string): Promise<void> {
+    const state = this.workspaces.get(workspaceId)
+    if (!state) return
+    await state.topicRegistry.remove(topicName.trim())
   }
 
   // -------------------------------------------------------------------------
@@ -632,15 +885,32 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
         consume: (platform, code) => {
           const entry = this.pairing.consume(workspaceId, platform, code)
           if (!entry) return null
-          return { workspaceId: entry.workspaceId, sessionId: entry.sessionId }
+          if (entry.kind === 'workspace-supergroup') {
+            return { kind: 'workspace-supergroup', workspaceId: entry.workspaceId }
+          }
+          // entry.kind === 'session'
+          if (!entry.sessionId) return null
+          return { kind: 'session', workspaceId: entry.workspaceId, sessionId: entry.sessionId }
+        },
+        bindWorkspaceSupergroup: async ({ platform, chatId, fallbackTitle }) => {
+          if (!isKnownPlatform(platform)) {
+            throw new Error(`Unknown platform for supergroup pairing: ${platform}`)
+          }
+          return this.bindWorkspaceSupergroup(workspaceId, platform, chatId, fallbackTitle)
         },
       },
       onBindingChanged: () => this.emitBindingChanged(workspaceId),
     })
 
+    const topicRegistry = new TopicRegistry(
+      storageDir,
+      baseLog.child({ component: 'topic-registry' }),
+    )
+
     const state: WorkspaceState = {
       gateway,
       configStore,
+      topicRegistry,
       botUsernames: {},
       whatsapp: null,
       runtime: {
@@ -677,8 +947,10 @@ export class MessagingGatewayRegistry implements IMessagingGatewayRegistry {
 
     try {
       const adapter = new TelegramAdapter()
+      const supergroupChatId = state.configStore.get().platforms.telegram?.supergroup?.chatId
       await adapter.initialize({
         token: cred.value,
+        ...(supergroupChatId ? { acceptedSupergroupChatId: supergroupChatId } : {}),
         logger: this.log.child({
           component: 'telegram-adapter',
           workspaceId,
@@ -782,6 +1054,7 @@ function toBindingInfo(b: ChannelBinding): MessagingBindingInfo {
     sessionId: b.sessionId,
     platform: b.platform,
     channelId: b.channelId,
+    ...(b.threadId !== undefined ? { threadId: b.threadId } : {}),
     channelName: b.channelName,
     enabled: b.enabled,
     createdAt: b.createdAt,

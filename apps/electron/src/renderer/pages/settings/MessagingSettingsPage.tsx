@@ -40,6 +40,7 @@ import {
 import { SettingsSection, SettingsCard } from '@/components/settings'
 import { MessagingPlatformIcon } from '@/components/messaging/MessagingPlatformIcon'
 import { TelegramConnectDialog } from '@/components/messaging/TelegramConnectDialog'
+import { TelegramSupergroupPairingDialog } from '@/components/messaging/TelegramSupergroupPairingDialog'
 import { WhatsAppConnectDialog } from '@/components/messaging/WhatsAppConnectDialog'
 import { useActiveWorkspace } from '@/context/AppShellContext'
 import { useNavigation } from '@/contexts/NavigationContext'
@@ -135,6 +136,25 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
   const [connectOpen, setConnectOpen] = React.useState(false)
   const [reconfigure, setReconfigure] = React.useState(false)
   const [menuOpen, setMenuOpen] = React.useState(false)
+  // Telegram supergroup state — only relevant when platform === 'telegram'.
+  // Lifted into PlatformRow so the supergroup sub-row sits inside the same
+  // SettingsCard as the bot connection.
+  const [supergroup, setSupergroup] = React.useState<{ chatId: string; title: string } | null>(null)
+  const [supergroupDialogOpen, setSupergroupDialogOpen] = React.useState(false)
+
+  const refreshSupergroup = React.useCallback(async () => {
+    if (platform !== 'telegram') return
+    try {
+      const sg = await window.electronAPI.getMessagingSupergroup()
+      setSupergroup(sg ? { chatId: sg.chatId, title: sg.title } : null)
+    } catch {
+      // silent — empty state means "not configured"
+    }
+  }, [platform])
+
+  React.useEffect(() => {
+    refreshSupergroup()
+  }, [refreshSupergroup, workspaceId])
 
   const platformBindings = React.useMemo(
     () =>
@@ -282,14 +302,75 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
           )}
         </div>
 
+        {platform === 'telegram' && runtime.connected && (
+          <>
+            <div className="mx-4 h-px bg-border/50" />
+            <div className="flex items-center gap-3 px-4 py-2.5 pl-[52px]">
+              <div className="min-w-0 flex-1">
+                <div className="text-sm">
+                  {t('settings.messaging.telegram.supergroup.label', { defaultValue: 'Supergroup' })}
+                </div>
+                <div className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {supergroup
+                    ? `${supergroup.title} (${supergroup.chatId})`
+                    : t('settings.messaging.telegram.supergroup.notConfigured', {
+                        defaultValue: 'Not configured',
+                      })}
+                </div>
+              </div>
+              {supergroup ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={async () => {
+                    try {
+                      await window.electronAPI.unbindMessagingSupergroup()
+                      toast.success(
+                        t('settings.messaging.telegram.supergroup.disconnected', {
+                          defaultValue: 'Supergroup disconnected',
+                        }),
+                      )
+                      refreshSupergroup()
+                    } catch (err) {
+                      toast.error(err instanceof Error ? err.message : t('common.error'))
+                    }
+                  }}
+                >
+                  {t('settings.messaging.telegram.supergroup.disconnect', {
+                    defaultValue: 'Disconnect',
+                  })}
+                </Button>
+              ) : (
+                <Button variant="outline" size="sm" onClick={() => setSupergroupDialogOpen(true)}>
+                  <Plus className="h-3.5 w-3.5" />
+                  {t('settings.messaging.telegram.supergroup.pair', {
+                    defaultValue: 'Pair Supergroup',
+                  })}
+                </Button>
+              )}
+            </div>
+            {supergroup && (
+              <div className="px-4 pb-2.5 pl-[52px] text-xs text-muted-foreground">
+                {t('settings.messaging.telegram.supergroup.autoTopicNote')}
+              </div>
+            )}
+          </>
+        )}
+
         {platformBindings.length > 0 && (
           <>
             <div className="mx-4 h-px bg-border/50" />
             <div className="divide-y divide-border/50">
               {platformBindings.map((binding) => {
                 const sessionMeta = sessionMetaMap.get(binding.sessionId)
-                const displayName = sessionMeta
+                const sessionLabel = sessionMeta
                   ? getSessionTitle(sessionMeta)
+                  : binding.channelName || binding.channelId
+                // Telegram topic-bound bindings render as "Session · Group › Topic"
+                // so the row shows where the messages actually go.
+                const channelLabel = binding.threadId !== undefined
+                  ? `${binding.channelName || binding.channelId} › Topic #${binding.threadId}`
                   : binding.channelName || binding.channelId
                 return (
                   <div
@@ -297,7 +378,10 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
                     className="flex items-center justify-between gap-4 px-4 py-2.5 pl-[52px]"
                   >
                     <div className="min-w-0">
-                      <div className="truncate text-sm">{displayName}</div>
+                      <div className="truncate text-sm">{sessionLabel}</div>
+                      {binding.threadId !== undefined && (
+                        <div className="truncate text-xs text-muted-foreground">{channelLabel}</div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
@@ -326,11 +410,19 @@ function PlatformRow({ platform, workspaceId }: { platform: Platform; workspaceI
       </div>
 
       {platform === 'telegram' && (
-        <TelegramConnectDialog
-          open={connectOpen}
-          onOpenChange={setConnectOpen}
-          reconfigure={reconfigure}
-        />
+        <>
+          <TelegramConnectDialog
+            open={connectOpen}
+            onOpenChange={setConnectOpen}
+            reconfigure={reconfigure}
+          />
+          <TelegramSupergroupPairingDialog
+            open={supergroupDialogOpen}
+            onOpenChange={setSupergroupDialogOpen}
+            botUsername={runtime.identity}
+            onPaired={refreshSupergroup}
+          />
+        </>
       )}
       {platform === 'whatsapp' && (
         <WhatsAppConnectDialog open={connectOpen} onOpenChange={setConnectOpen} />

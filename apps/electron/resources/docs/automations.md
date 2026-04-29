@@ -480,6 +480,34 @@ Prompt actions can specify labels that will be applied to the session they creat
 
 This creates a session with the "Scheduled" and "morning-briefing" labels applied automatically.
 
+## Telegram Topic Routing
+
+When a Telegram supergroup is paired in **Settings → Messaging → Telegram**, set
+`telegramTopic` on a matcher to route its spawned sessions into a dedicated
+forum topic. The topic is created on first use and reused thereafter.
+
+```json
+{
+  "matcher": "^urgent$",
+  "telegramTopic": "Urgent Alerts",
+  "actions": [
+    { "type": "prompt", "prompt": "Look at the urgent issue: $LABEL" }
+  ]
+}
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `telegramTopic` | string (1–128 chars) | Topic name. Created on first use, reused thereafter. Multiple matchers using the same value share one topic. |
+
+**Activation requirements** (all must hold; otherwise the field is silently ignored):
+
+- A Telegram supergroup is paired in Settings → Messaging → Telegram
+- The Telegram bot is connected
+- The bot has the **Manage Topics** admin permission
+
+Names are case-sensitive: `"Reports"` and `"reports"` create separate topics.
+
 ## Complete Examples
 
 ### Daily Weather Report
