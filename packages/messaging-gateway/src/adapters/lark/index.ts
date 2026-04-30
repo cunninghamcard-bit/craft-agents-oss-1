@@ -151,30 +151,32 @@ interface LarkClient {
   }
 }
 
+/**
+ * Flat shape after the SDK's `EventDispatcher.parse()` unwraps the v2 envelope.
+ * The dispatcher merges `{schema, header, event}` into a single object before
+ * invoking handlers, so payload fields land at the top level — there is no
+ * outer `.event` accessor.
+ */
 interface LarkMessageEvent {
-  event: {
-    sender: {
-      sender_id?: { user_id?: string; open_id?: string; union_id?: string }
-    }
-    message: {
-      message_id: string
-      chat_id: string
-      chat_type: string
-      message_type: string
-      content: string
-      create_time: string
-      mentions?: Array<{ key: string; id: { user_id?: string }; name: string }>
-    }
+  sender: {
+    sender_id?: { user_id?: string; open_id?: string; union_id?: string }
+  }
+  message: {
+    message_id: string
+    chat_id: string
+    chat_type: string
+    message_type: string
+    content: string
+    create_time: string
+    mentions?: Array<{ key: string; id: { user_id?: string }; name: string }>
   }
 }
 
 interface LarkCardActionEvent {
-  event: {
-    operator?: { user_id?: string; open_id?: string; union_id?: string }
-    open_chat_id?: string
-    action?: {
-      value?: unknown
-    }
+  operator?: { user_id?: string; open_id?: string; union_id?: string }
+  open_chat_id?: string
+  action?: {
+    value?: unknown
   }
 }
 
@@ -516,7 +518,7 @@ export class LarkAdapter implements PlatformAdapter {
 
   private async handleIncomingMessage(data: LarkMessageEvent): Promise<void> {
     if (!this.messageHandler) return
-    const { sender, message } = data.event
+    const { sender, message } = data
 
     // Visibility log: if this never fires, the bot isn't getting the event
     // from Lark. Most common causes: missing `im:message` scope, missing
@@ -573,7 +575,7 @@ export class LarkAdapter implements PlatformAdapter {
 
   private async handleAttachmentMessage(data: LarkMessageEvent): Promise<void> {
     if (!this.client || !this.messageHandler) return
-    const { sender, message } = data.event
+    const { sender, message } = data
     const senderId =
       sender.sender_id?.user_id ?? sender.sender_id?.open_id ?? sender.sender_id?.union_id ?? ''
 
@@ -692,22 +694,22 @@ export class LarkAdapter implements PlatformAdapter {
 
   private async handleCardAction(data: LarkCardActionEvent): Promise<void> {
     if (!this.buttonHandler) return
-    const value = data.event.action?.value as
+    const value = data.action?.value as
       | { buttonId?: string; messageId?: string; data?: string }
       | undefined
     if (!value?.buttonId || !value?.messageId) {
       this.log.warn('[lark] card action missing correlation ids', {
         event: 'lark_card_action_no_ids',
-        operator: data.event.operator,
+        operator: data.operator,
       })
       return
     }
-    const operator = data.event.operator
+    const operator = data.operator
     const senderId = operator?.user_id ?? operator?.open_id ?? operator?.union_id ?? ''
 
     const press: ButtonPress = {
       platform: 'lark',
-      channelId: data.event.open_chat_id ?? '',
+      channelId: data.open_chat_id ?? '',
       messageId: value.messageId,
       buttonId: value.buttonId,
       senderId,
