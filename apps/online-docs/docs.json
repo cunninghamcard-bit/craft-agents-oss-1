@@ -90,7 +90,8 @@
             "pages": [
               "messaging/overview",
               "messaging/telegram",
-              "messaging/whatsapp"
+              "messaging/whatsapp",
+              "messaging/lark"
             ]
           },
           {
