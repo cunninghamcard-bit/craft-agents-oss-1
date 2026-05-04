@@ -18,7 +18,7 @@ import {
   type BackendHostRuntimeContext,
   type PostInitResult,
 } from '@craft-agent/shared/agent/backend'
-import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars } from '@craft-agent/shared/config'
+import { getLlmConnection, getLlmConnections, getDefaultLlmConnection, getDefaultThinkingLevel, resetManagedAnthropicAuthEnvVars, resolveMidStreamBehavior } from '@craft-agent/shared/config'
 import { PrivilegedExecutionBroker } from '@craft-agent/server-core/services'
 import { isValidWorkingDirectory } from '../utils/path-validation'
 import { InitGate } from '@craft-agent/server-core/domain'
@@ -4928,18 +4928,37 @@ export class SessionManager implements ISessionManager {
     // Ensure messages are loaded before we try to add new ones
     await this.ensureMessagesLoaded(managed)
 
-    // If currently processing, redirect mid-stream. Each backend decides its strategy:
-    // - Pi: steers (injects message, events continue through existing stream)
-    // - Claude: aborts internally, session layer queues for re-send
+    // If currently processing, behavior depends on the connection's
+    // `midStreamBehavior` (resolved via {@link resolveMidStreamBehavior},
+    // defaults to provider-appropriate value):
+    //
+    // - 'steer': try to deliver into the in-flight turn. Pi steers natively;
+    //   Claude emulates via PreToolUse hook. If `redirect()` returns false
+    //   (Claude with no live query, or backend can't steer), the backend has
+    //   already called forceAbort(Redirect) and we queue for replay.
+    // - 'queue': hold the message untouched; the current turn keeps running
+    //   to natural completion; replay as a new turn afterwards. NO call to
+    //   `agent.redirect()`, NO forceAbort, NO interruption.
     if (managed.isProcessing) {
+      const connection = resolveSessionConnection(managed.llmConnection, undefined)
+      // Fallback to 'steer' when no connection is resolvable — preserves
+      // today's exact behavior (call redirect, take whatever it returns).
+      const behavior = connection ? resolveMidStreamBehavior(connection) : 'steer'
+
       const agent = managed.agent
-      const steered = agent?.redirect(message) ?? false
+      let steered = false
+      if (behavior === 'steer') {
+        steered = agent?.redirect(message) ?? false
+      }
+      // For 'queue': skip redirect entirely. The current turn is undisturbed.
 
       sessionLog.info('mid-stream send', {
         sessionId,
+        behavior,
         steered,
         queueLengthBefore: managed.messageQueue.length,
         backend: agent ? agent.constructor.name : 'none',
+        connectionSlug: connection?.slug,
       })
 
       // Create user message for UI
@@ -4953,7 +4972,8 @@ export class SessionManager implements ISessionManager {
       }
       managed.messages.push(userMessage)
 
-      // Emit to UI — 'accepted' if steered (processing now), 'queued' if aborted (will re-send)
+      // Emit to UI — 'accepted' iff a steer succeeded; 'queued' otherwise
+      // (covers both queue-direct and queue-after-abort paths).
       this.sendEvent({
         type: 'user_message',
         sessionId,
@@ -4963,8 +4983,10 @@ export class SessionManager implements ISessionManager {
       }, managed.workspace.id)
 
       if (!steered) {
-        // Backend aborted — queue message for re-send after processing stops.
-        // forceAbort(Redirect) was already called by redirect().
+        // Push for FIFO replay on next onProcessingStopped tick. Same shape
+        // for both queue-direct (current turn still running) and
+        // queue-after-abort (backend already aborted) — the replay path in
+        // processNextQueuedMessage is identical.
         managed.messageQueue.push({ message, attachments, storedAttachments, options, messageId: userMessage.id, optimisticMessageId: options?.optimisticMessageId })
         managed.wasInterrupted = true
       }
