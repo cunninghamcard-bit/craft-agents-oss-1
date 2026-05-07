@@ -13,7 +13,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from "@craft-agent/ui"
 import { PanelLeftRounded } from "../icons/PanelLeftRounded"
 import { TopBarButton } from "../ui/TopBarButton"
 import { cn } from "@/lib/utils"
-import { isMac } from "@/lib/platform"
+import { isMac, isWebUI } from "@/lib/platform"
 import { useActionLabel } from "@/actions"
 import {
   DropdownMenu,
@@ -124,7 +124,11 @@ export function TopBar({
     }
   }, [workspaces.length, activeWorkspaceId])
 
-  const menuLeftPadding = isMac ? 86 : 12
+  // Stoplight padding clears macOS traffic-light controls, which only exist
+  // in the Electron desktop window. The webui runs in a regular browser tab
+  // and has no traffic lights regardless of host OS — collapse to a normal
+  // 12px inset so the logo sits at the edge.
+  const menuLeftPadding = isMac && !isWebUI ? 86 : 12
 
   return (
     <div
@@ -134,7 +138,12 @@ export function TopBar({
       <div className="flex h-full w-full items-center justify-between gap-2">
       {/* === LEFT: Sidebar + Menu + Navigation + Workspace === */}
       {/* Keep this container draggable. Only individual interactive controls should use titlebar-no-drag. */}
-      <div className="pointer-events-auto flex min-w-0 flex-1 items-center gap-0.5" style={{ paddingLeft: menuLeftPadding }}>
+      {/* In compact mode the right slot is hidden, so we add right padding here
+          so the workspace pill doesn't run flush against the viewport edge. */}
+      <div
+        className="pointer-events-auto flex min-w-0 flex-1 items-center gap-0.5"
+        style={{ paddingLeft: menuLeftPadding, paddingRight: isCompact ? 12 : 0 }}
+      >
         <div className="flex items-center gap-0.5">
         {!isCompact && (
         <Tooltip>
@@ -159,25 +168,33 @@ export function TopBar({
         />
         </div>
 
-        {/* Back / Forward / Workspace selector (moved from center) */}
+        {/* Back / Forward / Workspace selector (moved from center).
+            In compact mode the back/forward buttons are dropped — the iOS-style
+            drill-in chevron in PanelHeader plus the browser's native back gesture
+            cover that affordance, and the freed width lets the workspace pill
+            actually fit on phone-width viewports. */}
         <div className={cn("ml-1 flex min-w-0 items-center gap-1", isCompact ? "flex-1" : "w-[clamp(220px,42vw,640px)]")}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TopBarButton onClick={onBack} disabled={!canGoBack} aria-label={t("common.back")}>
-                <Icons.ChevronLeft className="h-[18px] w-[18px] text-foreground/70" strokeWidth={1.5} />
-              </TopBarButton>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t("common.back")} {goBackHotkey}</TooltipContent>
-          </Tooltip>
+          {!isCompact && (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <TopBarButton onClick={onBack} disabled={!canGoBack} aria-label={t("common.back")}>
+                    <Icons.ChevronLeft className="h-[18px] w-[18px] text-foreground/70" strokeWidth={1.5} />
+                  </TopBarButton>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("common.back")} {goBackHotkey}</TooltipContent>
+              </Tooltip>
 
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <TopBarButton onClick={onForward} disabled={!canGoForward} aria-label={t("common.forward")}>
-                <Icons.ChevronRight className="h-[18px] w-[18px] text-foreground/70" strokeWidth={1.5} />
-              </TopBarButton>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">{t("common.forward")} {goForwardHotkey}</TooltipContent>
-          </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <TopBarButton onClick={onForward} disabled={!canGoForward} aria-label={t("common.forward")}>
+                    <Icons.ChevronRight className="h-[18px] w-[18px] text-foreground/70" strokeWidth={1.5} />
+                  </TopBarButton>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">{t("common.forward")} {goForwardHotkey}</TooltipContent>
+              </Tooltip>
+            </>
+          )}
 
           <div className="min-w-0 flex-1">
             {isCompact ? (
