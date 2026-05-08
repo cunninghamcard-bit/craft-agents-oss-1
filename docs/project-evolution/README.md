@@ -11,19 +11,14 @@ This folder contains historical project documentation retained for **legal reaso
 
 ## Local Windows development
 
-If you clone this repo on Windows, the checkout will fail on the file with `:` in its name. Configure sparse-checkout to skip this folder:
-
-```bash
-git sparse-checkout init --no-cone
-git sparse-checkout set '/*' '!/docs/project-evolution/'
-```
-
-Or clone without the folder up front:
+If you clone this repo on Windows, the checkout will fail on the file with `:` in its name. Use cone-mode sparse-checkout to skip this folder:
 
 ```bash
 git clone --no-checkout https://github.com/craft-ai-agents/craft-agents.git
 cd craft-agents
-git sparse-checkout init --no-cone
-git sparse-checkout set '/*' '!/docs/project-evolution/'
+git sparse-checkout init --cone
+git sparse-checkout set apps packages scripts workers
 git checkout main
 ```
+
+This includes all root files plus the directories listed; `docs/` (and `plans/`) are left out, so the Windows-illegal filename is never materialized.

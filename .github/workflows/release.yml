@@ -140,10 +140,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Cone mode: list dirs to include. Root files always included.
+          # Excludes docs/ (legal-archive PDFs include a Windows-illegal filename)
+          # and plans/ (not needed by build).
           sparse-checkout: |
-            /*
-            !/docs/project-evolution/
-          sparse-checkout-cone-mode: false
+            apps
+            packages
+            scripts
+            workers
 
       - name: Check if artifact exists
         id: check
