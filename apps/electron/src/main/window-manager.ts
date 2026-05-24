@@ -3,6 +3,7 @@ import { windowLog } from './logger'
 import { join } from 'path'
 import { existsSync } from 'fs'
 import { release } from 'os'
+import { getWorkspaceByNameOrId } from '@craft-agent/shared/config'
 import { RPC_CHANNELS, type WindowCloseRequestSource } from '../shared/types'
 import type { SavedWindow } from './window-state'
 
@@ -94,6 +95,35 @@ export class WindowManager {
     // Fallback: direct webContents.send (used before WS handshake completes)
     if (!window.isDestroyed() && !window.webContents.isDestroyed() && window.webContents.mainFrame) {
       window.webContents.send(channel, ...args)
+    }
+  }
+
+  /**
+   * Apply the window-title policy across all managed windows:
+   *   1 window  → app name ("Craft Agents") on the lone window
+   *   ≥2 windows → workspace name on each window, app-name fallback when the
+   *                workspace can't be resolved (e.g. onboarding window).
+   *
+   * Called after createWindow() registers a new window and after the closed
+   * handler removes one, so titles always reflect the current window count.
+   * Renderer-driven page-title-updated events are suppressed in createWindow
+   * so these setTitle() calls aren't clobbered by the static <title> tag.
+   */
+  private refreshWindowTitles(): void {
+    const defaultTitle = app.getName()
+    const showWorkspaceName = this.windows.size > 1
+    for (const { window, workspaceId } of this.windows.values()) {
+      if (window.isDestroyed()) continue
+      let title = defaultTitle
+      if (showWorkspaceName && workspaceId) {
+        try {
+          const ws = getWorkspaceByNameOrId(workspaceId)
+          if (ws?.name) title = ws.name
+        } catch (err) {
+          windowLog.warn('refreshWindowTitles: workspace lookup failed', { workspaceId, err })
+        }
+      }
+      window.setTitle(title)
     }
   }
 
@@ -207,10 +237,23 @@ export class WindowManager {
       })
     }
 
+    // The renderer's index.html ships with `<title>Craft Agents</title>`, so
+    // without this Electron auto-syncs every window's title back to that on
+    // load — clobbering the workspace-name policy applied below. Suppress the
+    // default sync so setTitle() calls from refreshWindowTitles() stick.
+    window.on('page-title-updated', (event) => {
+      event.preventDefault()
+    })
+
     // Store the window mapping BEFORE loadURL — bootstrap preload uses
     // __get-workspace-id (via sendSync) which reads this map during eval.
     const webContentsId = window.webContents.id
     this.windows.set(webContentsId, { window, workspaceId })
+
+    // Apply window-title policy now that the map size reflects this window —
+    // covers both the new window and any existing windows that should switch
+    // from app name → workspace name as the count crosses 1 → 2.
+    this.refreshWindowTitles()
 
     // Track focused mode state for persistence
     if (focused) {
@@ -400,6 +443,9 @@ export class WindowManager {
       nativeTheme.removeListener('updated', themeHandler)
       this.windows.delete(webContentsId)
       this.focusedModeWindows.delete(webContentsId)
+      // Re-apply window-title policy — surviving windows revert from workspace
+      // name back to app name when the count drops from 2 → 1.
+      this.refreshWindowTitles()
       windowLog.info(`Window closed for workspace ${workspaceId}`)
     })
 
@@ -525,6 +571,9 @@ export class WindowManager {
     if (managed) {
       const oldWorkspaceId = managed.workspaceId
       managed.workspaceId = workspaceId
+      // Re-apply window-title policy so in-window workspace switches update
+      // the titlebar immediately (relevant when ≥2 windows are open).
+      this.refreshWindowTitles()
       windowLog.info(`Updated window ${webContentsId} from workspace ${oldWorkspaceId} to ${workspaceId}`)
       return true
     }
@@ -542,6 +591,8 @@ export class WindowManager {
   registerWindow(window: BrowserWindow, workspaceId: string): void {
     const webContentsId = window.webContents.id
     this.windows.set(webContentsId, { window, workspaceId })
+    // Re-apply window-title policy after re-registration (e.g. post-refresh).
+    this.refreshWindowTitles()
     windowLog.info(`Registered window ${webContentsId} for workspace ${workspaceId}`)
   }
 
