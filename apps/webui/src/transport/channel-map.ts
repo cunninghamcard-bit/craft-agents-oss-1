@@ -87,10 +87,6 @@ export const CHANNEL_MAP = {
   getHomeDir: invoke(RPC_CHANNELS.system.HOME_DIR),
   isDebugMode: invoke(RPC_CHANNELS.system.IS_DEBUG_MODE),
 
-  // Release notes
-  getReleaseNotes: invoke(RPC_CHANNELS.releaseNotes.GET),
-  getLatestReleaseVersion: invoke(RPC_CHANNELS.releaseNotes.GET_LATEST_VERSION),
-
   // Shell operations
   openUrl: invoke(RPC_CHANNELS.shell.OPEN_URL),
   openFile: invoke(RPC_CHANNELS.shell.OPEN_FILE),

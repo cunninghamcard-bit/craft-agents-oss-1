@@ -85,10 +85,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME,
   RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED,
 
-  // releaseNotes — local app info
-  RPC_CHANNELS.releaseNotes.GET,
-  RPC_CHANNELS.releaseNotes.GET_LATEST_VERSION,
-
   // badge — local dock badge
   RPC_CHANNELS.badge.REFRESH,
   RPC_CHANNELS.badge.SET_ICON,

@@ -297,10 +297,6 @@ export interface WebAgentAPI {
   /** Check whether the server registered a handler for a given RPC channel. */
   isChannelAvailable(channel: string): boolean
 
-  // Release notes
-  getReleaseNotes(): Promise<string>
-  getLatestReleaseVersion(): Promise<string | undefined>
-
   // System warnings (startup checks)
   getSystemWarnings(): Promise<{ vcredistMissing: boolean; downloadUrl?: string }>
 

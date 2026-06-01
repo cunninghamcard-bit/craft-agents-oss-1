@@ -153,10 +153,6 @@ export function createWebApi(options: WebApiOptions): {
       window.open(`${window.location.origin}/?session=${sessionId}`, '_blank')
     },
 
-    // Release notes — serve from server via RPC.
-    getReleaseNotes: () => client.invoke('releaseNotes:get') as Promise<string>,
-    getLatestReleaseVersion: () => client.invoke('releaseNotes:getLatestVersion') as Promise<string | undefined>,
-
     // Menu events — register as keyboard shortcuts
     onMenuNewChat: () => () => {},
     onMenuOpenSettings: () => () => {},
