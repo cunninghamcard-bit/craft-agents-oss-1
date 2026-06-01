@@ -7,7 +7,7 @@
  * feature parity with Claude's session-scoped tools.
  *
  * Callback Communication:
- * Tools that need to communicate with the main Electron process (e.g., SubmitPlan
+ * Tools that need to communicate with the main WebUI process (e.g., SubmitPlan
  * triggering a plan display, OAuth triggers pausing execution) send structured
  * JSON messages to stderr with a "__CALLBACK__" prefix. The main process monitors
  * stderr and handles these callbacks.
@@ -81,7 +81,7 @@ function sendCallback(callback: CallbackMessage): void {
 
 /**
  * Credential cache entry format (matches main process format).
- * Written by Electron main process, read by this server.
+ * Written by WebUI main process, read by this server.
  */
 interface CredentialCacheEntry {
   value: string;
@@ -250,7 +250,7 @@ function createCodexContext(config: SessionConfig): SessionToolContext {
     },
 
     // Note: saveSourceConfig, validators, renderMermaid
-    // are not available in Codex context (require Electron internals)
+    // are not available in Codex context (require WebUI internals)
   };
 }
 

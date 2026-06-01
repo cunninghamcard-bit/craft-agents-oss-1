@@ -8,7 +8,7 @@
  * fires.
  *
  * Tokens expire after `ttlMs` (default 30 min) — stale buttons resolve to
- * `null` and the gateway replies "plan expired, retry from the desktop app."
+ * `null` and the gateway replies "plan expired, retry from the web app."
  *
  * Revocation is keyed by `bindingId`, not `sessionId`. A session with two
  * Telegram bindings gets two *independent* live tokens — one per chat —

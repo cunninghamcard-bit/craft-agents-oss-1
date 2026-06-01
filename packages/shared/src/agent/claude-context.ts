@@ -2,7 +2,7 @@
  * Claude Context Factory
  *
  * Creates a SessionToolContext implementation for Claude with full access
- * to Electron internals, credential managers, MCP validation, etc.
+ * to WebUI internals, credential managers, MCP validation, etc.
  *
  * This enables the shared handlers in session-tools-core to work with
  * Claude's full feature set.

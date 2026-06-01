@@ -33,9 +33,7 @@ import {
 } from '@craft-agent/session-tools-core';
 import { createLLMTool, type LLMQueryRequest, type LLMQueryResult } from './llm-tool.ts';
 import { createSpawnSessionTool, type SpawnSessionFn } from './spawn-session-tool.ts';
-import { createBrowserTools, type BrowserPaneFns } from './browser-tools.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
-import { getBrowserToolEnabled } from '../config/storage.ts';
 
 // Re-export types for backward compatibility
 export type {
@@ -52,9 +50,6 @@ export type {
   SlackService,
   MicrosoftService,
 } from '@craft-agent/session-tools-core';
-
-// Re-export browser pane types for session manager wiring
-export type { BrowserPaneFns } from './browser-tools.ts';
 
 // ============================================================
 // Session-Scoped Tool Callbacks (re-exported from dedicated registry module)
@@ -77,7 +72,6 @@ import { attachSessionSelfManagementBindings } from './session-self-management-b
 export const CLAUDE_BACKEND_SESSION_TOOL_NAMES = new Set<string>([
   'call_llm',
   'spawn_session',
-  'browser_tool',
 ]);
 
 /**
@@ -170,10 +164,7 @@ function convertResult(result: ToolResult): { content: Array<{ type: 'text'; tex
 // "Already connected to a transport". Creating a fresh server wrapper per query avoids this.
 const sessionToolsCache = new Map<string, ReturnType<typeof tool>[]>();
 
-/**
- * Invalidate ALL session tool caches (e.g., when a global setting like browserToolEnabled changes).
- * This forces tools to be rebuilt on the next message for every session.
- */
+/** Invalidate ALL session tool caches. */
 export function invalidateAllSessionToolsCaches(): void {
   sessionToolsCache.clear();
 }
@@ -288,21 +279,6 @@ export function getSessionScopedTools(
         },
       }),
     );
-
-    // Add browser_* tools — backend-specific (requires BrowserPaneManager in Electron)
-    // Gated by the "Built-in browser" setting so users with external browser tools
-    // (Playwright, Puppeteer, etc.) can disable the built-in one.
-    if (getBrowserToolEnabled()) {
-      tools.push(
-        ...createBrowserTools({
-          sessionId,
-          getBrowserPaneFns: () => {
-            const callbacks = getSessionScopedToolCallbacks(sessionId);
-            return callbacks?.browserPaneFns;
-          },
-        }),
-      );
-    }
 
     sessionToolsCache.set(cacheKey, tools);
   }

@@ -122,7 +122,7 @@ export type PlanMessageRecorder = (
  * just been posted. Mirrors {@link PlanMessageRecorder}; the gateway uses
  * this to track live prompts so it can (a) idempotently claim the prompt on
  * tap, and (b) clear the inline keyboard when the agent moves on (resolved
- * from any channel — desktop, MCP, etc.).
+ * from any channel — WebUI, MCP, etc.).
  */
 export type PermissionMessageRecorder = (
   binding: ChannelBinding,
@@ -509,7 +509,7 @@ export class Renderer {
       await adapter.sendText(
         binding.channelId,
         `⏸ Permission required: ${request.description}
-Approve it in the desktop app to continue.`,
+Approve it in the web app to continue.`,
         bindingOpts(binding),
       )
       return
@@ -527,7 +527,7 @@ Approve it in the desktop app to continue.`,
       await adapter.sendText(
         binding.channelId,
         `⏸ Permission required: ${request.description}
-Approve in the desktop app to continue.`,
+Approve in the web app to continue.`,
         bindingOpts(binding),
       )
     }
@@ -540,7 +540,7 @@ Approve in the desktop app to continue.`,
     if (binding.platform !== 'whatsapp') return
     await adapter.sendText(
       binding.channelId,
-      '🔐 Credentials are required to continue. Open the desktop app to review and submit them securely.',
+      '🔐 Credentials are required to continue. Open the web app to review and submit them securely.',
       bindingOpts(binding),
     )
   }
@@ -554,7 +554,7 @@ Approve in the desktop app to continue.`,
     if (binding.platform === 'whatsapp') {
       await adapter.sendText(
         binding.channelId,
-        '📝 A plan is ready for review. Open the desktop app to inspect and approve it.',
+        '📝 A plan is ready for review. Open the web app to inspect and approve it.',
         bindingOpts(binding),
       )
       return
@@ -570,7 +570,7 @@ Approve in the desktop app to continue.`,
     if (!this.planTokens) {
       await adapter.sendText(
         binding.channelId,
-        '📝 A plan is ready for review. Open the desktop app to inspect and approve it.',
+        '📝 A plan is ready for review. Open the web app to inspect and approve it.',
         bindingOpts(binding),
       )
       return
@@ -594,7 +594,7 @@ Approve in the desktop app to continue.`,
     const bodyText = fitsInline
       ? `${header}\n\n${planContent}`
       : planContent.length === 0
-        ? `${header}\n\nOpen the desktop app to see the plan, or use the buttons below to accept.`
+        ? `${header}\n\nOpen the web app to see the plan, or use the buttons below to accept.`
         : `${header}\n\n${firstLines(planContent, 15)}\n\n…full plan attached below.`
 
     try {
@@ -616,7 +616,7 @@ Approve in the desktop app to continue.`,
         binding.channelId,
         `📝 A plan is ready for review (couldn't render inline: ${
           err instanceof Error ? err.message : 'unknown error'
-        }). Open the desktop app to approve it.`,
+        }). Open the web app to approve it.`,
         bindingOpts(binding),
       )
     }

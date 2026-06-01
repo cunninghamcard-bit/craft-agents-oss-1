@@ -2,7 +2,7 @@
  * Attachment helpers for displaying file type icons and labels
  *
  * Shared utilities for rendering file attachments in user messages.
- * Used by both Electron app and web viewer.
+ * Used by both WebUI app and web viewer.
  */
 
 import { File, Image as ImageIcon } from 'lucide-react'

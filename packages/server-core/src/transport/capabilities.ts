@@ -4,7 +4,6 @@
  * See docs/adr-transport-locality.md for the locality boundary definition.
  */
 
-import type { BrowserCapabilityRequest } from './browser-capability'
 import type { RpcServer } from './types'
 
 /** Capability: open a URL in the client's default browser. */
@@ -22,17 +21,13 @@ export const CLIENT_CONFIRM_DIALOG = 'client:confirmDialog'
 /** Capability: show a native file/folder picker on the client. */
 export const CLIENT_OPEN_FILE_DIALOG = 'client:openFileDialog'
 
-/** Capability: drive a local `BrowserPaneManager` instance for a remote agent. */
-export const CLIENT_BROWSER_INVOKE = 'client:browser:invoke'
-
-/** All capabilities a local Electron client advertises on handshake. */
+/** All capabilities a web client can advertise on handshake. */
 export const LOCAL_CLIENT_CAPABILITIES: readonly string[] = [
   CLIENT_OPEN_EXTERNAL,
   CLIENT_OPEN_PATH,
   CLIENT_SHOW_IN_FOLDER,
   CLIENT_CONFIRM_DIALOG,
   CLIENT_OPEN_FILE_DIALOG,
-  CLIENT_BROWSER_INVOKE,
 ]
 
 // ---------------------------------------------------------------------------
@@ -63,7 +58,7 @@ export async function requestClientOpenExternal(
 
 /**
  * Ask the client to open a file with the OS default application.
- * Equivalent to Electron's `shell.openPath()`.
+ * Equivalent to Web's `shell.openPath()`.
  */
 export async function requestClientOpenPath(
   server: RpcServer,
@@ -81,7 +76,7 @@ export async function requestClientOpenPath(
 
 /**
  * Ask the client to reveal a file in Finder / Explorer.
- * Equivalent to Electron's `shell.showItemInFolder()`.
+ * Equivalent to Web's `shell.showItemInFolder()`.
  */
 export async function requestClientShowInFolder(
   server: RpcServer,
@@ -91,7 +86,7 @@ export async function requestClientShowInFolder(
   await server.invokeClient(clientId, CLIENT_SHOW_IN_FOLDER, path)
 }
 
-/** Spec for a confirmation dialog (maps to Electron's MessageBoxOptions). */
+/** Spec for a confirmation dialog (maps to Web's MessageBoxOptions). */
 export interface ConfirmDialogSpec {
   type?: 'none' | 'info' | 'warning' | 'error' | 'question'
   title: string
@@ -114,7 +109,7 @@ export async function requestClientConfirmDialog(
   return await server.invokeClient(clientId, CLIENT_CONFIRM_DIALOG, spec)
 }
 
-/** Spec for a file/folder picker dialog (maps to Electron's OpenDialogOptions). */
+/** Spec for a file/folder picker dialog (maps to Web's OpenDialogOptions). */
 export interface FileDialogSpec {
   title?: string
   defaultPath?: string
@@ -132,18 +127,4 @@ export async function requestClientOpenFileDialog(
   spec: FileDialogSpec,
 ): Promise<{ canceled: boolean; filePaths: string[] }> {
   return await server.invokeClient(clientId, CLIENT_OPEN_FILE_DIALOG, spec)
-}
-
-/**
- * Ask the client to invoke a `BrowserPaneManager` method.
- *
- * Errors propagate with `.code` preserved (see transport error-code preservation
- * in `client.ts` / `server.ts`). Callers can branch on `(err as any).code`.
- */
-export async function requestClientBrowserInvoke<T>(
-  server: RpcServer,
-  clientId: string,
-  req: BrowserCapabilityRequest,
-): Promise<T> {
-  return server.invokeClient(clientId, CLIENT_BROWSER_INVOKE, req) as Promise<T>
 }

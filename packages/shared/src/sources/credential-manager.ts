@@ -405,7 +405,7 @@ export class SourceCredentialManager {
    * Prepare an OAuth flow for a source (server-side).
    *
    * Generates PKCE, state, and auth URL without opening a browser or starting
-   * a callback server. The caller provides either callbackPort (Electron local
+   * a callback server. The caller provides either callbackPort (Web local
    * server) or callbackUrl (WebUI server endpoint) for the redirect URI.
    *
    * Returns a PreparedOAuthFlow that should be stored in the flow store
@@ -718,7 +718,7 @@ export class SourceCredentialManager {
       const options: GoogleOAuthOptions = {
         service,
         scopes,
-        appType: 'electron',
+        appType: 'web',
         // Pass user-provided OAuth credentials from source config (if available)
         clientId: api?.googleOAuthClientId,
         clientSecret: api?.googleOAuthClientSecret,
@@ -788,7 +788,7 @@ export class SourceCredentialManager {
       const options: SlackOAuthOptions = {
         service,
         userScopes,
-        appType: 'electron',
+        appType: 'web',
         sessionContext,
       };
 
@@ -860,7 +860,7 @@ export class SourceCredentialManager {
       const options: MicrosoftOAuthOptions = {
         service,
         scopes,
-        appType: 'electron',
+        appType: 'web',
         sessionContext,
       };
 
@@ -1167,9 +1167,9 @@ export class SourceCredentialManager {
       return { success: false, error: 'Source missing api.oauth config block' };
     }
 
-    // CLI generic OAuth is not yet implemented — the desktop app handles this
+    // CLI generic OAuth is not yet implemented — the WebUI flow handles this
     // through the source_oauth_trigger → prepareOAuth → exchangeAndStore pipeline.
-    return { success: false, error: 'Generic OAuth CLI flow not supported — use the desktop app or source_oauth_trigger tool' };
+    return { success: false, error: 'Generic OAuth CLI flow not supported — use the WebUI or source_oauth_trigger tool' };
   }
 
   /**

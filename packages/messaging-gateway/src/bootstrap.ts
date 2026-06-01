@@ -1,9 +1,7 @@
 /**
  * createMessagingBootstrap — composable messaging wiring shared by every host.
  *
- * Both hosts (Electron main and the standalone Bun server) MUST go through this
- * helper. Deleting either call site breaks the typecheck of the other — that is
- * the only guardrail keeping the two paths from diverging. Do not construct
+ * Every host must go through this helper. Do not construct
  * MessagingGatewayRegistry directly from a host.
  *
  * Shape:
@@ -37,10 +35,8 @@ export interface MessagingBootstrapOptions {
     /** Absolute path to the bundled worker.cjs. */
     workerEntry: string
     /**
-     * Node binary to spawn. Required for hosts that don't run on Node themselves
-     * (i.e. Bun). Defaults to `process.execPath` inside WhatsAppAdapter — correct
-     * for Electron (which re-enters as Node via ELECTRON_RUN_AS_NODE) but wrong
-     * for Bun, so the Bun host must pass `'node'` or an explicit path.
+     * Node binary to spawn. Required because the server runs on Bun while the
+     * WhatsApp worker must run on Node.
      */
     nodeBin?: string
     pairingMode?: 'qr' | 'code'

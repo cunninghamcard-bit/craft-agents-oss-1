@@ -6,7 +6,7 @@
  * and automatic reconnection with exponential backoff.
  *
  * Extracted to server-core so any package (subprocesses, services, bridges)
- * can act as an RPC client without depending on the Electron app layer.
+ * can act as an RPC client without depending on the Web app layer.
  */
 
 import {
@@ -82,7 +82,7 @@ export interface TransportConnectionState {
 export interface WsRpcClientOptions {
   /** Workspace ID sent on handshake. */
   workspaceId?: string
-  /** Electron webContents.id, sent on handshake for local clients. */
+  /** Web webContents.id, sent on handshake for local clients. */
   webContentsId?: number
   /** Bearer token for remote auth. */
   token?: string
@@ -331,7 +331,7 @@ export class WsRpcClient implements RpcClient {
     const needsTlsOptions = url.startsWith('wss://') && !this.tlsRejectUnauthorized
 
     if (needsTlsOptions && typeof process !== 'undefined' && process.versions?.node) {
-      // Node.js / Electron main process — use `ws` library for TLS options
+      // Node.js / Web main process — use `ws` library for TLS options
       try {
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const { WebSocket: WsWebSocket } = require('ws') as typeof import('ws')

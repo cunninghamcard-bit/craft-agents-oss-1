@@ -245,7 +245,7 @@ export interface ToolMetadata {
  * Session-scoped, file-based metadata store for cross-process sharing.
  *
  * The interceptor runs in the SDK subprocess (via --preload / --require),
- * while tool-matching.ts / event-adapter.ts run in the Electron main process.
+ * while tool-matching.ts / event-adapter.ts run in the WebUI main process.
  * These are separate OS processes — globalThis, module-level Maps, etc. are NOT shared.
  *
  * Solution: a single `tool-metadata.json` file in the session directory.

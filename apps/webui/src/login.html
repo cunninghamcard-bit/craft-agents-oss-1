@@ -226,9 +226,11 @@
 <body>
   <div class="card">
     <h1>Craft Agents</h1>
-    <p class="subtitle">Enter your server token to continue</p>
+    <p class="subtitle" id="subtitle">Use Feishu to continue</p>
 
-    <form id="login-form">
+    <button type="button" id="feishu-btn" style="display:none">Continue with Feishu</button>
+
+    <form id="login-form" style="display:none">
       <label for="password">Server Token</label>
       <input
         id="password"
@@ -239,7 +241,7 @@
         autofocus
         required
       >
-      <button type="submit" id="submit-btn">Sign In</button>
+      <button type="submit" id="submit-btn" class="secondary">Sign In</button>
     </form>
 
     <div id="error" class="error"></div>
@@ -249,10 +251,132 @@
     const form = document.getElementById('login-form');
     const errorEl = document.getElementById('error');
     const submitBtn = document.getElementById('submit-btn');
+    const feishuBtn = document.getElementById('feishu-btn');
+    const subtitle = document.getElementById('subtitle');
+
+    let feishuConfig = null;
+
+    function showError(message) {
+      errorEl.textContent = message;
+      errorEl.classList.add('visible');
+    }
+
+    function clearError() {
+      errorEl.classList.remove('visible');
+    }
+
+    function loadScript(src) {
+      return new Promise((resolve, reject) => {
+        const existing = document.querySelector(`script[src="${src}"]`);
+        if (existing) {
+          existing.addEventListener('load', resolve, { once: true });
+          existing.addEventListener('error', reject, { once: true });
+          return;
+        }
+        const script = document.createElement('script');
+        script.src = src;
+        script.async = true;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Failed to load Feishu JS SDK'));
+        document.head.appendChild(script);
+      });
+    }
+
+    async function ensureFeishuSdk(domain) {
+      if (window.tt?.requestAccess) return;
+      const src = domain === 'lark'
+        ? 'https://lf16-lark-web.ibytedtos.com/obj/lark-web-op/h5-js-sdk-1.5.42.js'
+        : 'https://lf1-cdn-tos.bytegoofy.com/obj/goofy/lark/op/h5-js-sdk-1.5.42.js';
+      await loadScript(src);
+    }
+
+    function requestFeishuCode(appId) {
+      return new Promise((resolve, reject) => {
+        const run = () => {
+          const tt = window.tt;
+          if (!tt?.requestAccess) {
+            reject(new Error('Feishu login is only available inside the Feishu/Lark client.'));
+            return;
+          }
+          tt.requestAccess({
+            appID: appId,
+            scopeList: [],
+            success: (res) => {
+              if (res?.code) resolve(res.code);
+              else reject(new Error('Feishu did not return an authorization code.'));
+            },
+            fail: (err) => {
+              reject(new Error(err?.errMsg || err?.message || 'Feishu authorization failed.'));
+            },
+          });
+        };
+
+        if (window.h5sdk?.ready) {
+          window.h5sdk.ready(run);
+          window.h5sdk.error((err) => reject(new Error(err?.errMsg || err?.message || 'Feishu JS SDK is not ready.')));
+        } else {
+          run();
+        }
+      });
+    }
+
+    async function signInWithFeishu() {
+      if (!feishuConfig?.enabled || !feishuConfig.appId) return;
+      clearError();
+      feishuBtn.disabled = true;
+      feishuBtn.textContent = 'Signing in with Feishu...';
+
+      try {
+        await ensureFeishuSdk(feishuConfig.domain);
+        const code = await requestFeishuCode(feishuConfig.appId);
+        const res = await fetch('/api/auth/feishu/session', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code }),
+        });
+        if (res.ok) {
+          window.location.href = '/';
+          return;
+        }
+        const data = await res.json().catch(() => ({}));
+        showError(data.error || 'Feishu authentication failed');
+      } catch (err) {
+        showError(err instanceof Error ? err.message : 'Feishu authentication failed');
+      } finally {
+        feishuBtn.disabled = false;
+        feishuBtn.textContent = feishuConfig.domain === 'lark' ? 'Continue with Lark' : 'Continue with Feishu';
+      }
+    }
+
+    async function loadAuthConfig() {
+      try {
+        const res = await fetch('/api/auth/feishu/config', { credentials: 'same-origin' });
+        feishuConfig = await res.json();
+      } catch {
+        feishuConfig = { enabled: false, passwordFallback: true };
+      }
+
+      if (feishuConfig.enabled) {
+        feishuBtn.style.display = '';
+        feishuBtn.textContent = feishuConfig.domain === 'lark' ? 'Continue with Lark' : 'Continue with Feishu';
+        form.style.display = feishuConfig.passwordFallback ? '' : 'none';
+        subtitle.textContent = feishuConfig.domain === 'lark'
+          ? 'Use Lark to continue'
+          : 'Use Feishu to continue';
+        void signInWithFeishu();
+      } else {
+        form.style.display = '';
+        subtitle.textContent = 'Enter your server token to continue';
+      }
+    }
+
+    feishuBtn.addEventListener('click', () => {
+      void signInWithFeishu();
+    });
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      errorEl.classList.remove('visible');
+      clearError();
       submitBtn.disabled = true;
       submitBtn.textContent = 'Signing in...';
 
@@ -271,16 +395,16 @@
         }
 
         const data = await res.json().catch(() => ({}));
-        errorEl.textContent = data.error || 'Authentication failed';
-        errorEl.classList.add('visible');
+        showError(data.error || 'Authentication failed');
       } catch (err) {
-        errorEl.textContent = 'Network error — is the server running?';
-        errorEl.classList.add('visible');
+        showError('Network error — is the server running?');
       } finally {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Sign In';
       }
     });
+
+    loadAuthConfig();
   </script>
 </body>
 </html>

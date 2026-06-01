@@ -2,7 +2,7 @@
  * Exhaustive channel routing table for hybrid local/remote transport.
  *
  * Every RPC channel must belong to exactly one of two sets:
- * - LOCAL_ONLY: Always runs on the local Electron server, never proxied.
+ * - LOCAL_ONLY: Always runs on the local Web server, never proxied.
  * - REMOTE_ELIGIBLE: Runs on whichever server owns the workspace.
  *
  * An exhaustiveness test ensures new channels fail CI until classified.
@@ -11,7 +11,7 @@
 import { RPC_CHANNELS } from './channels'
 
 // ---------------------------------------------------------------------------
-// LOCAL_ONLY — fundamentally requires local OS / Electron
+// LOCAL_ONLY — fundamentally requires local OS / Web
 // ---------------------------------------------------------------------------
 
 export const LOCAL_ONLY_CHANNELS = new Set<string>([
@@ -24,7 +24,7 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.workspaces.CHECK_SLUG,
   RPC_CHANNELS.workspaces.UPDATE_REMOTE,
 
-  // window — Electron window management
+  // window — Web window management
   RPC_CHANNELS.window.GET_WORKSPACE,
   RPC_CHANNELS.window.GET_MODE,
   RPC_CHANNELS.window.OPEN_WORKSPACE,
@@ -84,15 +84,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES,
   RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME,
   RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED,
-
-  // update — local auto-update
-  RPC_CHANNELS.update.CHECK,
-  RPC_CHANNELS.update.GET_INFO,
-  RPC_CHANNELS.update.INSTALL,
-  RPC_CHANNELS.update.DISMISS,
-  RPC_CHANNELS.update.GET_DISMISSED,
-  RPC_CHANNELS.update.AVAILABLE,
-  RPC_CHANNELS.update.DOWNLOAD_PROGRESS,
 
   // releaseNotes — local app info
   RPC_CHANNELS.releaseNotes.GET,
@@ -161,32 +152,6 @@ export const LOCAL_ONLY_CHANNELS = new Set<string>([
   RPC_CHANNELS.rtk.SET_ENABLED,
   RPC_CHANNELS.rtk.GET_STATUS,
   RPC_CHANNELS.rtk.GET_GAIN,
-
-  // tools — local tool settings
-  RPC_CHANNELS.tools.GET_BROWSER_TOOL_ENABLED,
-  RPC_CHANNELS.tools.SET_BROWSER_TOOL_ENABLED,
-
-  // browserPane — Electron BrowserView
-  RPC_CHANNELS.browserPane.CREATE,
-  RPC_CHANNELS.browserPane.DESTROY,
-  RPC_CHANNELS.browserPane.LIST,
-  RPC_CHANNELS.browserPane.NAVIGATE,
-  RPC_CHANNELS.browserPane.GO_BACK,
-  RPC_CHANNELS.browserPane.GO_FORWARD,
-  RPC_CHANNELS.browserPane.RELOAD,
-  RPC_CHANNELS.browserPane.STOP,
-  RPC_CHANNELS.browserPane.FOCUS,
-  RPC_CHANNELS.browserPane.SNAPSHOT,
-  RPC_CHANNELS.browserPane.CLICK,
-  RPC_CHANNELS.browserPane.FILL,
-  RPC_CHANNELS.browserPane.SELECT,
-  RPC_CHANNELS.browserPane.SCREENSHOT,
-  RPC_CHANNELS.browserPane.EVALUATE,
-  RPC_CHANNELS.browserPane.SCROLL,
-  RPC_CHANNELS.browserPane.LAUNCH,
-  RPC_CHANNELS.browserPane.STATE_CHANGED,
-  RPC_CHANNELS.browserPane.REMOVED,
-  RPC_CHANNELS.browserPane.INTERACTED,
 
   // gitbash — Windows-specific local
   RPC_CHANNELS.gitbash.CHECK,

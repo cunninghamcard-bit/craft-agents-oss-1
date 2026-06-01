@@ -1,8 +1,8 @@
 /**
  * Web UI App — thin wrapper that:
  * 1. Fetches WS config from the server
- * 2. Creates the web API adapter + sets window.electronAPI
- * 3. Delegates to the Electron renderer's App component
+ * 2. Creates the web API adapter + sets window.webAgentAPI
+ * 3. Delegates to the shared web renderer App component
  *
  * Mobile responsiveness is handled by container queries and isAutoCompact
  * in the shared renderer components — no webui-specific layout hacks needed.
@@ -11,12 +11,12 @@
 import React, { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import { useTranslation } from 'react-i18next'
 import { createWebApi } from './adapter/web-api'
-import type { WsRpcClient } from '../../electron/src/transport/client'
+import type { WsRpcClient } from './transport/client'
 
-// Lazy-load the Electron App after window.electronAPI is set up.
-// This prevents any Electron component from accessing window.electronAPI
+// Lazy-load the renderer App after window.webAgentAPI is set up.
+// This prevents any component from accessing window.webAgentAPI
 // before the web adapter is ready.
-const ElectronApp = lazy(() => import('@/App'))
+const RendererApp = lazy(() => import('@/App'))
 
 type Phase = 'loading' | 'error' | 'ready'
 
@@ -112,8 +112,8 @@ export default function App() {
       const { api, client } = createWebApi({ serverUrl: wsUrl, workspaceId })
       clientRef.current = client
 
-      // 4. Set window.electronAPI — must happen before any Electron component mounts
-      ;(window as any).electronAPI = api
+      // 4. Set window.webAgentAPI — must happen before the renderer mounts
+      ;(window as any).webAgentAPI = api
 
       // 5. Connect the WebSocket client
       client.connect()
@@ -143,7 +143,7 @@ export default function App() {
 
   return (
     <Suspense fallback={<LoadingScreen />}>
-      <ElectronApp />
+      <RendererApp />
     </Suspense>
   )
 }

@@ -9,42 +9,13 @@ function isCliJsonOnlyMode(): boolean {
 /**
  * Runtime environment detection
  */
-type Environment = 'electron-main' | 'electron-renderer' | 'cli';
+type Environment = 'browser' | 'cli';
 
 function detectEnvironment(): Environment {
-  // No process object means we're in a browser/renderer context
   if (typeof process === 'undefined') {
-    return 'electron-renderer';
+    return 'browser';
   }
-  // Electron main process
-  if ((process as any).type === 'browser') {
-    return 'electron-main';
-  }
-  // Electron renderer process (with nodeIntegration)
-  if ((process as any).type === 'renderer') {
-    return 'electron-renderer';
-  }
-  // Default: CLI/scripts
   return 'cli';
-}
-
-let electronLog: unknown | null = null;
-let electronLogChecked = false;
-
-function getElectronLog(): { info?: (message: string) => void } | null {
-  if (electronLogChecked) {
-    return (electronLog as { info?: (message: string) => void } | null) ?? null;
-  }
-  electronLogChecked = true;
-  try {
-    // Optional dependency - only available in Electron main process.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const loaded = require('electron-log/main');
-    electronLog = loaded?.default ?? loaded ?? null;
-  } catch {
-    electronLog = null;
-  }
-  return (electronLog as { info?: (message: string) => void } | null) ?? null;
 }
 
 /**
@@ -98,23 +69,14 @@ function formatMessage(scope: string | undefined, message: string, args: unknown
 /**
  * Output log based on environment.
  *
- * All environments output to console.error (or console.log for renderer).
- * In Electron main process, logs also go to electron-log via the main process logger.
+ * Browser output uses console.log; server/CLI output uses stderr to avoid stdout interference.
  */
 function output(formatted: string): void {
   const env = detectEnvironment();
 
-  // Mirror debug logs into electron-log when available so they appear in main.log.
-  if (env === 'electron-main') {
-    const log = getElectronLog();
-    log?.info?.(formatted.trim());
-  }
-
-  if (env === 'electron-renderer') {
-    // Use console.log in renderer for DevTools
+  if (env === 'browser') {
     console.log(formatted.trim());
   } else if (typeof process !== 'undefined' && process.stderr) {
-    // Use stderr in main/cli to avoid stdout interference
     process.stderr.write(formatted);
   } else {
     // Fallback to console for unexpected environments
@@ -127,9 +89,8 @@ function output(formatted: string): void {
  * Only logs when debug mode is enabled via --debug flag.
  *
  * Output routing:
- * - Electron main: console + file
- * - Electron renderer: console (DevTools)
- * - CLI/scripts: console only
+ * - Browser: console
+ * - Server/CLI/scripts: stderr
  *
  * @example
  * debug('Processing request')

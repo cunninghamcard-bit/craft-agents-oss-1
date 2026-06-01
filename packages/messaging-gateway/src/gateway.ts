@@ -75,7 +75,7 @@ export interface GatewayOptions {
    * an event to the renderer. Mirrors `onBindingChanged`.
    */
   onPendingChanged?: () => void
-  /** Optional logger — defaults to console. Pass a structured host logger in Electron. */
+  /** Optional logger — defaults to console. Pass a structured host logger in WebUI. */
   logger?: MessagingLogger
 }
 
@@ -98,7 +98,7 @@ interface PlanMessageRecord {
  *     anything visible, so a second tap on the same prompt finds nothing and
  *     silently no-ops. Stops the duplicate "✅ Allowed / ❌ Denied" flood.
  *  2. Stale-prompt cleanup — when the agent moves past the permission
- *     (resolved from any channel — desktop, MCP, etc.), `onSessionEvent`
+ *     (resolved from any channel — WebUI, MCP, etc.), `onSessionEvent`
  *     sweeps the entry and clears the inline keyboard so the user can't
  *     even produce a callback by tapping a stale button.
  */
@@ -357,7 +357,7 @@ export class MessagingGateway {
 
     // Drop stale permission prompts for this session. The agent halts while
     // a permission is pending, so any non-permission_request event implies
-    // the prior prompt was resolved (from the desktop, an MCP allow-list,
+    // the prior prompt was resolved (from the WebUI, an MCP allow-list,
     // remember-window auto-approval, etc.). Without this sweep the inline
     // keyboard stays live in Telegram and users keep tapping stale buttons,
     // which is the visible side of #726.
@@ -482,7 +482,7 @@ export class MessagingGateway {
         })
         await adapter.sendText(
           press.channelId,
-          '⏸ Permission required. Approve it in the desktop app to continue.',
+          '⏸ Permission required. Approve it in the web app to continue.',
           pressOpts,
         )
         return
@@ -584,7 +584,7 @@ export class MessagingGateway {
     if (!entry) {
       await adapter.sendText(
         press.channelId,
-        '⚠️ This plan has expired. Retry from the desktop app.',
+        '⚠️ This plan has expired. Retry from the web app.',
         pressOpts,
       )
       return
@@ -611,7 +611,7 @@ export class MessagingGateway {
         })
         await adapter.sendText(
           press.channelId,
-          '❌ Couldn\'t accept the plan. Check the desktop app.',
+          '❌ Couldn\'t accept the plan. Check the web app.',
           pressOpts,
         )
       }
@@ -653,7 +653,7 @@ export class MessagingGateway {
       })
       await adapter.sendText(
         press.channelId,
-        '❌ Couldn\'t start compaction. Check the desktop app.',
+        '❌ Couldn\'t start compaction. Check the web app.',
         pressOpts,
       )
     }
@@ -788,7 +788,7 @@ export class MessagingGateway {
       if (adapter?.isConnected()) {
         await adapter.sendText(
           entry.channelId,
-          '❌ Compaction finished but the plan couldn\'t execute. Check the desktop app.',
+          '❌ Compaction finished but the plan couldn\'t execute. Check the web app.',
           opts,
         )
       }

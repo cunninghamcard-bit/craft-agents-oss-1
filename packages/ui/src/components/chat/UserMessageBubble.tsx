@@ -8,7 +8,7 @@
  * - Markdown rendering for links and code
  * - Optional file attachments with thumbnails
  * - Content badges for @mentions (sources, skills)
- * - Pending/queued states (Electron only)
+ * - Pending/queued states (WebUI only)
  */
 
 import { useEffect, useRef, useState, type ReactNode } from 'react'

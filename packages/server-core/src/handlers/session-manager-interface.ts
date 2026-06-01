@@ -2,8 +2,7 @@
  * ISessionManager — abstract interface for the session lifecycle engine.
  *
  * Handler code in server-core programs against this interface;
- * concrete implementations (Electron SessionManager, headless, etc.)
- * satisfy it at runtime.
+ * concrete web/headless implementations satisfy it at runtime.
  */
 
 import type { Workspace, WorkspaceInfo, ActiveSessionInfo } from '@craft-agent/core/types'
@@ -87,7 +86,6 @@ export interface ISessionManager {
     existingMessageId?: string,
     _isAuthRetry?: boolean,
     onAck?: (messageId: string) => void,
-    rpcContext?: { callerClientId?: string },
   ): Promise<void>
   cancelProcessing(sessionId: string, silent?: boolean): Promise<void>
   killShell(sessionId: string, shellId: string): Promise<{ success: boolean; error?: string }>

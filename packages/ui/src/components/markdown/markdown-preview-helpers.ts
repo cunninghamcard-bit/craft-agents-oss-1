@@ -3,7 +3,7 @@
  *
  * Extracted so we can unit-test the JSON-spec → preview-items normalization
  * without spinning up React. Component DOM behavior is covered by manual
- * Electron smoke (see plan).
+ * WebUI smoke (see plan).
  */
 
 export interface MarkdownPreviewItem {

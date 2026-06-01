@@ -2,7 +2,7 @@
  * responsive.ts — Thin mobile detection for webui
  *
  * Layout responsiveness is now handled by container queries and isAutoCompact
- * in the shared electron renderer components. This module only provides
+ * in the shared webui renderer components. This module only provides
  * viewport-level mobile detection for the few places that need it
  * (touch events, virtual keyboard handling, safe-area insets).
  */

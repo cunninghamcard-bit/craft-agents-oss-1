@@ -2,7 +2,7 @@
  * SessionViewer - Read-only session transcript viewer
  *
  * Platform-agnostic component for viewing session transcripts.
- * Used by the web viewer app. For interactive chat, Electron uses ChatDisplay.
+ * Used by the web viewer app. For interactive chat, WebUI uses ChatDisplay.
  *
  * Renders a session's messages as turn cards with gradient fade at top/bottom.
  */
@@ -28,7 +28,7 @@ export type SessionViewerMode = 'interactive' | 'readonly'
 export interface SessionViewerProps {
   /** Session data to display */
   session: StoredSession
-  /** View mode - 'readonly' for web viewer, 'interactive' for Electron */
+  /** View mode - 'readonly' for web viewer, 'interactive' for WebUI */
   mode?: SessionViewerMode
   /** Platform-specific actions (file opening, URL handling, etc.) */
   platformActions?: PlatformActions

@@ -10,8 +10,6 @@ import { RPC_CHANNELS } from './channels'
 import type {
   SessionEvent,
   UnreadSummary,
-  UpdateInfo,
-  BrowserInstanceInfo,
   DeepLinkNavigation,
 } from './dto'
 
@@ -36,10 +34,6 @@ export interface BroadcastEventMap {
   [RPC_CHANNELS.theme.PREFERENCES_CHANGED]: [preferences: { mode: string; colorTheme: string; font: string }]
   [RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED]: [data: { workspaceId: string; themeId: string | null }]
 
-  // Update broadcasts (global)
-  [RPC_CHANNELS.update.AVAILABLE]: [info: UpdateInfo]
-  [RPC_CHANNELS.update.DOWNLOAD_PROGRESS]: [progress: number]
-
   // Badge broadcasts (global)
   [RPC_CHANNELS.badge.DRAW]: [data: { count: number; iconDataUrl: string }]
   [RPC_CHANNELS.badge.DRAW_WINDOWS]: [data: { count: number }]
@@ -47,11 +41,6 @@ export interface BroadcastEventMap {
   // Window events (per-window)
   [RPC_CHANNELS.window.FOCUS_STATE]: [isFocused: boolean]
   [RPC_CHANNELS.window.CLOSE_REQUESTED]: []
-
-  // Browser pane events (global)
-  [RPC_CHANNELS.browserPane.STATE_CHANGED]: [info: BrowserInstanceInfo]
-  [RPC_CHANNELS.browserPane.REMOVED]: [id: string]
-  [RPC_CHANNELS.browserPane.INTERACTED]: [id: string]
 
   // Navigation events (per-window)
   [RPC_CHANNELS.notification.NAVIGATE]: [data: { workspaceId: string; sessionId: string }]

@@ -16,7 +16,7 @@ export const HANDLED_CHANNELS = [
 /**
  * Complete an OAuth flow: validate state, exchange code for tokens, store credentials.
  *
- * Shared between the `oauth:complete` RPC handler (called by Electron) and the
+ * Shared between the `oauth:complete` RPC handler (called by Web) and the
  * `/api/oauth/callback` HTTP route (called by the relay for WebUI).
  *
  * @param opts.clientId - RPC client ID (for ownership validation). Omit for HTTP callback.

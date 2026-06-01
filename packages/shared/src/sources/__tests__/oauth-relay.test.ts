@@ -90,7 +90,7 @@ describe('SourceCredentialManager.prepareOAuth relay wrapping', () => {
     });
   });
 
-  it('uses the relay for desktop Google flows (callbackUrl)', async () => {
+  it('uses the relay for localhost Google flows (callbackUrl)', async () => {
     const result = await credManager.prepareOAuth(createApiSource(), {
       callbackUrl: 'http://localhost:6477/callback',
     });

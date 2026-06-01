@@ -45,7 +45,7 @@ export function resolveEntityColor(color: EntityColor, isDark: boolean): string 
     const cssVar = `var(--${parsed.name})`
 
     if (parsed.opacity !== undefined) {
-      // Apply opacity via color-mix (works in Electron/Chromium without build step)
+      // Apply opacity via color-mix (works in WebUI/Chromium without build step)
       return `color-mix(in oklch, ${cssVar} ${parsed.opacity}%, transparent)`
     }
 

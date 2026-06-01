@@ -31,12 +31,6 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   registerAllRpcHandlers: (server: RpcServer, deps: THandlerDeps, serverCtx: ServerHandlerContext) => void
   initializeSessionManager: (sessionManager: TSessionManager) => Promise<void>
   setSessionEventSink: (sessionManager: TSessionManager, sink: EventSink) => void
-  /**
-   * Optional hook called right after the WS RPC server starts listening. Use
-   * this to plumb the server into the SessionManager (e.g. `sm.setRpcServer(server)`)
-   * so the remote-bridge code path for `client:browser:invoke` activates.
-   */
-  bindRpcServer?: (sessionManager: TSessionManager, server: RpcServer) => void
   initModelRefreshService: () => ModelRefreshServiceLike
   cleanupSessionManager?: (sessionManager: TSessionManager) => Promise<void> | void
   cleanupClientResources?: (clientId: string) => void
@@ -214,7 +208,7 @@ function acquireServerLock(logger: PlatformServices['logger']): void {
 
 /**
  * Remove the lock file if it belongs to the current process.
- * Exported so consumers (e.g. the Electron before-quit handler) can call it
+ * Exported so consumers (e.g. the Web before-quit handler) can call it
  * directly without going through `instance.stop()`.
  */
 export function releaseServerLock(): void {
@@ -308,22 +302,10 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
     onClientConnected: options.onClientConnected,
     onClientDisconnected: (clientId) => {
       options.cleanupClientResources?.(clientId)
-      // Best-effort: notify SM so it can drop browser-host pins for this client.
-      // Duck-typed because TSessionManager is generic at the bootstrap layer.
-      const smWithDisconnect = sessionManager as unknown as { onClientDisconnected?: (id: string) => void }
-      if (typeof smWithDisconnect.onClientDisconnected === 'function') {
-        try {
-          smWithDisconnect.onClientDisconnected(clientId)
-        } catch {
-          // Cleanup hook failures must not break the transport.
-        }
-      }
     },
   })
 
   await wsServer.listen()
-
-  options.bindRpcServer?.(sessionManager, wsServer)
 
   const oauthFlowStore = new OAuthFlowStore()
 
@@ -434,7 +416,7 @@ export async function startHealthHttpServer(options: HealthHttpServerOptions): P
 
   const depsLike = { sessionManager: options.deps.sessionManager } as any
 
-  // Use Bun.serve if available, otherwise skip (Node.js/Electron doesn't need HTTP health)
+  // Use Bun.serve if available, otherwise skip (Node.js/Web doesn't need HTTP health)
   if (typeof globalThis.Bun !== 'undefined') {
     const server = Bun.serve({
       port: options.port,

@@ -4,7 +4,7 @@
  *
  * WhatsApp has no official bot API usable by us. Baileys reimplements the
  * WA multi-device protocol — it runs in a child process so that:
- *   (a) a Baileys crash/segfault can't take down the Electron main process,
+ *   (a) a Baileys crash/segfault can't take down the WebUI main process,
  *   (b) Baileys can run under Node even when the host runtime is Bun,
  *   (c) memory isolation: auth state, signal ratchets, etc.
  *

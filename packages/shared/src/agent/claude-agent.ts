@@ -1350,7 +1350,7 @@ export class ClaudeAgent extends BaseAgent {
         plugins: [],
       };
 
-      // Capture the binary path the SDK will actually use (Electron-bundled custom
+      // Capture the binary path the SDK will actually use (WebUI-bundled custom
       // path, CLI/dev-runtime path from getDefaultOptions, or undefined for SDK
       // auto-discovery via node_modules). Used by the ENOENT classifier to tell
       // "binary missing" apart from "cwd missing" — both surface as ENOENT from spawn().
@@ -1927,7 +1927,7 @@ This is a branched conversation. All prior messages in this conversation are par
           }
 
           // First attempt: retry once after 2s. Covers transient causes
-          // (auto-update bundle-swap window, sandbox/quarantine, race)
+          // (bundle replacement window, sandbox/quarantine, race)
           // regardless of which path looks missing.
           if (!_isRetry) {
             console.error('[ClaudeAgent] spawn ENOENT, retrying in 2s', {

@@ -1,14 +1,11 @@
-import type { EventSink, RpcServer } from '@craft-agent/server-core/transport'
-import { CLIENT_BROWSER_INVOKE } from '@craft-agent/server-core/transport'
-import type { ISessionManager, IBrowserPaneManager, ExecutePromptAutomationInput } from '@craft-agent/server-core/handlers'
-import { RemoteBrowserPaneManager } from './RemoteBrowserPaneManager'
+import type { EventSink } from '@craft-agent/server-core/transport'
+import type { ISessionManager, ExecutePromptAutomationInput } from '@craft-agent/server-core/handlers'
 import { validateFilePath, getWorkspaceAllowedDirs } from '@craft-agent/server-core/handlers'
 import { createScopedLogger, CONSOLE_LOGGER, type PlatformServices, type Logger } from '@craft-agent/server-core/runtime'
 import { basename, dirname, join } from 'path'
-import { existsSync } from 'fs'
 import { readFile, writeFile, mkdir } from 'fs/promises'
 import { randomUUID } from 'node:crypto'
-import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, type BrowserPaneFns, generateConversationSummary } from '@craft-agent/shared/agent'
+import { type AgentEvent, setPermissionMode, hydratePreviousPermissionMode, getPermissionModeDiagnostics, type PermissionMode, unregisterSessionScopedToolCallbacks, mergeSessionScopedToolCallbacks, AbortReason, type AuthRequest, type AuthResult, type CredentialAuthRequest, generateConversationSummary } from '@craft-agent/shared/agent'
 import {
   resolveSessionConnection,
   createBackendFromConnection,
@@ -99,7 +96,7 @@ import { AutomationSystem, createPromptHistoryEntry, appendAutomationHistoryEntr
 import { buildBackendRuntimeSignature, buildRestartRequiredSignature, filterAttachmentsForModelInput } from './runtime-config'
 
 // Import from server-core domain utilities
-import { sanitizeForTitle, shouldActivateBrowserOverlay, normalizeBrowserToolName, rollbackFailedBranchCreation, releaseBrowserOwnershipOnForcedStop } from '@craft-agent/server-core/domain'
+import { sanitizeForTitle, rollbackFailedBranchCreation } from '@craft-agent/server-core/domain'
 import { resizeImageForAPI, resizeIconBuffer } from '@craft-agent/server-core/services'
 export { sanitizeForTitle }
 
@@ -545,41 +542,6 @@ async function applyBridgeUpdates(
  * @param workspaceRootPath - Path to workspace for loading skills/sources
  * @param sources - Loaded sources for the workspace
  */
-const BROWSER_TOOL_ICON_FILENAME = 'chrome.svg'
-let browserToolIconDataUrlCache: string | null | undefined
-
-async function getBrowserToolIconDataUrl(): Promise<string | undefined> {
-  // Cache miss sentinel: undefined means "not computed yet"
-  if (browserToolIconDataUrlCache !== undefined) {
-    return browserToolIconDataUrlCache ?? undefined
-  }
-
-  try {
-    const iconCandidates = [
-      join(getToolIconsDir(), BROWSER_TOOL_ICON_FILENAME),
-      // Dev fallback (before sync to ~/.craft-agent/tool-icons)
-      join(process.cwd(), 'apps', 'electron', 'resources', 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
-      // Packaged fallback (app resources)
-      join(process.resourcesPath, 'tool-icons', BROWSER_TOOL_ICON_FILENAME),
-    ]
-
-    for (const iconPath of iconCandidates) {
-      if (!existsSync(iconPath)) continue
-      const encoded = await encodeIconToDataUrlAsync(iconPath, { resize: resizeIconBuffer })
-      if (encoded) {
-        browserToolIconDataUrlCache = encoded
-        return encoded
-      }
-    }
-
-    browserToolIconDataUrlCache = null
-  } catch {
-    browserToolIconDataUrlCache = null
-  }
-
-  return browserToolIconDataUrlCache ?? undefined
-}
-
 async function resolveToolDisplayMeta(
   toolName: string,
   toolInput: Record<string, unknown> | undefined,
@@ -611,7 +573,6 @@ async function resolveToolDisplayMeta(
           'render_template': 'Render Template',
           'update_user_preferences': 'Update Preferences',
           'send_developer_feedback': 'Send Feedback',
-          'browser_tool': 'Browser',
         },
         'craft-agents-docs': {
           'SearchCraftAgents': 'Search Docs',
@@ -622,10 +583,8 @@ async function resolveToolDisplayMeta(
       if (internalServer) {
         const displayName = internalServer[toolSlug]
         if (displayName) {
-          const normalizedBrowserTool = normalizeBrowserToolName(toolSlug)
           return {
             displayName,
-            iconDataUrl: normalizedBrowserTool ? await getBrowserToolIconDataUrl() : undefined,
             category: 'native' as const,
           }
         }
@@ -705,22 +664,6 @@ async function resolveToolDisplayMeta(
       }
     } catch {
       // Icon resolution is best-effort — never crash the session for it
-    }
-  }
-
-  // Native browser tool names (with Chrome icon)
-  const normalizedBrowserToolName = normalizeBrowserToolName(toolName)
-  if (normalizedBrowserToolName) {
-    const browserDisplayName = normalizedBrowserToolName
-      .split('_')
-      .map((part, index) => (index === 0 ? part : part.charAt(0).toUpperCase() + part.slice(1)))
-      .join(' ')
-      .replace(/^browser\s+/i, 'Browser ')
-
-    return {
-      displayName: browserDisplayName,
-      iconDataUrl: await getBrowserToolIconDataUrl(),
-      category: 'native' as const,
     }
   }
 
@@ -1193,114 +1136,10 @@ export class SessionManager implements ISessionManager {
     this.automationBinder = fn
   }
 
-  private browserPaneManager: IBrowserPaneManager | null = null
-  private rpcServer: RpcServer | null = null
-  private remoteBpms = new Map<string, RemoteBrowserPaneManager>()
-  /** Pinned desktop client per session for `client:browser:invoke` routing. */
-  private browserHostByCanvas = new Map<string, string>()
   private eventSink: EventSink | null = null
 
   setEventSink(sink: EventSink): void {
     this.eventSink = sink
-  }
-
-  setBrowserPaneManager(bpm: IBrowserPaneManager): void {
-    this.browserPaneManager = bpm
-    bpm.setSessionPathResolver((sessionId) => this.getSessionPath(sessionId))
-  }
-
-  /**
-   * Provide the WS RPC server so remote clients can host browser tools.
-   *
-   * When called, the SM activates the remote-bridge code path: per-session
-   * `RemoteBrowserPaneManager` instances are created lazily by
-   * {@link getBrowserPaneManagerForSession}, and the browser-host client is
-   * resolved via {@link getBrowserHostClient} with capability-aware fallback.
-   *
-   * Local Electron callers do not need to call this — they already
-   * call `setBrowserPaneManager(bpm)` with the in-process BPM, which takes
-   * precedence over the remote bridge in {@link getBrowserPaneManagerForSession}.
-   */
-  setRpcServer(server: RpcServer): void {
-    this.rpcServer = server
-    sessionLog.info('[browser-pane] setRpcServer called — remote browser bridge is now available')
-  }
-
-  /**
-   * Resolve the {@link IBrowserPaneManager} that owns the user's local browser
-   * for a given session. Returns:
-   *
-   * 1. The locally-injected `browserPaneManager` when present (Electron client co-located
-   *    with the agent), regardless of session.
-   * 2. A session-bound {@link RemoteBrowserPaneManager} when `rpcServer` is set.
-   *    Cached in `remoteBpms` so repeat lookups don't allocate.
-   * 3. `null` when there's neither a local BPM nor an RPC server.
-   */
-  getBrowserPaneManagerForSession(sid: string): IBrowserPaneManager | null {
-    if (this.browserPaneManager) return this.browserPaneManager
-    if (!this.rpcServer) return null
-
-    const cached = this.remoteBpms.get(sid)
-    if (cached) return cached
-
-    const session = this.sessions.get(sid)
-    if (!session) return null
-
-    const bridge = new RemoteBrowserPaneManager({
-      sessionId: sid,
-      workspaceId: session.workspace.id,
-      rpcServer: this.rpcServer,
-      getHostClient: () => this.getBrowserHostClient(sid),
-    })
-    this.remoteBpms.set(sid, bridge)
-    return bridge
-  }
-
-  /**
-   * Record which desktop client should host this session's browser. Called
-   * with `ctx.clientId` from the `sessions.sendMessage` RPC handler so the
-   * agent's browser_* tools route back to the client that posted the message.
-   *
-   * No-op when `callerClientId` is undefined — preserves the existing pin
-   * (lets reconnected clients continue holding the host role).
-   */
-  private setLastMessageClientId(sid: string, callerClientId: string | undefined): void {
-    if (!callerClientId) return
-    this.browserHostByCanvas.set(sid, callerClientId)
-  }
-
-  /**
-   * Called by the transport bootstrap on `onClientDisconnected`. Drops any
-   * pins held by `clientId` so the next browser tool call re-resolves via
-   * {@link findClientsWithCapability} instead of trying to ship to a dead client.
-   */
-  onClientDisconnected(clientId: string): void {
-    for (const [sid, pinned] of this.browserHostByCanvas) {
-      if (pinned === clientId) this.browserHostByCanvas.delete(sid)
-    }
-  }
-
-  /**
-   * Pinned client first, with fallback to any connected client for the workspace
-   * that advertises `client:browser:invoke`. The fallback handles reconnect-with-
-   * new-clientId so the agent isn't stuck waiting for another user message.
-   */
-  private getBrowserHostClient(sid: string): string | null {
-    if (!this.rpcServer) return null
-    const pinned = this.browserHostByCanvas.get(sid)
-    if (pinned && this.rpcServer.hasClientCapability(pinned, CLIENT_BROWSER_INVOKE)) {
-      return pinned
-    }
-    const session = this.sessions.get(sid)
-    if (!session) return null
-    const candidates = this.rpcServer.findClientsWithCapability(
-      CLIENT_BROWSER_INVOKE,
-      { workspaceId: session.workspace.id },
-    )
-    const fallback = candidates[0]
-    if (!fallback) return null
-    this.browserHostByCanvas.set(sid, fallback)
-    return fallback
   }
 
   /** Returns a strictly increasing timestamp (ms). When Date.now() collides with
@@ -3439,321 +3278,6 @@ export class SessionManager implements ISessionManager {
         managed.mcpPool.setSummarizeCallback(managed.agent.getSummarizeCallback())
       }
 
-      // Wire up browser pane tools — merge BrowserPaneFns into session callbacks
-      // so browser_* tools can delegate to BrowserPaneManager.
-      //
-      // Always register when EITHER a local BPM is set OR an RPC server is
-      // available (which lets `getBrowserPaneManagerForSession` lazily build a
-      // RemoteBrowserPaneManager). Calls fail per-method with
-      // BROWSER_NO_CAPABLE_CLIENT if no desktop client is connected, instead
-      // of "tool unavailable".
-      sessionLog.info('[browser-pane] BPF gate check', {
-        sessionId: managed.id,
-        hasLocalBpm: !!this.browserPaneManager,
-        hasRpcServer: !!this.rpcServer,
-      })
-      if (this.browserPaneManager || this.rpcServer) {
-        const sid = managed.id
-        const bpm = this.getBrowserPaneManagerForSession(sid)
-        if (!bpm) {
-          throw new Error('Browser pane manager unavailable despite passing the gate — this is a bug.')
-        }
-        sessionLog.info('[browser-pane] BPF block resolved BPM', {
-          sessionId: sid,
-          bpmKind: this.browserPaneManager === bpm ? 'local' : 'remote',
-        })
-
-        const workspaceId = managed.workspace.id
-        const resolveSessionBrowserInstance = async (toolName: string, options?: { show?: boolean }): Promise<string> => {
-          const instanceId = await bpm.createForSessionAsync(sid, {
-            show: options?.show ?? false,
-            workspaceId,
-          })
-          const info = await bpm.getInstanceAsync(instanceId)
-          sessionLog.info(`[browser-pane] tool target resolved: ${toolName} session=${sid} instance=${instanceId} ownerType=${info?.ownerType ?? 'unknown'} ownerSessionId=${info?.ownerSessionId ?? 'none'} visible=${info?.isVisible ?? false}`)
-          return instanceId
-        }
-
-        const resolveLifecycleWindowTarget = async (command: 'release' | 'close' | 'hide', requestedInstanceId?: string) => {
-          const windows = await bpm.listInstancesAsync()
-
-          if (windows.length === 0) {
-            return { windows, reason: 'No browser windows are available. Use "open" first.' }
-          }
-
-          const validateTarget = (target: (typeof windows)[number] | undefined) => {
-            if (!target) {
-              return { ok: false as const, reason: `Browser window "${requestedInstanceId}" not found. Use "windows" to list available windows.` }
-            }
-
-            if (target.boundSessionId && target.boundSessionId !== sid) {
-              return { ok: false as const, reason: `Browser window "${target.id}" is locked to session ${target.boundSessionId}.` }
-            }
-
-            if (!target.boundSessionId && target.ownerSessionId && target.ownerSessionId !== sid) {
-              return { ok: false as const, reason: `Browser window "${target.id}" is currently owned by session ${target.ownerSessionId}.` }
-            }
-
-            return { ok: true as const, target }
-          }
-
-          if (requestedInstanceId) {
-            const validated = validateTarget(windows.find((w) => w.id === requestedInstanceId))
-            if (!validated.ok) {
-              return { windows, reason: validated.reason }
-            }
-            return { windows, target: validated.target }
-          }
-
-          const fallbackTarget = windows.find((w) => w.boundSessionId === sid)
-            ?? windows.find((w) => w.ownerSessionId === sid)
-
-          if (!fallbackTarget) {
-            return { windows, reason: `No ${command} target is currently associated with this session. Use "windows", then "${command} <id>".` }
-          }
-
-          const validated = validateTarget(fallbackTarget)
-          if (!validated.ok) {
-            return { windows, reason: validated.reason }
-          }
-
-          return { windows, target: validated.target }
-        }
-
-        sessionLog.info('[browser-pane] BPF registering browserPaneFns', { sessionId: sid })
-        mergeSessionScopedToolCallbacks(sid, {
-          browserPaneFns: {
-            openPanel: async (options) => {
-              const instanceId = options?.background
-                ? await bpm.createForSessionAsync(sid, { show: false, workspaceId })
-                : await bpm.focusBoundForSessionAsync(sid, { workspaceId })
-              const info = await bpm.getInstanceAsync(instanceId)
-              sessionLog.info(`[browser-pane] route decision: browser_open session=${sid} instance=${instanceId} background=${options?.background ?? false} ownerType=${info?.ownerType ?? 'unknown'} ownerSessionId=${info?.ownerSessionId ?? 'none'} visible=${info?.isVisible ?? false}`)
-              return { instanceId }
-            },
-            navigate: async (url) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_navigate')
-              return bpm.navigate(instanceId, url)
-            },
-            snapshot: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_snapshot')
-              return bpm.getAccessibilitySnapshot(instanceId)
-            },
-            click: async (ref, options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_click')
-              return bpm.clickElement(instanceId, ref, options)
-            },
-            clickAt: async (x, y) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_click_at')
-              return bpm.clickAtCoordinates(instanceId, x, y)
-            },
-            drag: async (x1, y1, x2, y2) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_drag')
-              return bpm.drag(instanceId, x1, y1, x2, y2)
-            },
-            fill: async (ref, value) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_fill')
-              return bpm.fillElement(instanceId, ref, value)
-            },
-            type: async (text) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_type')
-              return bpm.typeText(instanceId, text)
-            },
-            select: async (ref, value) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_select')
-              return bpm.selectOption(instanceId, ref, value)
-            },
-            setClipboard: async (text) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_set_clipboard')
-              return bpm.setClipboard(instanceId, text)
-            },
-            getClipboard: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_get_clipboard')
-              return bpm.getClipboard(instanceId)
-            },
-            screenshot: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_screenshot')
-              return bpm.screenshot(instanceId, options)
-            },
-            screenshotRegion: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_screenshot_region')
-              return bpm.screenshotRegion(instanceId, options)
-            },
-            getConsoleLogs: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_console')
-              return bpm.getConsoleLogs(instanceId, options)
-            },
-            windowResize: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_window_resize')
-              return bpm.windowResize(instanceId, options.width, options.height)
-            },
-            getNetworkLogs: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_network')
-              return bpm.getNetworkLogs(instanceId, options)
-            },
-            waitFor: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_wait')
-              return bpm.waitFor(instanceId, options)
-            },
-            sendKey: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_key')
-              return bpm.sendKey(instanceId, options)
-            },
-            getDownloads: async (options) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_downloads')
-              return bpm.getDownloads(instanceId, options)
-            },
-            upload: async (ref, filePaths) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_upload')
-              return bpm.uploadFile(instanceId, ref, filePaths).then(() => {})
-            },
-            scroll: async (direction, amount) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_scroll')
-              return bpm.scroll(instanceId, direction, amount)
-            },
-            goBack: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_back')
-              return bpm.goBack(instanceId)
-            },
-            goForward: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_forward')
-              return bpm.goForward(instanceId)
-            },
-            evaluate: async (expression) => {
-              const instanceId = await resolveSessionBrowserInstance('browser_evaluate')
-              return bpm.evaluate(instanceId, expression)
-            },
-            focusWindow: async (targetInstanceId) => {
-              const windows = await bpm.listInstancesAsync()
-              if (windows.length === 0) {
-                throw new Error('No browser windows available to focus. Use "open" first.')
-              }
-
-              const target = targetInstanceId
-                ? windows.find(w => w.id === targetInstanceId)
-                : windows.find(w => w.boundSessionId === sid || w.ownerSessionId === sid)
-
-              if (!target) {
-                if (targetInstanceId) {
-                  throw new Error(`Browser window "${targetInstanceId}" not found. Use "windows" to list available windows.`)
-                }
-                throw new Error('No browser window is currently bound to this session. Use "open --foreground" to create or reuse one.')
-              }
-
-              const availableToSession = !target.boundSessionId || target.boundSessionId === sid
-              if (!availableToSession) {
-                throw new Error(`Browser window "${target.id}" is locked to session ${target.boundSessionId}.`)
-              }
-
-              if (!target.boundSessionId) {
-                bpm.bindSession(target.id, sid, { workspaceId })
-              }
-
-              bpm.focus(target.id)
-              const focused = await bpm.getInstanceAsync(target.id)
-              return {
-                instanceId: target.id,
-                title: focused?.title ?? target.title,
-                url: focused?.currentUrl ?? target.url,
-              }
-            },
-            releaseControl: async (requestedInstanceId) => {
-              if (requestedInstanceId === 'all') {
-                const before = await bpm.listInstancesAsync()
-                const beforeActive = before.filter((w) => !!w.agentControlActive).length
-                bpm.clearAgentControl(sid)
-                const after = await bpm.listInstancesAsync()
-                const afterActive = after.filter((w) => !!w.agentControlActive).length
-                const released = afterActive < beforeActive
-
-                sessionLog.info(`[browser-pane] lifecycle release-all session=${sid} overlays=${beforeActive}->${afterActive}`)
-
-                return {
-                  action: released ? 'released' : 'noop',
-                  requestedInstanceId,
-                  affectedIds: released ? before.filter((w) => !!w.agentControlActive).map((w) => w.id) : [],
-                  reason: released ? undefined : 'No active overlay was found for this session.',
-                }
-              }
-
-              const resolution = await resolveLifecycleWindowTarget('release', requestedInstanceId)
-              if (!resolution.target) {
-                sessionLog.info(`[browser-pane] lifecycle release session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
-                return {
-                  action: 'noop',
-                  requestedInstanceId,
-                  affectedIds: [],
-                  reason: resolution.reason,
-                }
-              }
-
-              const result = bpm.clearAgentControlForInstance(resolution.target.id, sid)
-              const action = result.released ? 'released' : 'noop'
-              sessionLog.info(`[browser-pane] lifecycle release session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=${action} reason=${result.reason ?? 'none'}`)
-
-              return {
-                action,
-                requestedInstanceId,
-                resolvedInstanceId: resolution.target.id,
-                affectedIds: result.released ? [resolution.target.id] : [],
-                reason: result.reason,
-              }
-            },
-            closeWindow: async (requestedInstanceId) => {
-              const resolution = await resolveLifecycleWindowTarget('close', requestedInstanceId)
-              if (!resolution.target) {
-                sessionLog.info(`[browser-pane] lifecycle close session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
-                return {
-                  action: 'noop',
-                  requestedInstanceId,
-                  affectedIds: [],
-                  reason: resolution.reason,
-                }
-              }
-
-              bpm.destroyInstance(resolution.target.id)
-              sessionLog.info(`[browser-pane] lifecycle close session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=closed`)
-
-              return {
-                action: 'closed',
-                requestedInstanceId,
-                resolvedInstanceId: resolution.target.id,
-                affectedIds: [resolution.target.id],
-              }
-            },
-            hideWindow: async (requestedInstanceId) => {
-              const resolution = await resolveLifecycleWindowTarget('hide', requestedInstanceId)
-              if (!resolution.target) {
-                sessionLog.info(`[browser-pane] lifecycle hide session=${sid} requested=${requestedInstanceId ?? 'auto'} result=noop reason=${resolution.reason}`)
-                return {
-                  action: 'noop',
-                  requestedInstanceId,
-                  affectedIds: [],
-                  reason: resolution.reason,
-                }
-              }
-
-              bpm.hide(resolution.target.id)
-              sessionLog.info(`[browser-pane] lifecycle hide session=${sid} requested=${requestedInstanceId ?? 'auto'} resolved=${resolution.target.id} result=hidden`)
-
-              return {
-                action: 'hidden',
-                requestedInstanceId,
-                resolvedInstanceId: resolution.target.id,
-                affectedIds: [resolution.target.id],
-              }
-            },
-            listWindows: async () => {
-              return bpm.listInstancesAsync()
-            },
-            detectChallenge: async () => {
-              const instanceId = await resolveSessionBrowserInstance('browser_detect_challenge')
-              return bpm.detectSecurityChallenge(instanceId)
-            },
-          } satisfies BrowserPaneFns,
-        })
-      }
-
       // Signal that the agent instance is ready (unblocks title generation)
       managed.agentReadyResolve?.()
 
@@ -3915,13 +3439,6 @@ export class SessionManager implements ISessionManager {
             managed.agent.interruptForHandoff(AbortReason.PlanSubmitted)
             this.setProcessing(managed, false)
 
-            // Release browser overlay + session binding because the agent is no longer running.
-            // Plan submission pauses execution until user review, so browser ownership should not remain locked.
-            await releaseBrowserOwnershipOnForcedStop(
-              (sid) => this.getBrowserPaneManagerForSession(sid),
-              managed.id,
-            )
-
             // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
             this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
 
@@ -3974,12 +3491,6 @@ export class SessionManager implements ISessionManager {
           managed.agent.interruptForHandoff(AbortReason.AuthRequest)
           this.setProcessing(managed, false)
 
-          // Release browser overlay + session binding because the agent is paused awaiting user auth.
-          void releaseBrowserOwnershipOnForcedStop(
-            (sid) => this.getBrowserPaneManagerForSession(sid),
-            managed.id,
-          )
-
           // Send complete event so renderer knows processing stopped (include tokenUsage for real-time updates)
           this.sendEvent({ type: 'complete', sessionId: managed.id, tokenUsage: managed.tokenUsage }, managed.workspace.id)
         }
@@ -3996,7 +3507,7 @@ export class SessionManager implements ISessionManager {
         this.persistSession(managed)
 
         // OAuth flow is client-driven via performOAuth() (preload).
-        // The UI calls window.electronAPI.performOAuth() when user clicks "Sign in".
+        // The UI calls window.webAgentAPI.performOAuth() when user clicks "Sign in".
       }
 
       // Wire up onSpawnSession to create independent sessions from agent tool calls
@@ -5365,15 +4876,6 @@ export class SessionManager implements ISessionManager {
     // Clean up session-scoped tool callbacks to prevent memory accumulation
     unregisterSessionScopedToolCallbacks(sessionId)
 
-    // Destroy browser instances bound to this session
-    const sessionBpm = this.getBrowserPaneManagerForSession(sessionId)
-    if (sessionBpm) {
-      sessionBpm.destroyForSession(sessionId)
-    }
-    // Drop the per-session remote bridge + host-client pin on destroy.
-    this.remoteBpms.delete(sessionId)
-    this.browserHostByCanvas.delete(sessionId)
-
     // Dispose agent to clean up ConfigWatchers, event listeners, MCP connections
     if (managed.agent) {
       managed.agent.dispose()
@@ -5428,19 +4930,11 @@ export class SessionManager implements ISessionManager {
      * (#616). Pre-persist errors still reject the outer promise as before.
      */
     onAck?: (messageId: string) => void,
-    /**
-     * Optional transport context. The `sessions.sendMessage` RPC handler passes
-     * `{ callerClientId: ctx.clientId }` so the SM can pin the desktop client
-     * that should host this session's browser tools. Pass undefined when calling
-     * directly (tests, intra-server flows) to leave the existing pin in place.
-     */
-    rpcContext?: { callerClientId?: string },
   ): Promise<void> {
     const managed = this.sessions.get(sessionId)
     if (!managed) {
       throw new Error(`Session ${sessionId} not found`)
     }
-    this.setLastMessageClientId(sessionId, rpcContext?.callerClientId)
 
     // Source-activation auto-retry dedup (craft-agents-oss#804). When the server
     // has just scheduled or committed a "[<slug> activated]" retry, drop a matching
@@ -5990,7 +5484,7 @@ export class SessionManager implements ISessionManager {
         sessionLog.error('Error message:', error instanceof Error ? error.message : String(error))
         sessionLog.error('Error stack:', error instanceof Error ? error.stack : 'No stack')
 
-        // Report chat/SDK errors via runtime hooks (Electron can forward to Sentry)
+        // Report chat/SDK errors via runtime hooks (Web can forward to Sentry)
         sessionRuntimeHooks.captureException(error, { errorSource: 'chat', sessionId })
 
         sendSpan.mark('chat.error')
@@ -6210,14 +5704,6 @@ export class SessionManager implements ISessionManager {
     const turnStartFinalMessageId = managed.turnStartFinalMessageId
     managed.turnStartFinalMessageId = undefined
 
-    // Clear agent control overlay between turns. The session keeps browser
-    // ownership (boundSessionId) — only the visual overlay is removed.
-    // Full unbind happens below when the queue is empty (session truly done).
-    const turnBpm = this.getBrowserPaneManagerForSession(sessionId)
-    if (turnBpm) {
-      await turnBpm.clearVisualsForSession(sessionId)
-    }
-
     // 2. Handle unread state based on whether user is viewing this session
     //    This is the explicit state machine for NEW badge:
     //    - If user is viewing: mark as read (they saw it complete)
@@ -6262,15 +5748,6 @@ export class SessionManager implements ISessionManager {
       // Has queued messages - process next
       this.processNextQueuedMessage(sessionId)
     } else {
-      // Session is truly done — release browser ownership.
-      // The window stays alive (hidden) and becomes reusable by future sessions.
-      // On the next turn, getOrCreateForSession() will re-bind it.
-      const doneBpm = this.getBrowserPaneManagerForSession(sessionId)
-      if (doneBpm) {
-        await doneBpm.clearVisualsForSession(sessionId)
-        doneBpm.unbindAllForSession(sessionId)
-      }
-
       // No queue - emit complete to UI (include tokenUsage and hasUnread for state updates)
       this.sendEvent({
         type: 'complete',
@@ -6975,28 +6452,6 @@ export class SessionManager implements ISessionManager {
           managed.messages.push(toolStartMessage)
         }
 
-        // Activate browser agent control overlay on actionable browser tool starts.
-        // Skip browser_tool help/release commands to avoid pointless overlay flashes.
-        const shouldActivateOverlay = shouldActivateBrowserOverlay(
-          event.toolName,
-          formattedToolInput,
-        )
-
-        const overlayBpm = this.getBrowserPaneManagerForSession(sessionId)
-        if (overlayBpm && shouldActivateOverlay) {
-          // Ensure first browser action in a turn gets an instance before overlay activation.
-          overlayBpm.getOrCreateForSession(sessionId, { workspaceId })
-
-          const resolvedDisplayName = toolDisplayMeta?.displayName
-            ?? event.displayName
-            ?? event.toolName
-          overlayBpm.setAgentControl(
-            sessionId,
-            { displayName: resolvedDisplayName, intent: event.intent },
-            { workspaceId },
-          )
-        }
-
         // Send event to renderer on first occurrence OR when input data is updated
         if (shouldSendEvent) {
           const timestamp = existingStartMsg?.timestamp ?? this.monotonic()
@@ -7364,7 +6819,7 @@ export class SessionManager implements ISessionManager {
         const messageCountAtSchedule = managed.messages.length
 
         // Stash the retry payload so a duplicate sendMessage from a legacy renderer
-        // (mixed-version rollout: new server + v0.9.5 Electron client) gets deduped.
+        // (mixed-version rollout: new server + v0.9.5 Web client) gets deduped.
         // 2s window covers WS latency tail on flaky mobile / proxy links.
         managed.autoRetryPending = {
           content: messageWithSuffix,

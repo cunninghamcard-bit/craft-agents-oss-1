@@ -5,7 +5,7 @@
  * when performing configuration tasks (sources, agents, permissions, etc.).
  *
  * Docs are stored at ~/.craft-agent/docs/ and synced from bundled assets.
- * Source content lives in apps/electron/resources/docs/*.md for easier editing.
+ * Source content lives in resources/docs/*.md for easier editing.
  */
 
 import { join } from 'path';
@@ -21,8 +21,7 @@ const DOCS_DIR = join(CONFIG_DIR, 'docs');
 let docsInitialized = false;
 
 // Resolve the bundled docs assets directory using the shared asset resolver.
-// Handles all environments: dev (resources/docs), bundled (dist/resources/docs),
-// and packaged Electron (setBundledAssetsRoot sets the base path at startup).
+// Handles dev and bundled service environments.
 function getAssetsDir(): string {
   return getBundledAssetsDir('docs')
     // Fallback: development path (will fail gracefully if files don't exist)
@@ -119,7 +118,6 @@ export const DOC_REFS = {
   imagePreview: `${APP_ROOT}/docs/image-preview.md`,
   markdownPreview: `${APP_ROOT}/docs/markdown-preview.md`,
   llmTool: `${APP_ROOT}/docs/llm-tool.md`,
-  browserTools: `${APP_ROOT}/docs/browser-tools.md`,
   craftCli: `${APP_ROOT}/docs/craft-cli.md`,
   docsDir: `${APP_ROOT}/docs/`,
 } as const;

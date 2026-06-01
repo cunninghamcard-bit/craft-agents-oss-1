@@ -1,7 +1,7 @@
 /**
- * Web API adapter — browser-compatible ElectronAPI implementation.
+ * Web API adapter — browser-compatible renderer API implementation.
  *
- * Reuses the same WsRpcClient + buildClientApi() + CHANNEL_MAP from the Electron app.
+ * Reuses the same WsRpcClient + buildClientApi() + CHANNEL_MAP as the renderer.
  * Overrides LOCAL_ONLY methods (window management, native dialogs, etc.) with web equivalents.
  *
  * Auth: the browser's session cookie (set by /api/auth) is automatically sent
@@ -11,13 +11,13 @@
 import i18n from 'i18next'
 import { toast } from 'sonner'
 import { openExternalUrl } from '@craft-agent/ui'
-import { WsRpcClient } from '../../../electron/src/transport/client'
-import { buildClientApi } from '../../../electron/src/transport/build-api'
-import { CHANNEL_MAP } from '../../../electron/src/transport/channel-map'
-import type { ElectronAPI, TransportConnectionState } from '../../../electron/src/shared/types'
+import { WsRpcClient } from '../transport/client'
+import { buildClientApi } from '../transport/build-api'
+import { CHANNEL_MAP } from '../transport/channel-map'
+import type { WebAgentAPI, TransportConnectionState } from '../shared/types'
 
 // ---------------------------------------------------------------------------
-// Web file picker (replaces native Electron dialog)
+// Web file picker
 // ---------------------------------------------------------------------------
 
 function webFilePicker(): Promise<string[]> {
@@ -64,7 +64,7 @@ export interface WebApiOptions {
 }
 
 export function createWebApi(options: WebApiOptions): {
-  api: ElectronAPI
+  api: WebAgentAPI
   client: WsRpcClient
 } {
   const { serverUrl, workspaceId } = options
@@ -76,7 +76,7 @@ export function createWebApi(options: WebApiOptions): {
     // No token — auth is via session cookie sent on WebSocket upgrade
   })
 
-  // Build the API proxy from the same channel map the Electron app uses
+  // Build the API proxy from the same channel map the WebUI app uses
   const baseApi = buildClientApi(
     client,
     CHANNEL_MAP,
@@ -84,7 +84,7 @@ export function createWebApi(options: WebApiOptions): {
   )
 
   // Override LOCAL_ONLY methods with web-compatible implementations
-  const webOverrides: Partial<ElectronAPI> = {
+  const webOverrides: Partial<WebAgentAPI> = {
     // Shell operations — use browser APIs
     openUrl: (url: string) => {
       const result = openExternalUrl(url)
@@ -92,7 +92,7 @@ export function createWebApi(options: WebApiOptions): {
         if (result.reason === 'dangerous') {
           toast.error(`Blocked unsafe URL (${result.detail})`)
         } else if (result.reason === 'internal-deeplink') {
-          console.warn('[openUrl] craftagents:// deep links require the desktop app')
+          console.warn('[openUrl] craftagents:// deep links are not handled by the web app')
         } else {
           console.warn('[openUrl] Malformed URL:', url)
         }
@@ -107,7 +107,7 @@ export function createWebApi(options: WebApiOptions): {
     openFolderDialog: () => Promise.resolve(null), // not possible in browser
 
     // System info
-    getVersions: () => ({ node: 'n/a', chrome: navigator.userAgent, electron: 'web' }),
+    getVersions: () => ({ node: 'n/a', chrome: navigator.userAgent, runtime: 'web' }),
     getRuntimeEnvironment: () => 'web',
     getSystemWarnings: () => Promise.resolve({ vcredistMissing: false }),
     isDebugMode: () => Promise.resolve(import.meta.env.DEV),
@@ -153,15 +153,7 @@ export function createWebApi(options: WebApiOptions): {
       window.open(`${window.location.origin}/?session=${sessionId}`, '_blank')
     },
 
-    // Auto-update — not applicable to web (but expose server version for About page)
-    checkForUpdates: () => Promise.resolve({ available: false, currentVersion: client.getServerVersion() ?? '' } as any),
-    getUpdateInfo: () => Promise.resolve({ available: false, currentVersion: client.getServerVersion() ?? '' } as any),
-    installUpdate: () => Promise.resolve(),
-    dismissUpdate: () => Promise.resolve(),
-    getDismissedUpdateVersion: () => Promise.resolve(null),
-    onUpdateAvailable: () => () => {},
-    onUpdateDownloadProgress: () => () => {},
-    // Release notes — serve from server via RPC (same content as Electron)
+    // Release notes — serve from server via RPC.
     getReleaseNotes: () => client.invoke('releaseNotes:get') as Promise<string>,
     getLatestReleaseVersion: () => client.invoke('releaseNotes:getLatestVersion') as Promise<string | undefined>,
 
@@ -235,8 +227,8 @@ export function createWebApi(options: WebApiOptions): {
   }
 
   // OAuth overrides — web-compatible browser opening
-  // The Electron preload uses shell.openExternal() which isn't available in browsers.
-  const oauthOverrides: Partial<ElectronAPI> = {
+  // The WebUI preload uses shell.openExternal() which isn't available in browsers.
+  const oauthOverrides: Partial<WebAgentAPI> = {
     // Generic source OAuth — server prepares the flow, we open the auth URL in a new tab.
     // The OAuth provider redirects through the relay to our server's /api/oauth/callback,
     // which completes the token exchange and pushes status via WebSocket.
@@ -330,7 +322,7 @@ export function createWebApi(options: WebApiOptions): {
     },
   }
 
-  const api = { ...baseApi, ...webOverrides, ...oauthOverrides } as ElectronAPI
+  const api = { ...baseApi, ...webOverrides, ...oauthOverrides } as WebAgentAPI
 
   return { api, client }
 }

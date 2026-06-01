@@ -381,7 +381,7 @@ export function resolveBackendContext(args: {
 
 /**
  * Resolve provider hint for setup-time connection tests.
- * Keeps provider-specific hint mapping out of Electron main IPC handlers.
+ * Keeps provider-specific hint mapping out of WebUI main IPC handlers.
  */
 export function resolveSetupTestConnectionHint(args: {
   provider: AgentProvider;
@@ -443,7 +443,7 @@ export async function fetchBackendModels(args: {
 
 /**
  * Provider-agnostic stored-connection validation.
- * Moves provider/auth branching out of Electron main IPC handlers.
+ * Moves provider/auth branching out of WebUI main IPC handlers.
  */
 export async function validateStoredBackendConnection(args: {
   slug: string;
@@ -808,7 +808,7 @@ export async function testBackendConnection(args: {
  * - OpenAI/Copilot/Pi: returns success (these providers validate on connect, no pre-flight check available)
  *
  * For more thorough provider-specific validation (model list checks, OAuth refresh, etc.),
- * see the IPC handler in apps/electron/src/main/ipc.ts.
+ * see the IPC handler in apps/webui/src/main/ipc.ts.
  *
  * @param connection - The LLM connection to validate
  * @param credentials - API key or OAuth token for validation

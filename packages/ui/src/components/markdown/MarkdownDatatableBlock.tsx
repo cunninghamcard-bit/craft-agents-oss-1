@@ -3,7 +3,7 @@
  *
  * Renders structured JSON as a sortable table with fullscreen expand.
  * No TanStack dependency — uses native HTML table + React state for lightweight
- * portability across Electron and the web viewer.
+ * portability across WebUI and the web viewer.
  *
  * Expected JSON shape (inline):
  * {

@@ -2,7 +2,7 @@
  * @craft-agent/shared
  *
  * Shared business logic for Craft Agent.
- * Used by the Electron app.
+ * Used by the WebUI app.
  *
  * Import specific modules via subpath exports:
  *   import { CraftAgent } from '@craft-agent/shared/agent';

@@ -513,8 +513,8 @@ describe('Renderer — permissions and errors', () => {
 })
 
 
-describe('Renderer — WhatsApp desktop-only approvals', () => {
-  it('permission_request on WhatsApp sends an informational desktop-only message', async () => {
+describe('Renderer — WhatsApp app-side approvals', () => {
+  it('permission_request on WhatsApp sends an informational app-side message', async () => {
     const renderer = new Renderer()
     const adapter = makeAdapter({ inlineButtons: false, messageEditing: false, markdown: 'whatsapp' })
     ;(adapter as any).platform = 'whatsapp'
@@ -541,10 +541,10 @@ describe('Renderer — WhatsApp desktop-only approvals', () => {
     expect(adapter.calls.filter((c) => c.kind === 'sendButtons')).toHaveLength(0)
     const sends = adapter.calls.filter((c) => c.kind === 'sendText')
     expect(sends).toHaveLength(1)
-    expect(sends[0]!.text).toContain('desktop app')
+    expect(sends[0]!.text).toContain('web app')
   })
 
-  it('plan_submitted on WhatsApp sends an informational desktop-only message', async () => {
+  it('plan_submitted on WhatsApp sends an informational web-app message', async () => {
     const renderer = new Renderer()
     const adapter = makeAdapter({ inlineButtons: false, messageEditing: false, markdown: 'whatsapp' })
     ;(adapter as any).platform = 'whatsapp'
@@ -567,6 +567,6 @@ describe('Renderer — WhatsApp desktop-only approvals', () => {
     const sends = adapter.calls.filter((c) => c.kind === 'sendText')
     expect(sends).toHaveLength(1)
     expect(sends[0]!.text).toContain('plan is ready')
-    expect(sends[0]!.text).toContain('desktop app')
+    expect(sends[0]!.text).toContain('web app')
   })
 })

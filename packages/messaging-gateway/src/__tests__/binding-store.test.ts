@@ -99,7 +99,7 @@ describe('BindingStore', () => {
     expect(store.unbindById(a.id)).toBe(false)
   })
 
-  it('forces WhatsApp bindings to use desktop-only approvals', () => {
+  it('forces WhatsApp bindings to use app-side approvals', () => {
     const store = new BindingStore(dir)
     const binding = store.bind('ws1', 'sess', 'whatsapp', 'c2')
     expect(binding.config.approvalChannel).toBe('app')

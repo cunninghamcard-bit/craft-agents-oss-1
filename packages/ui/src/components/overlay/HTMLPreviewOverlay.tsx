@@ -3,7 +3,7 @@
  *
  * Uses PreviewOverlay as the base for consistent modal/fullscreen behavior.
  * Renders HTML in a sandboxed iframe (no script execution).
- * Links open in the system browser via Electron's will-navigate handler.
+ * Links open in the system browser via WebUI's will-navigate handler.
  *
  * Supports multiple items with arrow navigation in the header.
  * The iframe auto-sizes to its content height by reading contentDocument.scrollHeight
@@ -19,7 +19,7 @@ import { ItemNavigator } from './ItemNavigator'
 
 /**
  * Inject `<base target="_top">` so link clicks navigate the top frame,
- * which Electron's will-navigate handler intercepts → system browser.
+ * which WebUI's will-navigate handler intercepts → system browser.
  */
 function injectBaseTarget(html: string): string {
   if (/<base\s/i.test(html)) return html

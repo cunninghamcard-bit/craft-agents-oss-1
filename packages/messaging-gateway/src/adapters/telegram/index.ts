@@ -86,7 +86,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 
 /**
  * Unwrap an error for structured logging. grammY's HttpError wraps the real
- * fetch/undici cause in an `.error` field; electron-log's JSON serializer
+ * fetch/undici cause in an `.error` field; webui-log's JSON serializer
  * otherwise sees an empty object because Error's own fields are non-enumerable.
  * Walks up to 3 levels of wrapping (HttpError -> cause -> cause).
  */
@@ -150,7 +150,7 @@ export class TelegramAdapter implements PlatformAdapter {
     maxMessageLength: 4096,
     markdown: 'v2',
     // This adapter uses polling (grammY Bot#start). A webhook path is not
-    // wired through the Electron main process, so advertising webhookSupport
+    // wired through the WebUI main process, so advertising webhookSupport
     // would mislead the headless server bootstrap. Keep false until a proper
     // webhook handler exists.
     webhookSupport: false,

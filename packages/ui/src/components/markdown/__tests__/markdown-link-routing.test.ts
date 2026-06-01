@@ -21,9 +21,9 @@ describe('resolveMarkdownLinkTarget', () => {
   })
 
   it('resolves repo-relative file paths as file targets', () => {
-    expect(resolveMarkdownLinkTarget('apps/electron/resources/docs/browser-tools.md')).toEqual({
+    expect(resolveMarkdownLinkTarget('resources/docs/sources.md')).toEqual({
       kind: 'file',
-      path: 'apps/electron/resources/docs/browser-tools.md',
+      path: 'resources/docs/sources.md',
     })
   })
 

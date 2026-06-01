@@ -26,7 +26,7 @@ const DANGEROUS_SCHEMES: ReadonlyMap<string, string> = new Map([
   ['blob:', 'blob: URLs are renderer-scoped and do not resolve outside this window.'],
   [
     'file:',
-    'file: URLs are blocked because shell.openExternal can launch local executables on Windows (Electron RCE class). Use an in-app preview block (html-preview, pdf-preview, image-preview, markdown-preview) or open the file from your OS file manager.',
+    'file: URLs are blocked because shell.openExternal can launch local executables on Windows (WebUI RCE class). Use an in-app preview block (html-preview, pdf-preview, image-preview, markdown-preview) or open the file from your OS file manager.',
   ],
 ])
 

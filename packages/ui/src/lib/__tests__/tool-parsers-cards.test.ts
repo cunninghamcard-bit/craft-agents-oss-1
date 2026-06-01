@@ -9,7 +9,7 @@ function makeActivity(overrides: Partial<ActivityItem>): ActivityItem {
     type: 'tool',
     status: 'completed',
     timestamp: Date.now(),
-    toolName: 'mcp__session__browser_tool',
+    toolName: 'Write',
     toolInput: {},
     content: '',
     ...overrides,
@@ -17,35 +17,9 @@ function makeActivity(overrides: Partial<ActivityItem>): ActivityItem {
 }
 
 describe('extractOverlayCards', () => {
-  it('uses wrapper command verbatim for browser_tool input cards', () => {
-    const activity = makeActivity({
-      toolName: 'mcp__session__browser_tool',
-      toolInput: { command: 'navigate https://example.com' },
-      content: 'Navigated to: https://example.com\nTitle: Example',
-    })
-
-    const cards = extractOverlayCards(activity)
-    expect(cards[0]?.label).toBe('Input')
-    expect(cards[0]?.commandPreview).toBe('navigate https://example.com')
-  })
-
-  it('returns input + output cards for browser_tool with output', () => {
-    const activity = makeActivity({
-      toolName: 'mcp__session__browser_tool',
-      toolInput: { command: 'snapshot' },
-      content: JSON.stringify([{ ref: '@e1', role: 'button' }]),
-    })
-
-    const cards = extractOverlayCards(activity)
-    expect(cards).toHaveLength(2)
-    expect(cards[0]?.label).toBe('Input')
-    expect(cards[0]?.commandPreview).toBe('snapshot')
-    expect(cards[1]?.label).toBe('Output')
-  })
-
   it('returns output-only card when command is empty', () => {
     const activity = makeActivity({
-      toolName: 'mcp__session__browser_tool',
+      toolName: 'Bash',
       toolInput: {},
       content: 'Missing command.',
     })
@@ -76,8 +50,8 @@ describe('extractOverlayCards', () => {
   it('keeps generic markdown-ish output as generic card data', () => {
     const markdownText = '# Heading\n\nSome paragraph text.'
     const activity = makeActivity({
-      toolName: 'mcp__session__browser_tool',
-      toolInput: { command: 'evaluate "document.body.innerText"' },
+      toolName: 'Bash',
+      toolInput: { command: 'printf "# Heading\\n\\nSome paragraph text."' },
       content: markdownText,
     })
 

@@ -72,7 +72,7 @@ class HtmlBlockErrorBoundary extends React.Component<
 /**
  * Inject `<base target="_top">` into HTML so link clicks navigate the top frame
  * instead of the iframe. Combined with `allow-top-navigation-by-user-activation`
- * in the sandbox, this lets Electron's `will-navigate` handler intercept the
+ * in the sandbox, this lets WebUI's `will-navigate` handler intercept the
  * navigation and open the URL in the system browser.
  */
 function injectBaseTarget(html: string): string {

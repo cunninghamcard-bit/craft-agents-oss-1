@@ -542,7 +542,7 @@ async function exchangeMcpCodeForTokens(
  * Prepare an MCP OAuth flow without starting a callback server or opening a browser.
  *
  * Performs metadata discovery, PKCE generation, optional client registration,
- * and auth URL construction. Accepts either callbackPort (Electron) or
+ * and auth URL construction. Accepts either callbackPort (WebUI) or
  * callbackUrl (WebUI) to construct the redirect URI.
  */
 export async function prepareMcpOAuth(

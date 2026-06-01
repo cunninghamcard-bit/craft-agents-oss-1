@@ -12,10 +12,10 @@
 import { describe, it, expect, afterEach } from 'bun:test'
 import { WsRpcServer } from '../server'
 import { WsRpcClient } from '../client'
-import { CLIENT_BROWSER_INVOKE } from '../capabilities'
 import { CodedError } from '@craft-agent/shared/protocol'
 
 const TEST_TOKEN = 'test-token-with-enough-entropy-to-pass'
+const TEST_CLIENT_CAPABILITY = 'client:testCapability'
 
 const teardown: Array<() => void | Promise<void>> = []
 
@@ -64,7 +64,7 @@ describe('Transport — error code preservation', () => {
   it('preserves `err.code` from server handler → client invoke', async () => {
     const { server, client } = await startPair()
     server.handle('explode', async () => {
-      throw new CodedError('BROWSER_INSTANCE_NOT_OWNED', 'nope')
+      throw new CodedError('REQUEST_TIMEOUT', 'nope')
     })
 
     let caught: unknown
@@ -74,31 +74,31 @@ describe('Transport — error code preservation', () => {
       caught = err
     }
     expect(caught).toBeInstanceOf(Error)
-    expect((caught as { code?: string }).code).toBe('BROWSER_INSTANCE_NOT_OWNED')
+    expect((caught as { code?: string }).code).toBe('REQUEST_TIMEOUT')
     // Class identity lost over the wire — receiver must branch on `.code`.
     expect(caught instanceof CodedError).toBe(false)
   })
 
   it('preserves `err.code` from client handler → server invokeClient', async () => {
-    const { server, client } = await startPair({ clientCapabilities: [CLIENT_BROWSER_INVOKE] })
+    const { server, client } = await startPair({ clientCapabilities: [TEST_CLIENT_CAPABILITY] })
 
-    client.handleCapability(CLIENT_BROWSER_INVOKE, () => {
-      throw new CodedError('BROWSER_REMOTE_EVALUATE_BLOCKED', 'denied')
+    client.handleCapability(TEST_CLIENT_CAPABILITY, () => {
+      throw new CodedError('CAPABILITY_UNAVAILABLE', 'denied')
     })
 
     // Find the client id from server.
-    const clientIds = server.findClientsWithCapability(CLIENT_BROWSER_INVOKE)
+    const clientIds = server.findClientsWithCapability(TEST_CLIENT_CAPABILITY)
     expect(clientIds).toHaveLength(1)
     const clientId = clientIds[0]!
 
     let caught: unknown
     try {
-      await server.invokeClient(clientId, CLIENT_BROWSER_INVOKE, { v: 1 })
+      await server.invokeClient(clientId, TEST_CLIENT_CAPABILITY, { v: 1 })
     } catch (err) {
       caught = err
     }
     expect(caught).toBeInstanceOf(Error)
-    expect((caught as { code?: string }).code).toBe('BROWSER_REMOTE_EVALUATE_BLOCKED')
+    expect((caught as { code?: string }).code).toBe('CAPABILITY_UNAVAILABLE')
   })
 
   it('falls back to HANDLER_ERROR when handler throws a plain Error', async () => {
@@ -117,17 +117,17 @@ describe('Transport — error code preservation', () => {
 
 describe('Transport — capability introspection', () => {
   it('hasClientCapability returns true only for advertised capabilities', async () => {
-    const { server } = await startPair({ clientCapabilities: [CLIENT_BROWSER_INVOKE] })
-    const ids = server.findClientsWithCapability(CLIENT_BROWSER_INVOKE)
+    const { server } = await startPair({ clientCapabilities: [TEST_CLIENT_CAPABILITY] })
+    const ids = server.findClientsWithCapability(TEST_CLIENT_CAPABILITY)
     expect(ids).toHaveLength(1)
-    expect(server.hasClientCapability(ids[0]!, CLIENT_BROWSER_INVOKE)).toBe(true)
+    expect(server.hasClientCapability(ids[0]!, TEST_CLIENT_CAPABILITY)).toBe(true)
     expect(server.hasClientCapability(ids[0]!, 'unknown-cap')).toBe(false)
-    expect(server.hasClientCapability('not-a-real-id', CLIENT_BROWSER_INVOKE)).toBe(false)
+    expect(server.hasClientCapability('not-a-real-id', TEST_CLIENT_CAPABILITY)).toBe(false)
   })
 
   it('findClientsWithCapability filters by workspaceId', async () => {
-    const { server } = await startPair({ clientCapabilities: [CLIENT_BROWSER_INVOKE], workspaceId: 'ws-a' })
-    expect(server.findClientsWithCapability(CLIENT_BROWSER_INVOKE, { workspaceId: 'ws-a' })).toHaveLength(1)
-    expect(server.findClientsWithCapability(CLIENT_BROWSER_INVOKE, { workspaceId: 'ws-other' })).toHaveLength(0)
+    const { server } = await startPair({ clientCapabilities: [TEST_CLIENT_CAPABILITY], workspaceId: 'ws-a' })
+    expect(server.findClientsWithCapability(TEST_CLIENT_CAPABILITY, { workspaceId: 'ws-a' })).toHaveLength(1)
+    expect(server.findClientsWithCapability(TEST_CLIENT_CAPABILITY, { workspaceId: 'ws-other' })).toHaveLength(0)
   })
 })

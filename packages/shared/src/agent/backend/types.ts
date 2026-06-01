@@ -145,7 +145,7 @@ export interface BridgeUpdateContext {
 }
 
 /**
- * Host runtime context passed from the application shell (Electron/CLI/etc.).
+ * Host runtime context passed from the application shell (WebUI/CLI/etc.).
  * This is intentionally provider-agnostic metadata; backend drivers resolve
  * provider-specific paths from this context internally.
  */
@@ -268,7 +268,7 @@ export interface CoreBackendConfig {
    * Optional callback to resize an oversized image for API compatibility.
    * Called from PreToolUse when Read targets an image exceeding the base64 size limit.
    * Returns path to the resized temp file, or null if resize not possible.
-   * Provided by the host app (Electron uses nativeImage, server could use sharp, etc.).
+   * Provided by the host app (WebUI uses nativeImage, server could use sharp, etc.).
    */
   onImageResize?: (filePath: string, maxSizeBytes: number) => Promise<string | null>;
 

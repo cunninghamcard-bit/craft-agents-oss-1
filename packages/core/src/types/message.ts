@@ -48,7 +48,7 @@ export type ToolStatus = 'pending' | 'executing' | 'completed' | 'error' | 'back
 
 /**
  * Tool display metadata - embedded at storage time for viewer compatibility
- * Icons are base64-encoded to work in both Electron and web viewer
+ * Icons are base64-encoded to work in both WebUI and web viewer
  */
 export interface ToolDisplayMeta {
   /** Display name for the tool (e.g., "Commit", "Linear") */

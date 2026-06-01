@@ -53,7 +53,7 @@ export interface ModelFetcherCredentials {
 /**
  * Plugin interface for provider-specific model discovery.
  *
- * Implementations live in apps/electron/src/main/model-fetchers/.
+ * Implementations live in apps/webui/src/main/model-fetchers/.
  * Each provider implements fetchModels() with its own SDK/API call.
  */
 export interface ModelFetcher {

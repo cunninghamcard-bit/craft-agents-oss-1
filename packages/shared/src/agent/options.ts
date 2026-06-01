@@ -156,7 +156,7 @@ export function resetClaudeConfigCheck(): void {
  * Since SDK 0.2.113 this is the **native** `claude` binary shipped via the
  * platform-specific optional dependency (`@anthropic-ai/claude-agent-sdk-{platform}-{arch}`),
  * not a JS file. Override is only needed when the SDK can't auto-discover the
- * binary — typically packaged Electron builds where module resolution from
+ * binary — typically packaged WebUI builds where module resolution from
  * `sdk.mjs` doesn't find the per-platform package.
  */
 export function setPathToClaudeCodeExecutable(path: string) {
@@ -214,7 +214,7 @@ export function getDefaultOptions(envOverrides?: Record<string, string>): Partia
 
     const env = buildClaudeSubprocessEnv(envOverrides);
 
-    // If custom path is set (e.g., for Electron packaged build), point the SDK at it.
+    // If custom path is set (e.g., for WebUI packaged build), point the SDK at it.
     // This is the native `claude` binary, not a JS file.
     if (customPathToClaudeCodeExecutable) {
         return {

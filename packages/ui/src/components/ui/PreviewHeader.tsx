@@ -2,7 +2,7 @@
  * PreviewHeader - Unified header component for preview windows and overlays
  *
  * Works in two contexts:
- * - Electron windows: Traffic lights on left (handled by OS), badges centered
+ * - WebUI windows: Traffic lights on left (handled by OS), badges centered
  * - Viewer overlays: Badges centered, close button on right
  *
  * Use `onClose` prop to show the close button on the right.
@@ -118,7 +118,7 @@ export interface PreviewHeaderProps {
  * PreviewHeader - Header/toolbar for preview windows and overlays
  *
  * Layout:
- * - Left: 70px spacer (for macOS traffic lights in Electron)
+ * - Left: 70px spacer (for macOS traffic lights in WebUI)
  * - Center: Badges row
  * - Right: Close button (if onClose provided) or 70px spacer
  */

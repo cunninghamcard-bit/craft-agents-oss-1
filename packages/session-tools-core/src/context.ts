@@ -145,7 +145,7 @@ export interface ValidatorInterface {
  * Main context interface for session tools.
  *
  * Both Claude and Codex create their own implementation of this interface:
- * - Claude: createClaudeContext() with direct access to Electron internals
+ * - Claude: createClaudeContext() with direct access to WebUI internals
  * - Codex: createCodexContext() with callback IPC and limited capabilities
  */
 export interface SessionToolContext {

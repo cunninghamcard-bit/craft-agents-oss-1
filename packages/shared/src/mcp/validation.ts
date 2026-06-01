@@ -3,7 +3,7 @@
  *
  * Validates HTTP/SSE MCP servers by connecting directly via CraftMcpClient
  * and listing tools. Avoids spawning a Claude Code subprocess (which is killed
- * by Electron's macOS sandbox — see issue #697).
+ * by WebUI's macOS sandbox — see issue #697).
  */
 
 import { CraftMcpClient } from './client.js';

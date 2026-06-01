@@ -255,7 +255,7 @@ describe('phase4 backend abstraction APIs', () => {
   it.skip('initializeBackendHostRuntime throws for dist-style host root in dev', () => {
     expect(() => initializeBackendHostRuntime({
       hostRuntime: {
-        appRootPath: join(process.cwd(), 'apps', 'electron', 'dist'),
+        appRootPath: join(process.cwd(), 'apps', 'webui', 'dist'),
         isPackaged: false,
       },
     })).toThrow('Claude Code SDK not found');

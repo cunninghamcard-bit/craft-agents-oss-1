@@ -53,8 +53,8 @@ describe('preprocessLinks', () => {
     })
 
     it('wraps a bare repo-relative file path', () => {
-      const input = 'See apps/electron/resources/docs/browser-tools.md for details'
-      expect(preprocessLinks(input)).toBe('See [apps/electron/resources/docs/browser-tools.md](apps/electron/resources/docs/browser-tools.md) for details')
+      const input = 'See resources/docs/sources.md for details'
+      expect(preprocessLinks(input)).toBe('See [resources/docs/sources.md](resources/docs/sources.md) for details')
     })
 
     it('wraps a bare domain', () => {
@@ -233,11 +233,11 @@ describe('detectLinks', () => {
   })
 
   it('detects bare repo-relative file paths', () => {
-    const links = detectLinks('Open apps/electron/resources/docs/browser-tools.md')
+    const links = detectLinks('Open resources/docs/sources.md')
     expect(links).toHaveLength(1)
     expect(links[0]).toBeDefined()
     expect(links[0]!.type).toBe('file')
-    expect(links[0]!.url).toBe('apps/electron/resources/docs/browser-tools.md')
+    expect(links[0]!.url).toBe('resources/docs/sources.md')
   })
 
   it('detects parent-relative file paths', () => {
@@ -259,7 +259,7 @@ describe('isFilePathTarget', () => {
   })
 
   it('accepts repo-relative markdown paths', () => {
-    expect(isFilePathTarget('apps/electron/resources/docs/browser-tools.md')).toBe(true)
+    expect(isFilePathTarget('resources/docs/sources.md')).toBe(true)
   })
 
   it('rejects web URLs', () => {

@@ -21,6 +21,11 @@
  *   CRAFT_WEBUI_PASSWORD       — optional shorter password for web login (falls back to CRAFT_SERVER_TOKEN)
  *   CRAFT_WEBUI_SECURE_COOKIE  — optional true/false override for the session cookie Secure flag
  *   CRAFT_WEBUI_WS_URL         — optional browser-facing ws:// or wss:// URL returned by /api/config
+ *   CRAFT_FEISHU_AUTH_ENABLED  — enable Feishu/Lark in-app passwordless login
+ *   CRAFT_FEISHU_DOMAIN        — feishu or lark (default: feishu)
+ *   CRAFT_FEISHU_APP_ID        — Feishu/Lark app ID
+ *   CRAFT_FEISHU_APP_SECRET    — Feishu/Lark app secret
+ *   CRAFT_FEISHU_PASSWORD_FALLBACK — keep password login available when Feishu auth is enabled
  *   CRAFT_MESSAGING_WA_WORKER  — absolute path to worker.cjs (default: packages/messaging-whatsapp-worker/dist/worker.cjs)
  *   CRAFT_MESSAGING_NODE_BIN   — Node binary used to spawn the WhatsApp worker (default: node)
  */
@@ -116,6 +121,13 @@ const webuiDir = process.env.CRAFT_WEBUI_DIR || undefined
 const webuiEnabled = webuiDir && existsSync(webuiDir)
 const webuiSecureCookies = parseOptionalBooleanEnv('CRAFT_WEBUI_SECURE_COOKIE', process.env.CRAFT_WEBUI_SECURE_COOKIE)
 const webuiWsUrl = parseOptionalWebSocketUrl('CRAFT_WEBUI_WS_URL', process.env.CRAFT_WEBUI_WS_URL)
+const feishuAuthEnabled = parseOptionalBooleanEnv('CRAFT_FEISHU_AUTH_ENABLED', process.env.CRAFT_FEISHU_AUTH_ENABLED) ?? false
+const feishuPasswordFallback = parseOptionalBooleanEnv('CRAFT_FEISHU_PASSWORD_FALLBACK', process.env.CRAFT_FEISHU_PASSWORD_FALLBACK) ?? true
+const feishuDomainRaw = (process.env.CRAFT_FEISHU_DOMAIN ?? 'feishu').trim().toLowerCase()
+if (feishuDomainRaw !== 'feishu' && feishuDomainRaw !== 'lark') {
+  console.error('Invalid CRAFT_FEISHU_DOMAIN: expected feishu or lark.')
+  process.exit(1)
+}
 const serverToken = process.env.CRAFT_SERVER_TOKEN
 
 // ---------------------------------------------------------------------------
@@ -141,6 +153,13 @@ if (webuiEnabled && serverToken) {
     password: process.env.CRAFT_WEBUI_PASSWORD || undefined,
     secureCookies: webuiSecureCookies,
     publicWsUrl: webuiWsUrl,
+    feishuAuth: {
+      enabled: feishuAuthEnabled,
+      domain: feishuDomainRaw,
+      appId: process.env.CRAFT_FEISHU_APP_ID,
+      appSecret: process.env.CRAFT_FEISHU_APP_SECRET,
+      passwordFallback: feishuPasswordFallback,
+    },
     wsProtocol: rpcProtocol,
     // WebUI is served on the same port as WS — wsPort matches the RPC port
     wsPort: rpcPort,
@@ -153,7 +172,7 @@ if (webuiEnabled && serverToken) {
 
 // Resolve WhatsApp worker paths up-front so the helper + Docker env stay in sync.
 // The worker is a Node subprocess — Bun cannot run it directly — so we must
-// pass an explicit `nodeBin` (Electron defaults nodeBin to process.execPath
+// pass an explicit `nodeBin` (WebUI defaults nodeBin to process.execPath
 // which is correct there but wrong under Bun).
 const waWorkerEntry = process.env.CRAFT_MESSAGING_WA_WORKER
   ?? join(bundledAssetsRoot, 'packages', 'messaging-whatsapp-worker', 'dist', 'worker.cjs')
@@ -205,7 +224,6 @@ const instance = await (async () => {
         }
       }),
       createSessionManager: () => new SessionManager(),
-      bindRpcServer: (sm, server) => sm.setRpcServer(server),
       createHandlerDeps: ({ sessionManager, platform, oauthFlowStore }) => {
         messagingHandle = createMessagingBootstrap({
           sessionManager,

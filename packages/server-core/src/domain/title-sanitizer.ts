@@ -1,7 +1,7 @@
 /**
  * Title sanitization utility.
  * Extracted to a separate file to allow unit testing without importing
- * Electron main process modules.
+ * WebUI main process modules.
  */
 import { WS_ID_CHARS } from '@craft-agent/shared/mentions'
 

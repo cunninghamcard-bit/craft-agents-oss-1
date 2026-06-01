@@ -1,7 +1,7 @@
 /**
  * Minimal window-manager interface consumed by server-core handlers.
  *
- * Concrete implementations (e.g. Electron's WindowManager) satisfy this
+ * Concrete implementations (e.g. Web's WindowManager) satisfy this
  * interface structurally — no explicit `implements` clause is required,
  * though adding one is recommended for safety.
  */

@@ -35,7 +35,7 @@ export interface WorkspaceInfo {
 
 /**
  * Full workspace with server-internal details.
- * Used by server code and local Electron renderer (LOCAL_ONLY channels).
+ * Used by server code and local WebUI renderer (LOCAL_ONLY channels).
  */
 export interface Workspace extends WorkspaceInfo {
   rootPath: string;        // Absolute path to local workspace folder (metadata, config). Auto-created for remote workspaces.

@@ -237,4 +237,4 @@ The `--tls-ca` flag sets `NODE_EXTRA_CA_CERTS` before connecting. You can also s
 | `AUTH_FAILED` | Wrong token | Check `CRAFT_SERVER_TOKEN` matches server |
 | `PROTOCOL_VERSION_UNSUPPORTED` | Version mismatch | Update CLI and server to same version |
 | `WebSocket connection error` | Network issue or TLS problem | For self-signed certs, use `--tls-ca` |
-| `No workspace available` | Workspace not yet created | Create one via desktop app or API |
+| `No workspace available` | Workspace not yet created | Create one via WebUI or API |

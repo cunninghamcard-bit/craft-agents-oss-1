@@ -149,12 +149,12 @@ export function registerSystemCoreHandlers(server: RpcServer, deps: HandlerDeps)
     return deps.platform.systemDarkMode?.() ?? false
   })
 
-  // Get runtime versions (previously handled locally in preload via process.versions)
+  // Get runtime versions.
   server.handle(RPC_CHANNELS.system.VERSIONS, async () => {
     return {
       node: process.versions.node,
       chrome: process.versions.chrome ?? undefined,
-      electron: process.versions.electron ?? undefined,
+      runtime: 'server',
     }
   })
 

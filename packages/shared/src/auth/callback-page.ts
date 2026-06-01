@@ -6,7 +6,7 @@
 
 import { CRAFT_LOGO_HTML } from '../branding.ts';
 
-export type AppType = 'terminal' | 'electron';
+export type AppType = 'terminal' | 'web';
 
 /**
  * Generate a minimal, clean callback page matching the app's design system.

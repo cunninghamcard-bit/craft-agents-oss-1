@@ -1,8 +1,8 @@
 /**
  * PlatformContext - Abstraction layer for platform-specific actions
  *
- * This context allows UI components to work in both Electron and web environments.
- * Electron provides actual implementations, web viewer provides no-ops or alternatives.
+ * This context allows UI components to work in both WebUI and web environments.
+ * WebUI provides actual implementations, web viewer provides no-ops or alternatives.
  *
  * Pattern: Dependency injection via context
  * - Components call usePlatform() to get actions
@@ -18,7 +18,7 @@ import { createContext, useContext, type ReactNode } from 'react'
  */
 export interface PlatformActions {
   /**
-   * Open a file in the default application (Electron: shell.openPath)
+   * Open a file in the default application (WebUI: shell.openPath)
    * Web: Could show file contents inline or provide download
    */
   onOpenFile?: (path: string) => void
@@ -31,19 +31,19 @@ export interface PlatformActions {
   onOpenFileExternal?: (path: string) => void
 
   /**
-   * Open a URL in the default browser (Electron: shell.openExternal)
+   * Open a URL in the default browser (WebUI: shell.openExternal)
    * Web: window.open or navigation
    */
   onOpenUrl?: (url: string) => void
 
   /**
-   * Open a code preview in a new window (Electron: opens Monaco window)
+   * Open a code preview in a new window (WebUI: opens Monaco window)
    * Web: Could show inline modal with syntax highlighting
    */
   onOpenCodePreview?: (sessionId: string, toolUseId: string) => void
 
   /**
-   * Open a terminal output preview (Electron: opens terminal window)
+   * Open a terminal output preview (WebUI: opens terminal window)
    * Web: Could show inline modal with monospace output
    */
   onOpenTerminalPreview?: (sessionId: string, toolUseId: string) => void
@@ -77,25 +77,25 @@ export interface PlatformActions {
   onOpenActivityDetails?: (sessionId: string, activityId: string) => void
 
   /**
-   * Read a file's contents as UTF-8 string (Electron: fs.readFile via IPC)
+   * Read a file's contents as UTF-8 string (WebUI: fs.readFile via IPC)
    * Used by datatable/spreadsheet/html-preview blocks to load file-backed content
    */
   onReadFile?: (path: string) => Promise<string>
 
   /**
-   * Read a file as data URL (Electron: fs.readFile via IPC + base64 encode)
+   * Read a file as data URL (WebUI: fs.readFile via IPC + base64 encode)
    * Used by image-preview blocks and image overlays
    */
   onReadFileDataUrl?: (path: string) => Promise<string>
 
   /**
-   * Read a file as binary Uint8Array (Electron: fs.readFile via IPC)
+   * Read a file as binary Uint8Array (WebUI: fs.readFile via IPC)
    * Used by PDF preview blocks that need raw binary data
    */
   onReadFileBinary?: (path: string) => Promise<Uint8Array>
 
   /**
-   * Reveal a file in the system file manager (Electron: shell.showItemInFolder)
+   * Reveal a file in the system file manager (WebUI: shell.showItemInFolder)
    * Web: Not available (menu items hidden when undefined)
    */
   onRevealInFinder?: (path: string) => void
@@ -125,11 +125,11 @@ export interface PlatformProviderProps {
 /**
  * PlatformProvider - Wraps components with platform-specific actions
  *
- * Usage in Electron:
+ * Usage in WebUI:
  * ```tsx
  * <PlatformProvider actions={{
- *   onOpenFile: (path) => window.electronAPI.openFile(path),
- *   onOpenUrl: (url) => window.electronAPI.openUrl(url),
+ *   onOpenFile: (path) => window.webAgentAPI.openFile(path),
+ *   onOpenUrl: (url) => window.webAgentAPI.openUrl(url),
  *   onCopyToClipboard: (text) => navigator.clipboard.writeText(text),
  * }}>
  *   <SessionViewer session={session} />

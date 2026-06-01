@@ -59,11 +59,9 @@ export interface StoredConfig {
   activeWorkspaceId: string | null;
   activeSessionId: string | null;  // Currently active session (primary scope)
   // Notifications
-  notificationsEnabled?: boolean;  // Desktop notifications for task completion (default: true)
+  notificationsEnabled?: boolean;  // Web notifications for task completion (default: true)
   // Appearance
   colorTheme?: string;  // ID of selected preset theme (e.g., 'dracula', 'nord'). Default: 'default'
-  // Auto-update
-  dismissedUpdateVersion?: string;  // Version that user dismissed (skip notifications for this version)
   // Input settings
   autoCapitalisation?: boolean;  // Auto-capitalize first letter when typing (default: true)
   sendMessageKey?: 'enter' | 'cmd-enter';  // Key to send messages (default: 'enter')
@@ -72,9 +70,6 @@ export interface StoredConfig {
   keepAwakeWhileRunning?: boolean;  // Prevent screen sleep while sessions are running (default: false)
   // Tool metadata
   richToolDescriptions?: boolean;  // Add intent/action metadata to all tool calls (default: true)
-  // Tools
-  browserToolEnabled?: boolean;  // Enable built-in browser tool (default: true). Disable for Playwright/Puppeteer.
-  allowRemoteEvaluate?: boolean;  // Allow remote agents to call `browser_tool evaluate` on local browser (default: true).
   // Prompt caching & context
   extendedPromptCache?: boolean;  // Use 1h prompt cache TTL instead of 5m (default: false)
   enable1MContext?: boolean;  // Enable 1M context window for supported models (default: false — opt-in; requires Anthropic Tier 4+)
@@ -105,7 +100,7 @@ let configDefaultsSynced = false;
  * Always writes on launch to ensure defaults are up-to-date with the running version.
  * Follows the same pattern as docs, themes, and other bundled assets.
  *
- * Source of truth: apps/electron/resources/config-defaults.json
+ * Source of truth: resources/config-defaults.json
  */
 /** Minimal config-defaults used when bundled assets aren't available (CI, standalone server). */
 const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
@@ -120,8 +115,6 @@ const FALLBACK_CONFIG_DEFAULTS: ConfigDefaults = {
     keepAwakeWhileRunning: false,
     richToolDescriptions: true,
     extendedPromptCache: false,
-    browserToolEnabled: true,
-    allowRemoteEvaluate: true,
   },
   workspaceDefaults: {
     thinkingLevel: 'medium',
@@ -453,58 +446,6 @@ export function setExtendedPromptCache(enabled: boolean): void {
 }
 
 /**
- * Get whether the built-in browser tool is enabled.
- * When disabled, browser_tool is not included in session tools.
- * Defaults to true if not set.
- */
-export function getBrowserToolEnabled(): boolean {
-  const config = loadStoredConfig();
-  if (config?.browserToolEnabled !== undefined) {
-    return config.browserToolEnabled;
-  }
-  const defaults = loadConfigDefaults();
-  return defaults.defaults.browserToolEnabled;
-}
-
-/**
- * Set whether the built-in browser tool is enabled.
- */
-export function setBrowserToolEnabled(enabled: boolean): void {
-  const config = loadStoredConfig();
-  if (!config) return;
-  config.browserToolEnabled = enabled;
-  saveConfig(config);
-
-  // Clear session tool caches so all sessions pick up the change immediately.
-  // Lazy import to avoid circular dependency (storage ← session-scoped-tools ← storage).
-  import('../agent/session-scoped-tools.ts').then(m => m.invalidateAllSessionToolsCaches()).catch(() => {});
-}
-
-/**
- * Whether remote agents may call `browser_tool evaluate <expression>` against this
- * desktop client's local browser. The check is enforced inside the local capability
- * dispatcher; the remote server cannot override it.
- *
- * Defaults to true. Users can flip it off in Settings → AI → Advanced if they don't
- * trust the remote workspaces they connect to.
- */
-export function getAllowRemoteEvaluate(): boolean {
-  const config = loadStoredConfig();
-  if (config?.allowRemoteEvaluate !== undefined) {
-    return config.allowRemoteEvaluate;
-  }
-  const defaults = loadConfigDefaults();
-  return defaults.defaults.allowRemoteEvaluate;
-}
-
-export function setAllowRemoteEvaluate(allowed: boolean): void {
-  const config = loadStoredConfig();
-  if (!config) return;
-  config.allowRemoteEvaluate = allowed;
-  saveConfig(config);
-}
-
-/**
  * Get whether 1M context window is enabled.
  * When disabled, models use 200K context and the interceptor strips the context-1m beta header.
  * Defaults to false — the 1M beta requires Anthropic Tier 4+, and enabling it by default
@@ -656,7 +597,7 @@ export function getWorkspaces(): Workspace[] {
     if (!iconUrl || (!iconUrl.startsWith('http://') && !iconUrl.startsWith('https://'))) {
       const localIcon = findWorkspaceIcon(w.rootPath);
       if (localIcon) {
-        // Convert absolute path to file:// URL for Electron renderer
+        // Convert absolute path to file:// URL for WebUI renderer
         // Append mtime as cache-buster so UI refreshes when icon changes
         try {
           const mtime = statSync(localIcon).mtimeMs;
@@ -1492,41 +1433,6 @@ export function setColorTheme(themeId: string): void {
   const config = loadStoredConfig();
   if (!config) return;
   config.colorTheme = themeId;
-  saveConfig(config);
-}
-
-// ============================================
-// Auto-Update Dismissed Version
-// ============================================
-
-/**
- * Get the dismissed update version.
- * Returns null if no version is dismissed.
- */
-export function getDismissedUpdateVersion(): string | null {
-  const config = loadStoredConfig();
-  return config?.dismissedUpdateVersion ?? null;
-}
-
-/**
- * Set the dismissed update version.
- * Pass the version string to dismiss notifications for that version.
- */
-export function setDismissedUpdateVersion(version: string): void {
-  const config = loadStoredConfig();
-  if (!config) return;
-  config.dismissedUpdateVersion = version;
-  saveConfig(config);
-}
-
-/**
- * Clear the dismissed update version.
- * Call this when a new version is released (or on successful update).
- */
-export function clearDismissedUpdateVersion(): void {
-  const config = loadStoredConfig();
-  if (!config) return;
-  delete config.dismissedUpdateVersion;
   saveConfig(config);
 }
 

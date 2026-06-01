@@ -1,5 +1,5 @@
 /**
- * Onboarding IPC handlers for Electron main process
+ * Onboarding IPC handlers for Web main process
  *
  * Handles workspace setup and configuration persistence.
  */

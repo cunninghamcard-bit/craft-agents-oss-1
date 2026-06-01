@@ -179,9 +179,9 @@ describe('resolveInterceptorBundlePath dev-mode source preference', () => {
   });
 
   it('prefers .ts source over the bundled .cjs in dev (non-packaged) so changes propagate without rebuild', () => {
-    const appRoot = join(tmpBase, 'monorepo', 'apps', 'electron');
+    const appRoot = join(tmpBase, 'monorepo', 'apps', 'webui');
     const sourceDir = join(tmpBase, 'monorepo', 'packages', 'shared', 'src');
-    const bundleDir = join(tmpBase, 'monorepo', 'apps', 'electron', 'dist');
+    const bundleDir = join(tmpBase, 'monorepo', 'apps', 'webui', 'dist');
     mkdirSync(sourceDir, { recursive: true });
     mkdirSync(bundleDir, { recursive: true });
     const sourcePath = join(sourceDir, 'unified-network-interceptor.ts');

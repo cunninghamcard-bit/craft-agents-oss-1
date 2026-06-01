@@ -6,7 +6,7 @@
  *
  * When adding a new model or provider:
  * 1. Add the model(s) to MODEL_REGISTRY
- * 2. The convenience exports (ANTHROPIC_MODELS, OPENAI_MODELS) auto-update
+ * 2. The convenience exports (ANTHROPIC_MODELS, OPENAI_MODELS) are derived from the registry
  * 3. Update llm-connections.ts if adding a new built-in connection
  */
 // Bedrock-native → bare Anthropic ID reverse mapping.
@@ -139,7 +139,7 @@ export const MODEL_REGISTRY: ModelDefinition[] = [
   // Pi Models
   // No hardcoded entries — models are discovered dynamically:
   //   - Pi: getModels(provider) from @mariozechner/pi-ai SDK
-  // See ModelRefreshService in apps/electron/src/main/model-fetchers/
+  // See ModelRefreshService in apps/webui/src/main/model-fetchers/
   // ----------------------------------------
 ];
 

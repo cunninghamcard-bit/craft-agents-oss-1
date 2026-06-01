@@ -1,5 +1,5 @@
 /**
- * Headless PlatformServices — runs under Bun without Electron.
+ * Headless PlatformServices — runs under Bun without Web.
  *
  * Uses sharp for image processing, console for logging.
  * GUI-only methods (openPath, openExternal, quit, etc.) are left undefined —

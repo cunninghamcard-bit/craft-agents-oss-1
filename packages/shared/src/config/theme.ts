@@ -225,7 +225,7 @@ export function themeToCSS(theme: ThemeOverrides, isDark: boolean = false): stri
 }
 
 /**
- * Hex equivalents of background colors for Electron BrowserWindow.
+ * Hex equivalents of background colors for WebUI BrowserWindow.
  * The main process cannot use CSS/oklch colors, so we provide hex values
  * that visually match the DEFAULT_THEME oklch colors.
  */

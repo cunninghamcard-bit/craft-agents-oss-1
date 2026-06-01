@@ -1,7 +1,7 @@
 /**
  * TypeScript types for config-defaults.json
  *
- * Source of truth: apps/electron/resources/config-defaults.json
+ * Source of truth: resources/config-defaults.json
  * This file only defines types - the actual defaults come from the bundled JSON.
  */
 
@@ -20,12 +20,6 @@ export interface ConfigDefaults {
     keepAwakeWhileRunning: boolean;
     richToolDescriptions: boolean;
     extendedPromptCache: boolean;
-    browserToolEnabled: boolean;
-    /**
-     * Allow remote agents to call `browser_tool evaluate <expression>`.
-     * When false, the local dispatcher rejects with `BROWSER_REMOTE_EVALUATE_BLOCKED`.
-     */
-    allowRemoteEvaluate: boolean;
   };
   workspaceDefaults: {
     thinkingLevel: ThinkingLevel;

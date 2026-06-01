@@ -4,7 +4,7 @@
  * Loads release notes from bundled assets and syncs them to ~/.craft-agent/release-notes/.
  * Follows the same pattern as docs/index.ts.
  *
- * Source content lives in apps/electron/resources/release-notes/*.md.
+ * Source content lives in resources/release-notes/*.md when release notes are bundled.
  */
 
 import { join } from 'path';

@@ -81,7 +81,6 @@ export default [
   // Temporary exceptions for unresolved shadow migrations.
   {
     files: [
-      'src/components/ui/BrowserControls.tsx',
       'src/components/markdown/ImageCardStack.tsx',
       'src/components/ui/__tests__/styled-dropdown.test.ts',
     ],

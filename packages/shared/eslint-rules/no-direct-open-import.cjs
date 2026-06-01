@@ -3,7 +3,7 @@
  *
  * Prevents importing 'open' package directly.
  * The 'open' package is ESM-only and causes issues when bundled with esbuild
- * for Electron due to ESM/CJS interop problems.
+ * for WebUI due to ESM/CJS interop problems.
  *
  * Use the centralized openUrl() from utils/open-url.ts instead, which handles
  * the dynamic import and ESM/CJS interop correctly.
@@ -31,7 +31,7 @@ module.exports = {
     },
     messages: {
       noDirectOpenImport:
-        "Do not import 'open' directly. Use openUrl() from '../utils/open-url.ts' instead. Direct imports cause ESM/CJS interop issues in bundled Electron code.",
+        "Do not import 'open' directly. Use openUrl() from '../utils/open-url.ts' instead. Direct imports cause ESM/CJS interop issues in bundled WebUI code.",
     },
     schema: [],
   },

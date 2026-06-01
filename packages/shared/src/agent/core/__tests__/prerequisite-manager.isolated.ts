@@ -6,8 +6,7 @@
  */
 import { describe, it, expect, beforeEach, mock } from 'bun:test';
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
 import { PrerequisiteManager } from '../prerequisite-manager.ts';
 
 // Mock existsSync to control guide.md existence
@@ -24,10 +23,6 @@ const WORKSPACE_ROOT = '/test/workspace';
 
 function guidePath(slug: string): string {
   return resolve(WORKSPACE_ROOT, 'sources', slug, 'guide.md');
-}
-
-function browserDocPath(): string {
-  return resolve(join(homedir(), '.craft-agent', 'docs', 'browser-tools.md'));
 }
 
 describe('PrerequisiteManager', () => {
@@ -94,23 +89,6 @@ describe('PrerequisiteManager', () => {
       expect(result.allowed).toBe(true);
     });
 
-    it('matches native browser tools and blocks until browser docs are read', () => {
-      const docsPath = browserDocPath();
-      mockExistsPaths.add(docsPath);
-
-      const result = manager.checkPrerequisites('browser_snapshot');
-      expect(result.allowed).toBe(false);
-      expect(result.blockReason).toContain(docsPath);
-    });
-
-    it('matches session browser tools and blocks until browser docs are read', () => {
-      const docsPath = browserDocPath();
-      mockExistsPaths.add(docsPath);
-
-      const result = manager.checkPrerequisites('mcp__session__browser_tool');
-      expect(result.allowed).toBe(false);
-      expect(result.blockReason).toContain(docsPath);
-    });
   });
 
   // ============================================================
@@ -294,16 +272,6 @@ describe('PrerequisiteManager', () => {
       expect(manager.checkPrerequisites('mcp__linear__listIssues').allowed).toBe(true);
     });
 
-    it('does not bypass strict browser prerequisite after repeated rejections', () => {
-      const docsPath = browserDocPath();
-      mockExistsPaths.add(docsPath);
-
-      expect(manager.checkPrerequisites('browser_open').allowed).toBe(false);
-      expect(manager.checkPrerequisites('browser_open').allowed).toBe(false);
-
-      manager.trackReadTool({ file_path: docsPath });
-      expect(manager.checkPrerequisites('browser_open').allowed).toBe(true);
-    });
   });
 
   // ============================================================

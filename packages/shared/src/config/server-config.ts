@@ -1,5 +1,5 @@
 /**
- * Server mode configuration — controls whether the Electron app
+ * Server mode configuration — controls whether the WebUI app
  * accepts remote connections from other machines.
  *
  * When enabled, the app binds to 0.0.0.0 on a fixed port instead of

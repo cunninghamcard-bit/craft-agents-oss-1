@@ -2,7 +2,7 @@
  * Tool Result Parsers
  *
  * Shared utilities for parsing tool results from Claude Code SDK tools.
- * Used by both Electron and viewer apps for consistent overlay display.
+ * Used by both WebUI and viewer apps for consistent overlay display.
  */
 
 import type { ActivityItem } from '../components/chat/TurnCard'
@@ -454,11 +454,6 @@ export function formatToolCommandPreview(
 
   if (!input || Object.keys(input).length === 0) {
     return normalized
-  }
-
-  // Wrapper commands pass through the raw CLI input for best fidelity.
-  if (normalized === 'browser_tool' && typeof input.command === 'string' && input.command.trim()) {
-    return input.command.trim()
   }
 
   const entries = Object.entries(input)

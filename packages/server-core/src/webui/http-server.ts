@@ -125,6 +125,8 @@ export interface WebuiHandlerOptions {
   secret: string
   /** Optional separate web UI password. Falls back to `secret` for verification. */
   password?: string
+  /** Feishu/Lark in-app passwordless login. */
+  feishuAuth?: FeishuAuthOptions
   /** Explicit Secure-cookie override. When unset, infer from the request / proxy headers. */
   secureCookies?: boolean
   /** Optional browser-facing WebSocket URL override for reverse-proxy deployments. */
@@ -145,6 +147,93 @@ export interface WebuiHandlerOptions {
    * and 'direct' is used as the rate-limit key.
    */
   trustedProxies?: string[]
+}
+
+export interface FeishuAuthOptions {
+  enabled: boolean
+  domain: 'feishu' | 'lark'
+  appId?: string
+  appSecret?: string
+  passwordFallback?: boolean
+}
+
+interface FeishuUserInfo {
+  openId?: string
+  userId?: string
+  unionId?: string
+  name?: string
+  email?: string
+  tenantKey?: string
+}
+
+let cachedFeishuAppToken: {
+  cacheKey: string
+  token: string
+  expiresAt: number
+} | null = null
+
+function getFeishuOpenApiBase(domain: 'feishu' | 'lark'): string {
+  return domain === 'lark'
+    ? 'https://open.larksuite.com'
+    : 'https://open.feishu.cn'
+}
+
+async function getFeishuAppAccessToken(options: Required<Pick<FeishuAuthOptions, 'domain' | 'appId' | 'appSecret'>>): Promise<string> {
+  const cacheKey = `${options.domain}:${options.appId}`
+  const now = Date.now()
+  if (cachedFeishuAppToken?.cacheKey === cacheKey && cachedFeishuAppToken.expiresAt > now + 60_000) {
+    return cachedFeishuAppToken.token
+  }
+
+  const res = await fetch(`${getFeishuOpenApiBase(options.domain)}/open-apis/auth/v3/app_access_token/internal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({
+      app_id: options.appId,
+      app_secret: options.appSecret,
+    }),
+  })
+  const json = await res.json().catch(() => ({})) as any
+  if (!res.ok || json.code !== 0 || !json.app_access_token) {
+    throw new Error(json.msg || `Feishu app_access_token request failed: HTTP ${res.status}`)
+  }
+
+  const ttlSeconds = Number(json.expire) || 7200
+  cachedFeishuAppToken = {
+    cacheKey,
+    token: json.app_access_token,
+    expiresAt: now + Math.max(60, ttlSeconds - 300) * 1000,
+  }
+  return json.app_access_token
+}
+
+async function exchangeFeishuCode(options: Required<Pick<FeishuAuthOptions, 'domain' | 'appId' | 'appSecret'>>, code: string): Promise<FeishuUserInfo> {
+  const appAccessToken = await getFeishuAppAccessToken(options)
+  const res = await fetch(`${getFeishuOpenApiBase(options.domain)}/open-apis/authen/v1/access_token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json; charset=utf-8',
+      Authorization: `Bearer ${appAccessToken}`,
+    },
+    body: JSON.stringify({
+      grant_type: 'authorization_code',
+      code,
+    }),
+  })
+  const json = await res.json().catch(() => ({})) as any
+  const data = json.data ?? json
+  if (!res.ok || json.code !== 0 || !data) {
+    throw new Error(json.msg || `Feishu access_token request failed: HTTP ${res.status}`)
+  }
+
+  return {
+    openId: data.open_id,
+    userId: data.user_id,
+    unionId: data.union_id,
+    name: data.name || data.en_name,
+    email: data.email,
+    tenantKey: data.tenant_key,
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -177,6 +266,7 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
     wsPort,
     getHealthCheck,
     logger,
+    feishuAuth,
     trustedProxies,
   } = options
 
@@ -282,6 +372,64 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
           'Set-Cookie': buildLogoutCookie(useSecureCookies),
         },
       })
+    }
+
+    // ── Feishu/Lark auth config (no auth) ──
+    if (path === '/api/auth/feishu/config' && req.method === 'GET') {
+      const enabled = !!(feishuAuth?.enabled && feishuAuth.appId && feishuAuth.appSecret)
+      return Response.json({
+        enabled,
+        domain: feishuAuth?.domain ?? 'feishu',
+        appId: enabled ? feishuAuth?.appId : undefined,
+        passwordFallback: feishuAuth?.passwordFallback ?? true,
+      })
+    }
+
+    // ── Feishu/Lark passwordless session exchange (no cookie auth) ──
+    if (path === '/api/auth/feishu/session' && req.method === 'POST') {
+      if (!feishuAuth?.enabled || !feishuAuth.appId || !feishuAuth.appSecret) {
+        return Response.json({ error: 'Feishu auth is not enabled' }, { status: 404 })
+      }
+
+      let body: { code?: string }
+      try {
+        body = await req.json() as { code?: string }
+      } catch {
+        return Response.json({ error: 'Invalid request body' }, { status: 400 })
+      }
+      if (!body.code || typeof body.code !== 'string') {
+        return Response.json({ error: 'Feishu code is required' }, { status: 400 })
+      }
+
+      try {
+        const user = await exchangeFeishuCode({
+          domain: feishuAuth.domain,
+          appId: feishuAuth.appId,
+          appSecret: feishuAuth.appSecret,
+        }, body.code)
+        const sub = user.openId ?? user.userId ?? user.unionId
+        if (!sub) {
+          return Response.json({ error: 'Feishu did not return a user identity' }, { status: 401 })
+        }
+
+        const jwt = await createSessionToken(secret, {
+          sub,
+          authProvider: feishuAuth.domain,
+          feishuUser: user,
+        })
+        logger.info(`[webui] Successful ${feishuAuth.domain} auth for ${sub}`)
+
+        return Response.json({ ok: true, user }, {
+          status: 200,
+          headers: {
+            'Set-Cookie': buildSessionCookie(jwt, useSecureCookies),
+          },
+        })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        logger.warn(`[webui] Feishu auth failed: ${message}`)
+        return Response.json({ error: message }, { status: 401 })
+      }
     }
 
     // ── OAuth callback (no cookie auth — state param is CSRF protection) ──

@@ -226,9 +226,9 @@ describe('extractToolStarts', () => {
   })
 
   it('re-emits duplicate empty-input tool_start when metadata arrives late', () => {
-    const toolUseId = 'toolu_browser_1'
+    const toolUseId = 'toolu_session_1'
     const streamBlocks: ContentBlock[] = [
-      makeToolUseBlock('mcp__session__browser_open', {}, toolUseId),
+      makeToolUseBlock('mcp__session__get_info', {}, toolUseId),
     ]
 
     try {
@@ -244,20 +244,20 @@ describe('extractToolStarts', () => {
 
       // Metadata is captured later by interceptor/store
       toolMetadataStore.set(toolUseId, {
-        intent: 'Open the in-app browser window',
-        displayName: 'Open Browser',
+        intent: 'Load session information',
+        displayName: 'Get Session Info',
         timestamp: Date.now(),
       })
 
-      // Duplicate assistant event still has empty input for browser_open,
+      // Duplicate assistant event still has empty input,
       // but should re-emit now that metadata is available.
       const events2 = extractToolStarts(streamBlocks, null, toolIndex, emittedIds)
       expect(events2).toHaveLength(1)
       expect(events2[0]).toMatchObject({
         toolUseId,
         input: {},
-        intent: 'Open the in-app browser window',
-        displayName: 'Open Browser',
+        intent: 'Load session information',
+        displayName: 'Get Session Info',
       })
     } finally {
       toolMetadataStore.delete(toolUseId)

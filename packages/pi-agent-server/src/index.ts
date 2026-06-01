@@ -4,14 +4,14 @@
  *
  * Out-of-process Pi agent server communicating via JSONL over stdio.
  * Wraps @mariozechner/pi-coding-agent SDK and communicates with the main
- * Electron process using a line-delimited JSON protocol.
+ * WebUI process using a line-delimited JSON protocol.
  *
  * The main process spawns this as a child process. All Pi SDK interactions
  * (session creation, prompting, tool execution, permissions) happen here,
  * with events forwarded back to the main process for UI rendering.
  *
  * This design isolates the Pi SDK's ESM + heavy dependencies into a
- * separate process, avoiding bundling issues in the Electron main process.
+ * separate process, avoiding bundling issues in the WebUI main process.
  */
 
 import http from 'node:http';

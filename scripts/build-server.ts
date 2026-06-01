@@ -68,7 +68,7 @@ interface ServerBuildConfig {
   platform: ServerPlatform;
   arch: Arch;
   rootDir: string;
-  electronDir: string;  // Source of resources
+  bundleRoot: string;  // Source of resources
   outputDir: string;
   compress: boolean;
   skipDownload: boolean;
@@ -113,8 +113,8 @@ Examples:
 // ---------------------------------------------------------------------------
 
 function assembleResources(config: ServerBuildConfig): void {
-  const { electronDir, outputDir, platform, arch } = config;
-  const srcResources = join(electronDir, 'resources');
+  const { bundleRoot, outputDir, platform, arch } = config;
+  const srcResources = join(bundleRoot, 'resources');
   const destResources = join(outputDir, 'resources');
 
   console.log('  Copying docs, themes, permissions, tool-icons...');
@@ -182,7 +182,7 @@ function assembleResources(config: ServerBuildConfig): void {
 }
 
 // ---------------------------------------------------------------------------
-// uv binary — download into output dir (not electron resources)
+// uv binary — download into output dir (not server resources)
 // ---------------------------------------------------------------------------
 
 async function downloadUvForServer(config: ServerBuildConfig): Promise<void> {
@@ -194,12 +194,12 @@ async function downloadUvForServer(config: ServerBuildConfig): Promise<void> {
     return;
   }
 
-  // Use common.ts downloadUv which writes to electronDir/resources/bin/{platform-arch}/
+  // Use common.ts downloadUv which writes to bundleRoot/resources/bin/{platform-arch}/
   // Then we'll copy the binary to our flat layout
   const platformKey = getPlatformKey(platform, arch);
-  const electronUvPath = join(config.electronDir, 'resources', 'bin', platformKey, 'uv');
+  const serverUvPath = join(config.bundleRoot, 'resources', 'bin', platformKey, 'uv');
 
-  if (!existsSync(electronUvPath)) {
+  if (!existsSync(serverUvPath)) {
     // Download using the shared helper
     const buildConfig: BuildConfig = {
       platform,
@@ -208,19 +208,19 @@ async function downloadUvForServer(config: ServerBuildConfig): Promise<void> {
       uploadLatest: false,
       uploadScript: false,
       rootDir: config.rootDir,
-      electronDir: config.electronDir,
+      bundleRoot: config.bundleRoot,
     };
     await downloadUv(buildConfig);
   }
 
-  if (!existsSync(electronUvPath)) {
-    throw new Error(`uv binary not found after download at ${electronUvPath}`);
+  if (!existsSync(serverUvPath)) {
+    throw new Error(`uv binary not found after download at ${serverUvPath}`);
   }
 
   // Flatten: copy to resources/bin/uv (no platform subdirectory in server dist)
   const binDir = join(outputDir, 'resources', 'bin');
   mkdirSync(binDir, { recursive: true });
-  copyFileSync(electronUvPath, uvDest);
+  copyFileSync(serverUvPath, uvDest);
   await $`chmod +x ${uvDest}`.quiet();
   console.log(`  uv binary installed (${(lstatSync(uvDest).size / 1024 / 1024).toFixed(1)} MB)`);
 }
@@ -239,7 +239,7 @@ async function downloadBunForServer(config: ServerBuildConfig): Promise<void> {
     return;
   }
 
-  // Download to electron's vendor dir using shared helper, then copy
+  // Download to server's vendor dir using shared helper, then copy
   const buildConfig: BuildConfig = {
     platform,
     arch,
@@ -247,17 +247,17 @@ async function downloadBunForServer(config: ServerBuildConfig): Promise<void> {
     uploadLatest: false,
     uploadScript: false,
     rootDir: config.rootDir,
-    electronDir: config.electronDir,
+    bundleRoot: config.bundleRoot,
   };
   await downloadBun(buildConfig);
 
-  const electronBunPath = join(config.electronDir, 'vendor', 'bun', 'bun');
-  if (!existsSync(electronBunPath)) {
-    throw new Error(`Bun binary not found after download at ${electronBunPath}`);
+  const serverBunPath = join(config.bundleRoot, 'vendor', 'bun', 'bun');
+  if (!existsSync(serverBunPath)) {
+    throw new Error(`Bun binary not found after download at ${serverBunPath}`);
   }
 
   mkdirSync(runtimeDir, { recursive: true });
-  copyFileSync(electronBunPath, bunDest);
+  copyFileSync(serverBunPath, bunDest);
   await $`chmod +x ${bunDest}`.quiet();
   console.log(`  Bun runtime installed (${(lstatSync(bunDest).size / 1024 / 1024).toFixed(1)} MB)`);
 }
@@ -800,16 +800,16 @@ async function main(): Promise<void> {
 
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const rootDir = dirname(scriptDir);
-  const electronDir = join(rootDir, 'apps', 'electron');
+  const bundleRoot = rootDir;
 
   if (!existsSync(join(rootDir, 'package.json'))) {
     console.error('Must run from the repository root');
     process.exit(1);
   }
 
-  // Read version from electron package.json
-  const electronPkg = JSON.parse(readFileSync(join(electronDir, 'package.json'), 'utf-8'));
-  const version: string = electronPkg.version;
+  // Read version from root package.json
+  const rootPkg = JSON.parse(readFileSync(join(rootDir, 'package.json'), 'utf-8'));
+  const version: string = rootPkg.version;
 
   const outputDir = join(rootDir, values.output!);
 
@@ -817,7 +817,7 @@ async function main(): Promise<void> {
     platform,
     arch,
     rootDir,
-    electronDir,
+    bundleRoot,
     outputDir,
     compress: values.compress ?? false,
     skipDownload: values['skip-download'] ?? false,
@@ -851,7 +851,7 @@ async function main(): Promise<void> {
     uploadLatest: false,
     uploadScript: false,
     rootDir,
-    electronDir,
+    bundleRoot,
   };
   buildMcpServers(buildConfig);
 

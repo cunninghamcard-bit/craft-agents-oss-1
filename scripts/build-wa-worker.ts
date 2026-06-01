@@ -9,10 +9,8 @@
  * The dynamic import at runtime still works because esbuild resolves literal
  * dynamic-import strings at bundle time.
  *
- * The worker is spawned as a Node subprocess by the WhatsAppAdapter:
- *   - Electron: re-enters its embedded Node via ELECTRON_RUN_AS_NODE=1.
- *   - Headless/Bun server: spawns a system `node` binary (Bun cannot run the
- *     CJS worker because Baileys' crypto deps depend on Node's runtime).
+ * The worker is spawned as a Node subprocess by the headless/Bun server
+ * because Baileys' crypto deps depend on Node's runtime.
  * That's why we emit CJS + platform=node — it must stay Node-compatible.
  */
 
@@ -92,13 +90,12 @@ async function main(): Promise<void> {
       // subprocess after `bun run build:wa-worker`.
       `--define:__WA_WORKER_BUILD_ID__=${JSON.stringify(buildId)}`,
       `--define:__WA_WORKER_GIT_SHA__=${JSON.stringify(gitSha)}`,
-      // Mark only Electron + Baileys' runtime-optional peers external.
+      // Mark only Baileys' runtime-optional peers external.
       // Baileys itself and all its required transitive deps get bundled.
       //
       // The three optional deps below are unused by Craft Agent (no link
       // previews, no terminal QR, no inline image transforms). Baileys
       // guards them with try/catch so they fail silently at runtime.
-      "--external:electron",
       "--external:link-preview-js",
       "--external:qrcode-terminal",
       "--external:jimp",

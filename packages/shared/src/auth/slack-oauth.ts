@@ -242,7 +242,7 @@ export function getSlackScopes(options: SlackOAuthOptions): string[] {
 export interface PrepareSlackOAuthOptions {
   service?: SlackService;
   userScopes?: string[];
-  /** Port for the local callback server (Electron). One of callbackPort or callbackUrl required. */
+  /** Port for the local callback server (Web). One of callbackPort or callbackUrl required. */
   callbackPort?: number;
   /** Full callback URL (WebUI). Takes precedence over callbackPort. */
   callbackUrl?: string;
@@ -347,7 +347,7 @@ export async function startSlackOAuth(options: SlackOAuthOptions = {}): Promise<
     const state = generateState();
 
     // Start local HTTP callback server with deeplink for returning to chat session
-    const appType = options.appType || 'electron';
+    const appType = options.appType || 'web';
     const deeplinkUrl = buildOAuthDeeplinkUrl(options.sessionContext);
     const callbackServer = await createCallbackServer({ appType, deeplinkUrl });
 

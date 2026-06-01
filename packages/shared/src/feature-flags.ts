@@ -19,7 +19,7 @@ function parseBooleanEnv(value: string | undefined): boolean | undefined {
 /**
  * Shared runtime detector for development/debug environments.
  *
- * Use this instead of app-specific debug flags (e.g., Electron main isDebugMode)
+ * Use this instead of app-specific debug flags (e.g., WebUI main isDebugMode)
  * so behavior stays consistent across shared code and subprocess backends.
  */
 export function isDevRuntime(): boolean {

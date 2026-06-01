@@ -65,7 +65,6 @@ COPY packages/craft-cli/package.json packages/craft-cli/
 COPY packages/ui/package.json packages/ui/
 COPY packages/messaging-gateway/package.json packages/messaging-gateway/
 COPY packages/messaging-whatsapp-worker/package.json packages/messaging-whatsapp-worker/
-COPY apps/electron/package.json apps/electron/
 COPY apps/cli/package.json apps/cli/
 COPY apps/marketing/package.json apps/marketing/
 COPY apps/viewer/package.json apps/viewer/
@@ -106,7 +105,7 @@ USER craftagents
 ENV CRAFT_RPC_HOST=0.0.0.0
 ENV CRAFT_RPC_PORT=9100
 ENV CRAFT_WEBUI_DIR=/app/apps/webui/dist
-ENV CRAFT_BUNDLED_ASSETS_ROOT=/app/apps/electron
+ENV CRAFT_BUNDLED_ASSETS_ROOT=/app
 # WhatsApp worker — Bun cannot run the CJS worker, so we point the adapter at
 # system `node` (installed above). If CRAFT_BUNDLED_ASSETS_ROOT changes, update
 # CRAFT_MESSAGING_WA_WORKER to match; the default in packages/server resolves

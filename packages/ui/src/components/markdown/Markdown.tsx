@@ -191,7 +191,7 @@ function createComponents(
     //   through `defaultUrlTransform`; any dangerous scheme
     //   (javascript:/data:/vbscript:/file:) is stripped to empty, in which case
     //   we omit the attribute entirely. That blocks middle-click and
-    //   cmd-click escape routes (Electron's `setWindowOpenHandler` /
+    //   cmd-click escape routes (WebUI's `setWindowOpenHandler` /
     //   `will-navigate` would otherwise bypass our React `onClick` and call
     //   `shell.openExternal` directly).
     // - The click handler still receives the ORIGINAL `href` and routes it

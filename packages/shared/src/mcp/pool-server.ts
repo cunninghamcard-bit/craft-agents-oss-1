@@ -13,7 +13,7 @@
  * Architecture:
  *   Codex/Copilot SDK subprocess
  *       ↓ (HTTP Streamable HTTP protocol)
- *   McpPoolServer (this, in Electron main process)
+ *   McpPoolServer (this, in WebUI main process)
  *       ↓
  *   McpClientPool
  *       ↓ (per-source MCP connections)

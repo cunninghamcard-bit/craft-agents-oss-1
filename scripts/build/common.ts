@@ -26,7 +26,7 @@ export interface BuildConfig {
   uploadLatest: boolean;
   uploadScript: boolean;
   rootDir: string;
-  electronDir: string;
+  bundleRoot: string;
 }
 
 /**
@@ -104,9 +104,9 @@ export async function verifySha256(filePath: string, expectedHash: string): Prom
  * Uses curl for downloads (more reliable in CI than fetch + Bun.write)
  */
 export async function downloadBun(config: BuildConfig): Promise<void> {
-  const { platform, arch, electronDir } = config;
+  const { platform, arch, bundleRoot } = config;
   const bunDownload = getBunDownloadName(platform, arch);
-  const vendorDir = join(electronDir, 'vendor', 'bun');
+  const vendorDir = join(bundleRoot, 'vendor', 'bun');
 
   console.log(`Downloading Bun ${BUN_VERSION} for ${platform}-${arch}...`);
 
@@ -114,7 +114,7 @@ export async function downloadBun(config: BuildConfig): Promise<void> {
   mkdirSync(vendorDir, { recursive: true });
 
   // Create temp directory
-  const tempDir = join(electronDir, '.bun-download-temp');
+  const tempDir = join(bundleRoot, '.bun-download-temp');
   mkdirSync(tempDir, { recursive: true });
 
   try {
@@ -195,12 +195,12 @@ function findFileRecursive(root: string, fileName: string): string | null {
  * Download and verify uv binary, then install it to resources/bin/<platform-arch>/uv(.exe).
  */
 export async function downloadUv(config: BuildConfig): Promise<void> {
-  const { platform, arch, electronDir } = config;
+  const { platform, arch, bundleRoot } = config;
   const uvDownload = getUvDownloadName(platform, arch);
   const uvBinaryName = platform === 'win32' ? 'uv.exe' : 'uv';
   const platformKey = getPlatformKey(platform, arch);
 
-  const targetDir = join(electronDir, 'resources', 'bin', platformKey);
+  const targetDir = join(bundleRoot, 'resources', 'bin', platformKey);
   const targetPath = join(targetDir, uvBinaryName);
 
   // Skip when already provisioned
@@ -212,7 +212,7 @@ export async function downloadUv(config: BuildConfig): Promise<void> {
   console.log(`Downloading uv ${UV_VERSION} for ${platformKey}...`);
 
   mkdirSync(targetDir, { recursive: true });
-  const tempDir = join(electronDir, '.uv-download-temp');
+  const tempDir = join(bundleRoot, '.uv-download-temp');
   rmSync(tempDir, { recursive: true, force: true });
   mkdirSync(tempDir, { recursive: true });
 
@@ -272,15 +272,15 @@ export async function downloadUv(config: BuildConfig): Promise<void> {
  * Clean previous build artifacts
  */
 export function cleanBuildArtifacts(config: BuildConfig): void {
-  const { electronDir } = config;
+  const { bundleRoot } = config;
 
   console.log('Cleaning previous builds...');
 
   const foldersToClean = [
-    join(electronDir, 'vendor'),
-    join(electronDir, 'node_modules', '@anthropic-ai'),
-    join(electronDir, 'packages'),
-    join(electronDir, 'release'),
+    join(bundleRoot, 'vendor'),
+    join(bundleRoot, 'node_modules', '@anthropic-ai'),
+    join(bundleRoot, 'packages'),
+    join(bundleRoot, 'release'),
   ];
 
   for (const folder of foldersToClean) {
@@ -331,12 +331,12 @@ function nativeBinaryName(config: BuildConfig): string {
  * Copy SDK from root node_modules:
  *   1. The thin core (`claude-agent-sdk`) — universal sdk.mjs + types.
  *   2. The matching arch's binary package, staged at the stable alias
- *      `claude-agent-sdk-binary/` so electron-builder.yml stays arch-agnostic
+ *      `claude-agent-sdk-binary/` so server bundle.yml stays arch-agnostic
  *      and the runtime resolver finds the binary regardless of host arch.
  */
 export function copySDK(config: BuildConfig): void {
-  const { rootDir, electronDir } = config;
-  const sdkScope = join(electronDir, 'node_modules', '@anthropic-ai');
+  const { rootDir, bundleRoot } = config;
+  const sdkScope = join(bundleRoot, 'node_modules', '@anthropic-ai');
 
   const sdkSource = join(rootDir, 'node_modules', '@anthropic-ai', 'claude-agent-sdk');
   const sdkDest = join(sdkScope, 'claude-agent-sdk');
@@ -376,9 +376,9 @@ export function copySDK(config: BuildConfig): void {
  * Since SDK 0.2.113 the binary is ~210 MB; anything under 50 MB is suspect.
  */
 export function verifySDKCopy(config: BuildConfig): void {
-  const { electronDir } = config;
+  const { bundleRoot } = config;
   const binaryPath = join(
-    electronDir,
+    bundleRoot,
     'node_modules', '@anthropic-ai', 'claude-agent-sdk-binary',
     nativeBinaryName(config),
   );
@@ -405,7 +405,7 @@ export function verifySDKCopy(config: BuildConfig): void {
  * `vendor/ripgrep/<platform>/rg` shipped by the SDK before 0.2.113.
  */
 export function copyRipgrep(config: BuildConfig): void {
-  const { rootDir, electronDir } = config;
+  const { rootDir, bundleRoot } = config;
   const rgSource = join(rootDir, 'node_modules', '@vscode', 'ripgrep');
   const binaryName = config.platform === 'win32' ? 'rg.exe' : 'rg';
   const rgBinary = join(rgSource, 'bin', binaryName);
@@ -417,7 +417,7 @@ export function copyRipgrep(config: BuildConfig): void {
     );
   }
 
-  const rgScope = join(electronDir, 'node_modules', '@vscode');
+  const rgScope = join(bundleRoot, 'node_modules', '@vscode');
   const rgDest = join(rgScope, 'ripgrep');
   console.log('Copying @vscode/ripgrep...');
   mkdirSync(rgScope, { recursive: true });
@@ -431,11 +431,11 @@ export function copyRipgrep(config: BuildConfig): void {
  * Copy network interceptor source files (Anthropic — runs under Bun via --preload)
  */
 export function copyInterceptor(config: BuildConfig): void {
-  const { rootDir, electronDir } = config;
+  const { rootDir, bundleRoot } = config;
 
   const sharedSrcDir = join('packages', 'shared', 'src');
   const sourceDir = join(rootDir, sharedSrcDir);
-  const destDir = join(electronDir, sharedSrcDir);
+  const destDir = join(bundleRoot, sharedSrcDir);
 
   const interceptorSource = join(sourceDir, 'unified-network-interceptor.ts');
   if (!existsSync(interceptorSource)) {
@@ -467,12 +467,12 @@ export function copyInterceptor(config: BuildConfig): void {
 
 /**
  * Verify the unified interceptor CJS bundle exists (runs under Node.js via --require)
- * Built by `bun run build:interceptor` into apps/electron/dist/
+ * Built by `bun run build:interceptor` into apps/server/dist/
  */
 export function copyInterceptorBundle(config: BuildConfig): void {
-  const { electronDir } = config;
+  const { bundleRoot } = config;
 
-  const source = join(electronDir, 'dist', 'interceptor.cjs');
+  const source = join(bundleRoot, 'dist', 'interceptor.cjs');
   if (!existsSync(source)) {
     console.warn('Warning: Interceptor bundle not found at', source, '— tool metadata will be unavailable for Pi sessions');
     return;
@@ -487,10 +487,10 @@ export function copyInterceptorBundle(config: BuildConfig): void {
  * The session server provides session-scoped tools (SubmitPlan, config_validate, etc.) for agent sessions.
  */
 export function copySessionServer(config: BuildConfig): void {
-  const { rootDir, electronDir } = config;
+  const { rootDir, bundleRoot } = config;
 
   const sessionSource = join(rootDir, 'packages', 'session-mcp-server', 'dist', 'index.js');
-  const sessionDest = join(electronDir, 'resources', 'session-mcp-server', 'index.js');
+  const sessionDest = join(bundleRoot, 'resources', 'session-mcp-server', 'index.js');
 
   if (!existsSync(sessionSource)) {
     console.warn(`Warning: Session server not found at ${sessionSource}. Session-scoped tools will not work.`);
@@ -518,10 +518,10 @@ function koffiPlatformDir(platform: Platform, arch: Arch): string {
  * with only the target platform's native binary (~4MB instead of ~80MB).
  */
 export function copyPiAgentServer(config: BuildConfig): void {
-  const { rootDir, electronDir, platform, arch } = config;
+  const { rootDir, bundleRoot, platform, arch } = config;
 
   const piSourceDir = join(rootDir, 'packages', 'pi-agent-server', 'dist');
-  const piDestDir = join(electronDir, 'resources', 'pi-agent-server');
+  const piDestDir = join(bundleRoot, 'resources', 'pi-agent-server');
 
   if (!existsSync(join(piSourceDir, 'index.js'))) {
     console.warn(`Warning: Pi agent server not found at ${piSourceDir}/index.js. Pi SDK sessions will not work.`);
@@ -617,7 +617,7 @@ export function buildMcpServers(config: BuildConfig): void {
 /**
  * Build the WhatsApp worker subprocess (Baileys + Node runtime bundle).
  * Output ships as an extraResource at resources/messaging-whatsapp-worker/worker.cjs
- * and is spawned by WhatsAppAdapter. See electron-builder.yml `extraResources`.
+ * and is spawned by WhatsAppAdapter. See server bundle.yml `extraResources`.
  */
 export function buildWhatsAppWorker(config: BuildConfig): void {
   const { rootDir } = config;
@@ -636,10 +636,10 @@ export function buildWhatsAppWorker(config: BuildConfig): void {
  * Verify MCP helper servers and Pi agent server are present in packaged resources.
  */
 export function verifyMcpServersExist(config: BuildConfig): void {
-  const { electronDir } = config;
+  const { bundleRoot } = config;
 
-  const sessionPath = join(electronDir, 'resources', 'session-mcp-server', 'index.js');
-  const piPath = join(electronDir, 'resources', 'pi-agent-server', 'index.js');
+  const sessionPath = join(bundleRoot, 'resources', 'session-mcp-server', 'index.js');
+  const piPath = join(bundleRoot, 'resources', 'pi-agent-server', 'index.js');
 
   if (!existsSync(sessionPath)) {
     throw new Error(`Session MCP server not found at ${sessionPath}`);
@@ -650,22 +650,12 @@ export function verifyMcpServersExist(config: BuildConfig): void {
 }
 
 /**
- * Build the Electron app (main, preload, renderer)
- */
-export async function buildElectronApp(config: BuildConfig): Promise<void> {
-  const { rootDir } = config;
-
-  console.log('Building Electron app...');
-  await $`cd ${rootDir} && bun run electron:build`;
-}
-
-/**
  * Create manifest.json for upload
  */
 export async function createManifest(config: BuildConfig): Promise<string> {
-  const { rootDir, electronDir } = config;
+  const { rootDir, bundleRoot } = config;
 
-  const packageJson = await Bun.file(join(electronDir, 'package.json')).json();
+  const packageJson = await Bun.file(join(bundleRoot, 'package.json')).json();
   const version = packageJson.version;
 
   const uploadDir = join(rootDir, '.build', 'upload');
@@ -700,7 +690,7 @@ export async function uploadToS3(config: BuildConfig): Promise<void> {
 
   console.log('\n=== Uploading to S3 ===');
 
-  const flags = ['--electron'];
+  const flags = ['--server'];
   if (uploadLatest) flags.push('--latest');
   if (uploadScript) flags.push('--script');
 

@@ -38,7 +38,7 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   const { sessionManager } = deps
   const windowManager = deps.windowManager
 
-  // Get workspaces (LOCAL_ONLY — includes rootPath for local Electron renderer)
+  // Get workspaces (LOCAL_ONLY — includes rootPath for local Web renderer)
   server.handle(RPC_CHANNELS.workspaces.GET, async () => {
     return sessionManager.getWorkspaces()
   })

@@ -2,7 +2,7 @@
  * Platform services — dependency injection seam.
  *
  * SessionManager and core handlers receive this instead of importing
- * directly from 'electron'. On Electron, the implementations wrap
+ * directly from 'web'. On Web, the implementations wrap
  * app/shell/nativeImage. On headless Node, they use sharp/pino/etc.
  */
 
@@ -45,7 +45,7 @@ export interface PlatformServices {
   // -- App metadata --
   appVersion: string
 
-  // -- Image processing (nativeImage on Electron, sharp on headless) --
+  // -- Image processing (nativeImage on Web, sharp on headless) --
   imageProcessor: ImageProcessor
 
   // -- OS integration (no-ops on headless) --

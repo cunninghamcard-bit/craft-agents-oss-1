@@ -20,12 +20,12 @@ import { debug } from '../utils/debug.ts';
 import type { CompiledBashPattern } from './mode-types.ts';
 
 // ============================================================
-// Module Root (set at Electron startup)
+// Module Root (set at WebUI startup)
 // ============================================================
 
 /**
  * Module-level root directory for the PowerShell parser script.
- * Set once at Electron startup via setPowerShellValidatorRoot(__dirname).
+ * Set once at WebUI startup via setPowerShellValidatorRoot(__dirname).
  */
 let _validatorRoot: string | undefined;
 
@@ -267,7 +267,7 @@ export function isPowerShellAvailable(): boolean {
   const candidates: string[] = ['pwsh', 'powershell'];
 
   // On Windows, also try the full path to powershell.exe as a fallback.
-  // Spawned subprocesses (e.g. from Electron) may not inherit the full system
+  // Spawned subprocesses (e.g. from WebUI) may not inherit the full system
   // PATH, so 'powershell' by name can fail even though it's always installed.
   if (process.platform === 'win32') {
     const systemRoot = process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows';

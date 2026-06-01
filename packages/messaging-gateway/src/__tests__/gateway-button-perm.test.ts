@@ -2,7 +2,7 @@
  * MessagingGateway — `perm:` button-press behavior. Regression for issue
  * [#726](https://github.com/craft-ai-agents/craft-agents-oss/issues/726):
  * "Approve/Deny buttons in Telegram are unresponsive, fire in batch after
- * desktop action".
+ * app-side action".
  *
  * The fix brings the `perm:` button path to parity with the `plan:` path:
  *
@@ -17,7 +17,7 @@
  *    the response did not take effect on this side);
  *  - any subsequent session event for the same session implies the agent
  *    moved past the prompt — the gateway sweeps the entry and clears the
- *    keyboard so users can't tap a stale prompt after the desktop user
+ *    keyboard so users can't tap a stale prompt after the WebUI user
  *    already resolved it.
  */
 
@@ -244,11 +244,11 @@ describe('MessagingGateway — perm: button (#726)', () => {
     expect(acks).toHaveLength(1)
   })
 
-  it('stale tap after desktop resolves: silent no-op (no respondToPermission, no ack)', async () => {
+  it('stale tap after WebUI resolves: silent no-op (no respondToPermission, no ack)', async () => {
     const h = await makeHarness()
     await registerPrompt(h.gateway, { requestId: 'req-1' })
 
-    // Desktop resolves first → agent moves on, emitting a tool_start. The
+    // WebUI resolves first → agent moves on, emitting a tool_start. The
     // gateway sweep on this event drops the entry and clears the keyboard.
     h.gateway.onSessionEvent(
       'session:event',
@@ -267,7 +267,7 @@ describe('MessagingGateway — perm: button (#726)', () => {
     // User now taps the (already-cleared) Telegram button.
     await h.adapter.fireButton(pressFor('perm:allow:req-1'))
 
-    // No respondToPermission → no duplicate desktop-side flush.
+    // No respondToPermission → no duplicate app-side flush.
     expect(h.sessionManager.respondToPermission).not.toHaveBeenCalled()
 
     // No ack message — we don't lie about an action that didn't take effect.

@@ -16,7 +16,7 @@ import { cn } from '../../lib/utils'
  * mobile contexts.
  *
  * Same UX shape as `CompactPermissionModeSelector` / `CompactModelSelector` in
- * apps/electron: a slim trigger button opens a bottom-sheet (`vaul` drawer)
+ * apps/webui: a slim trigger button opens a bottom-sheet (`vaul` drawer)
  * with the two acceptance options as full-width tap targets. Used by
  * `TurnCard`'s compact footer (WebUI mobile / auto-compact / EditPopover).
  *

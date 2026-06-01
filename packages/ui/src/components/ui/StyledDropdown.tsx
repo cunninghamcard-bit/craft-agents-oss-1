@@ -8,7 +8,7 @@
  *
  * Wraps raw @radix-ui/react-dropdown-menu primitives with the full class set
  * (shadcn base layer + styled additions) so consumers get the correct look
- * without depending on the shadcn wrapper layer in apps/electron.
+ * without depending on the shadcn wrapper layer in apps/webui.
  */
 
 import * as React from 'react'

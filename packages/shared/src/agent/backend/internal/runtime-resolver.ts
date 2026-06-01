@@ -7,7 +7,7 @@ import { setPathToClaudeCodeExecutable } from '../../options.ts';
 /**
  * When set, the resolver walks further up from the .app bundle to find SDK,
  * interceptor, and bun in the monorepo / on the system PATH.
- * Intended for local `electron:dist:mac` builds that skip `build-dmg.sh`.
+ * Intended for local `webui:dist:mac` builds that skip `build-dmg.sh`.
  */
 const IS_DEV_RUNTIME = !!process.env.CRAFT_DEV_RUNTIME;
 
@@ -85,10 +85,9 @@ function resolveBundledRuntimePath(hostRuntime: BackendHostRuntimeContext): stri
  * Compute the per-platform optional-dependency package name shipped by the
  * Claude Agent SDK (since 0.2.113), e.g. `claude-agent-sdk-darwin-arm64`.
  *
- * NOTE on Linux musl: this returns the glibc variant. AppImage targets glibc
- * and that is the only Linux flavour we ship for the desktop app. The headless
- * server in Docker (which may run on Alpine/musl) is a separate concern —
- * track in Phase 2 when we look at server packaging.
+ * NOTE on Linux musl: this returns the glibc variant. The headless server in
+ * Docker may run on Alpine/musl, so server packaging should handle that path
+ * explicitly.
  */
 function platformBinaryPkg(): string | undefined {
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64';
@@ -109,12 +108,12 @@ function nativeBinaryName(): string {
  * Search order:
  *   1. Stable build alias `@anthropic-ai/claude-agent-sdk-binary` — this is
  *      what the platform build scripts (build-dmg.sh etc.) populate before
- *      electron-builder runs, so packaged builds always find the binary at a
+ *      webui-builder runs, so packaged builds always find the binary at a
  *      single, arch-agnostic path regardless of how it was sourced.
  *   2. Per-platform optional-dep package name (`-darwin-arm64`, etc.) —
  *      what plain `bun install` produces in dev / monorepo / CI.
  *   3. Dev-runtime walk-up across both lookups for ad-hoc local builds
- *      (`electron:dist:dev:mac`).
+ *      (`webui:dist:dev:mac`).
  */
 function resolveClaudeBinaryPath(hostRuntime: BackendHostRuntimeContext): string | undefined {
   const binaryName = nativeBinaryName();
@@ -165,7 +164,7 @@ function resolveInterceptorBundlePath(hostRuntime: BackendHostRuntimeContext): s
   }
 
   return resolveUpwards(hostRuntime.appRootPath, join('dist', 'interceptor.cjs'))
-    ?? resolveUpwards(hostRuntime.appRootPath, join('apps', 'electron', 'dist', 'interceptor.cjs'));
+    ?? resolveUpwards(hostRuntime.appRootPath, join('packages', 'shared', 'dist', 'interceptor.cjs'));
 }
 
 function resolveServerPath(hostRuntime: BackendHostRuntimeContext, serverName: string): string | undefined {

@@ -12,7 +12,6 @@ describe('session tool safe-mode classification', () => {
   it('allows read-only session tools in safe mode', () => {
     const allowedTools = [
       'mcp__session__call_llm',
-      'mcp__session__browser_tool',
       'mcp__session__script_sandbox',
     ] as const;
 

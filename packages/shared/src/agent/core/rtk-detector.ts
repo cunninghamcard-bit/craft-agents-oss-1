@@ -8,7 +8,7 @@
  * Result is cached per process — restart the app to pick up an install
  * or upgrade.
  *
- * Bundling rtk in `apps/electron/resources/bin/` is a separate concern
+ * Bundling rtk in `apps/webui/resources/bin/` is a separate concern
  * (see plans/rtk-integration-path-a.md); this MVP detects only.
  */
 

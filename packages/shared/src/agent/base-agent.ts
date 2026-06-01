@@ -422,16 +422,16 @@ export abstract class BaseAgent implements AgentBackend {
    *
    * CALLBACKS FIRED:
    * - SubmitPlan → this.onPlanSubmitted(planPath)
-   *   → Electron reads plan file, shows plan card, calls interruptForHandoff(PlanSubmitted)
+   *   → WebUI reads plan file, shows plan card, calls interruptForHandoff(PlanSubmitted)
    * - Auth tools → this.onAuthRequest(authRequest)
-   *   → Electron shows auth dialog, calls interruptForHandoff(AuthRequest)
+   *   → WebUI shows auth dialog, calls interruptForHandoff(AuthRequest)
    */
   protected handleSessionMcpToolCompletion(
     toolName: string,
     args: Record<string, unknown>
   ): void {
     // SubmitPlan — trigger plan view in the UI.
-    // The Electron SessionManager's onPlanSubmitted callback will:
+    // The WebUI SessionManager's onPlanSubmitted callback will:
     //   1. Read the plan file content
     //   2. Create a plan message (role: 'plan')
     //   3. Send plan_submitted event to renderer

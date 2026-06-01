@@ -2,8 +2,8 @@
  * LarkAdapter — Lark / Feishu in-process adapter.
  *
  * Transport: long-polling via `@larksuiteoapi/node-sdk`'s `WSClient`. No public
- * webhook URL needed (correct fit for desktop / electron). Same lifecycle
- * shape as the Telegram adapter, just a different SDK underneath.
+ * webhook URL needed. Same lifecycle shape as the Telegram adapter, just a
+ * different SDK underneath.
  *
  * Phase 1 scope (text only): receive text in DMs and group @mentions, send
  * text replies, support `/pair`-style commands. Phase 2 layers on edits,
@@ -482,7 +482,7 @@ export class LarkAdapter implements PlatformAdapter {
       try {
         await this.sendText(
           channelId,
-          `${text}\n\n(Open the desktop app to respond — the in-chat buttons couldn't be sent.)`,
+          `${text}\n\n(Open the web app to respond — the in-chat buttons couldn't be sent.)`,
           _opts,
         )
       } catch {

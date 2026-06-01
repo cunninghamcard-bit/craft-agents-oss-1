@@ -164,7 +164,7 @@ describe('Renderer — plan_submitted', () => {
     await renderer.handle(planEvent('# Plan'), binding, adapter)
 
     const text = adapter.calls.find((c) => c.kind === 'sendText')
-    expect(text?.text).toContain('Open the desktop app')
+    expect(text?.text).toContain('Open the web app')
     expect(adapter.calls.some((c) => c.kind === 'sendButtons')).toBe(false)
   })
 
@@ -178,7 +178,7 @@ describe('Renderer — plan_submitted', () => {
 
     expect(adapter.calls).toHaveLength(1)
     expect(adapter.calls[0]?.kind).toBe('sendText')
-    expect(adapter.calls[0]?.text).toContain('Open the desktop app')
+    expect(adapter.calls[0]?.text).toContain('Open the web app')
   })
 
   it('Lark short plan: sends buttons with inline content (same rich path as Telegram)', async () => {
@@ -274,7 +274,7 @@ describe('Renderer — plan_submitted', () => {
 
     const sendButtons = adapter.calls.find((c) => c.kind === 'sendButtons')
     expect(sendButtons).toBeTruthy()
-    expect(sendButtons?.text).toContain('Open the desktop app to see the plan')
+    expect(sendButtons?.text).toContain('Open the web app to see the plan')
     expect(adapter.calls.some((c) => c.kind === 'sendFile')).toBe(false)
   })
 })

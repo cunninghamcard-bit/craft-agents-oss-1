@@ -1,6 +1,6 @@
 # @craft-agent/server-core
 
-Reusable WS/headless server infrastructure extracted from `apps/electron`.
+Reusable WS/headless server infrastructure extracted from `apps/web`.
 
 ## Scope
 
@@ -11,8 +11,8 @@ Reusable WS/headless server infrastructure extracted from `apps/electron`.
 
 ## Out of scope
 
-- Electron UI/main-process window management
+- Web UI/main-process window management
 - Renderer channel maps and generated client API wrappers
 - Session/domain business logic (`SessionManager`, handlers)
 
-Those remain in `apps/electron` and are injected into bootstrap at runtime.
+Those remain in `apps/web` and are injected into bootstrap at runtime.

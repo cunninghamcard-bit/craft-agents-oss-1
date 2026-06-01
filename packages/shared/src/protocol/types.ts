@@ -39,7 +39,7 @@ export interface MessageEnvelope {
   clientId?: string
   /** Server identity stamp on outgoing events. For MultiClient source disambiguation. */
   serverId?: string
-  /** Electron webContents.id, sent on handshake by local clients. */
+  /** Web webContents.id, sent on handshake by local clients. */
   webContentsId?: number
   /** Client capabilities advertised on handshake. */
   clientCapabilities?: string[]
@@ -87,10 +87,6 @@ export type ErrorCode =
   | 'CAPABILITY_UNAVAILABLE'
   | 'CLIENT_DISCONNECTED'
   | 'CLIENT_REQUEST_TIMEOUT'
-  | 'BROWSER_NO_CAPABLE_CLIENT'
-  | 'BROWSER_INSTANCE_NOT_OWNED'
-  | 'BROWSER_REMOTE_UPLOAD_NOT_SUPPORTED'
-  | 'BROWSER_REMOTE_EVALUATE_BLOCKED'
 
 const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'HANDLER_ERROR',
@@ -107,10 +103,6 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<ErrorCode>([
   'CAPABILITY_UNAVAILABLE',
   'CLIENT_DISCONNECTED',
   'CLIENT_REQUEST_TIMEOUT',
-  'BROWSER_NO_CAPABLE_CLIENT',
-  'BROWSER_INSTANCE_NOT_OWNED',
-  'BROWSER_REMOTE_UPLOAD_NOT_SUPPORTED',
-  'BROWSER_REMOTE_EVALUATE_BLOCKED',
 ])
 
 export function isErrorCode(value: unknown): value is ErrorCode {

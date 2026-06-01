@@ -6,12 +6,12 @@ import { SessionManager, createManagedSession, claimAutoRetryPending } from './S
 
 // Regression test for craft-agents-oss#804.
 //
-// Before: the "[<slug> activated]" auto-retry only lived in the Electron renderer's
+// Before: the "[<slug> activated]" auto-retry only lived in the Web renderer's
 // event processor. Headless deployments (WebUI, docker server) stalled after a
 // mid-turn source activation because nothing re-sent the original message.
 //
 // After: SessionManager.processEvent schedules a server-side resend on
-// `source_activated`. To survive a mixed-version rollout where a v0.9.5 Electron
+// `source_activated`. To survive a mixed-version rollout where a v0.9.5 Web
 // client still ships the legacy renderer-side auto_retry, sendMessage uses a
 // content-match committed-slot to dedup the duplicate RPC.
 

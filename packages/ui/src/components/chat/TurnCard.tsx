@@ -330,7 +330,7 @@ export interface TurnCardProps {
   hasEditOrWriteActivities?: boolean
   /** TodoWrite tool state - shown at bottom of turn */
   todos?: TodoItem[]
-  /** Optional render prop for actions menu (Electron provides dropdown) */
+  /** Optional render prop for actions menu (WebUI provides dropdown) */
   renderActionsMenu?: () => React.ReactNode
   /** Callback when user accepts the plan (plan responses only) */
   onAcceptPlan?: () => void
@@ -645,7 +645,7 @@ function formatToolDisplay(
 ): { name: string; icon?: string; description?: string } {
   const { toolName, displayName, toolInput, toolDisplayMeta } = activity
 
-  // Primary: Use embedded toolDisplayMeta (works in both Electron and viewer)
+  // Primary: Use embedded toolDisplayMeta (works in both WebUI and viewer)
   if (toolDisplayMeta) {
     // For MCP tools, append the tool slug to the source name
     if (toolName?.startsWith('mcp__') && toolDisplayMeta.category === 'source') {

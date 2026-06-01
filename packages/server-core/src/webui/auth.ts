@@ -17,16 +17,26 @@ const JWT_EXPIRY_SECONDS = 86_400 // 24 hours
 
 export interface JwtPayload {
   sub: string
+  authProvider?: 'password' | 'feishu' | 'lark'
+  feishuUser?: {
+    openId?: string
+    userId?: string
+    unionId?: string
+    name?: string
+    email?: string
+    tenantKey?: string
+  }
   iat: number
   exp: number
 }
 
 export async function signJwt(payload: JwtPayload, secret: string): Promise<string> {
   const key = new TextEncoder().encode(secret)
-  return new SignJWT({ sub: payload.sub } as Record<string, unknown>)
+  const { iat, exp, ...claims } = payload
+  return new SignJWT(claims as Record<string, unknown>)
     .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt(payload.iat)
-    .setExpirationTime(payload.exp)
+    .setIssuedAt(iat)
+    .setExpirationTime(exp)
     .sign(key)
 }
 
@@ -36,6 +46,8 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
     const { payload } = await jwtVerify(token, key, { algorithms: ['HS256'] })
     return {
       sub: payload.sub as string,
+      authProvider: payload.authProvider as JwtPayload['authProvider'],
+      feishuUser: payload.feishuUser as JwtPayload['feishuUser'],
       iat: payload.iat as number,
       exp: payload.exp as number,
     }
@@ -44,9 +56,12 @@ export async function verifyJwt(token: string, secret: string): Promise<JwtPaylo
   }
 }
 
-export async function createSessionToken(secret: string): Promise<string> {
+export async function createSessionToken(
+  secret: string,
+  identity: Pick<JwtPayload, 'sub' | 'authProvider' | 'feishuUser'> = { sub: 'webui', authProvider: 'password' },
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000)
-  return signJwt({ sub: 'webui', iat: now, exp: now + JWT_EXPIRY_SECONDS }, secret)
+  return signJwt({ ...identity, iat: now, exp: now + JWT_EXPIRY_SECONDS }, secret)
 }
 
 // ---------------------------------------------------------------------------

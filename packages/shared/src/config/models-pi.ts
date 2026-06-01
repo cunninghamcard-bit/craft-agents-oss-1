@@ -6,7 +6,7 @@
  * which breaks the Vite renderer build (browser context, no Node.js modules).
  *
  * This file should ONLY be imported from:
- *   - Main process code (Electron main, IPC handlers)
+ *   - Main process code (WebUI main, IPC handlers)
  *   - Server-side code (build scripts, CLI)
  *   - Registration calls (e.g., registerPiModelResolver)
  *

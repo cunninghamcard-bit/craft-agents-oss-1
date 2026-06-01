@@ -99,12 +99,12 @@ describe('mode-manager path containment for plans/data exceptions', () => {
   });
 
   it('does not treat JavaScript arrow syntax (=>) as a bash write redirect target', () => {
-    const command = "node -e \"const f = (s) => s.includes('electron'); console.log(f('typecheck'))\"";
+    const command = "node -e \"const f = (s) => s.includes('webui'); console.log(f('typecheck'))\"";
     expect(extractBashWriteTarget(command)).toBeNull();
   });
 
   it('keeps allowlist mismatch messaging for node -e arrow command (no write-path error)', () => {
-    const command = "node -e \"const f = (s) => s.includes('electron'); console.log(f('typecheck'))\"";
+    const command = "node -e \"const f = (s) => s.includes('webui'); console.log(f('typecheck'))\"";
     const result = shouldAllowToolInMode(
       'Bash',
       { command },

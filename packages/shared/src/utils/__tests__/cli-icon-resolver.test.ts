@@ -271,7 +271,7 @@ describe('extractCommandNames', () => {
 
 describe('loadToolIconConfig', () => {
   test('loads valid config from bundled assets', () => {
-    const assetsDir = join(__dirname, '../../../../../apps/electron/resources/tool-icons');
+    const assetsDir = join(__dirname, '../../../../../resources/tool-icons');
     const config = loadToolIconConfig(assetsDir);
     expect(config).not.toBeNull();
     expect(config!.version).toBe(1);
@@ -396,7 +396,7 @@ describe('resolveToolIcon', () => {
 
   test('resolves with real bundled assets', () => {
     // Use the actual bundled assets to verify end-to-end
-    const assetsDir = join(__dirname, '../../../../../apps/electron/resources/tool-icons');
+    const assetsDir = join(__dirname, '../../../../../resources/tool-icons');
     const result = resolveToolIcon('git status', assetsDir);
     expect(result).toBeDefined();
     expect(result!.displayName).toBe('Git');

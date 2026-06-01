@@ -11,10 +11,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve } from 'node:path';
 import { expandPath } from './path-processor.ts';
-import { getBrowserToolEnabled } from '../../config/storage.ts';
 
 // ============================================================
 // Types
@@ -47,9 +45,6 @@ export interface PrerequisiteManagerConfig {
 
 /** Slugs that are exempt from prerequisite checks (internal sources) */
 const EXEMPT_SLUGS = new Set(['session', 'craft-agents-docs']);
-
-/** Global browser tools docs path required before browser tool usage. */
-const BROWSER_TOOLS_DOC_PATH = resolve(join(homedir(), '.craft-agent', 'docs', 'browser-tools.md'));
 
 // ============================================================
 // Rules
@@ -95,20 +90,6 @@ const RULES: PrerequisiteRule[] = [
       'You must read the source guide before using this tool. Please read the file at {filePath} first, then retry.',
   },
 
-  // Built-in browser tool: require browser-tools.md first.
-  // Only matches the session-scoped tool (not external MCP browser tools like mcp__playwright__*),
-  // and skipped entirely when the built-in browser tool is disabled.
-  {
-    toolMatcher: (toolName: string) =>
-      getBrowserToolEnabled() &&
-      (toolName === 'browser_tool' || toolName === 'mcp__session__browser_tool'),
-    resolveRequiredPath: () => {
-      return existsSync(BROWSER_TOOLS_DOC_PATH) ? BROWSER_TOOLS_DOC_PATH : null;
-    },
-    blockMessage:
-      'You must read the browser tools guide before using browser automation. Please read the file at {filePath} first, then retry.',
-    strict: true,
-  },
 ];
 
 // ============================================================

@@ -10,8 +10,8 @@
  * on an unsupported Node runtime we want a clean `unavailable` event
  * instead of a subprocess crash.
  *
- * Runs under Node (not Bun) when packaged with Electron so Baileys'
- * crypto deps (libsignal, curve25519) resolve correctly.
+ * Runs under Node (not Bun) so Baileys' crypto deps (libsignal, curve25519)
+ * resolve correctly.
  */
 
 import { mkdirSync } from 'node:fs'

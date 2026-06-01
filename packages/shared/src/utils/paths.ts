@@ -175,14 +175,14 @@ export function stripPathPrefix(filePath: string, prefix: string): string {
 
 /**
  * Module-level base directory for bundled assets.
- * Set once at Electron startup via setBundledAssetsRoot(__dirname).
- * In non-Electron contexts (tests, dev mode), process.cwd() candidates are used.
+ * Set once by the server at startup via setBundledAssetsRoot(rootDir).
+ * In tests/dev mode, process.cwd() candidates are used.
  */
 let _assetsRoot: string | undefined;
 
 /**
- * Register the Electron main process directory as the root for bundled assets.
- * Call this once at app startup: setBundledAssetsRoot(__dirname)
+ * Register the application root for bundled assets.
+ * Call this once at app startup: setBundledAssetsRoot(rootDir)
  *
  * After this, getBundledAssetsDir('docs') will resolve to `<__dirname>/resources/docs/`
  * in the packaged app, or fall back to dev paths if that doesn't exist.
@@ -194,11 +194,11 @@ export function setBundledAssetsRoot(dir: string): void {
 /**
  * Resolve the path to a bundled assets subdirectory.
  *
- * All bundled assets now live in resources/ which electron-builder handles natively.
+ * All bundled assets live in resources/.
  * Tries candidates in order:
- * 1. Electron packaged app: <assetsRoot>/resources/<subfolder>
- * 2. Dev: electron app resources folder (when running from apps/electron)
- * 3. Dev: dist output (after build:copy)
+ * 1. Packaged/server app: <assetsRoot>/resources/<subfolder>
+ * 2. Dev: repo resources folder
+ * 3. Dev: dist output
  *
  * Returns the first candidate that exists on disk, or undefined if none found.
  *
@@ -206,9 +206,9 @@ export function setBundledAssetsRoot(dir: string): void {
  */
 export function getBundledAssetsDir(subfolder: string): string | undefined {
   const candidates = [
-    // Electron packaged app (set via setBundledAssetsRoot at startup)
+    // Packaged/server app (set via setBundledAssetsRoot at startup)
     ...(_assetsRoot ? [join(_assetsRoot, 'resources', subfolder)] : []),
-    // Dev: electron app resources folder (when cwd is apps/electron)
+    // Dev: repo resources folder
     join(process.cwd(), 'resources', subfolder),
     // Dev: dist output (after build:copy)
     join(process.cwd(), 'dist', 'resources', subfolder),

@@ -18,15 +18,15 @@ export interface ResolveScriptRuntimeContext {
   isPackaged?: boolean;
 
   /**
-   * Optional explicit app root path (usually Electron app.getAppPath()).
+   * Optional explicit app root path.
    */
   appRootPath?: string;
 
   /**
-   * Optional explicit resources base used by Electron startup.
+   * Optional explicit resources base used by server startup.
    * Typically:
-   * - packaged: <process.resourcesPath>/app
-   * - dev: <repo>/apps/electron
+   * - packaged: <bundle root>
+   * - dev: <repo>
    */
   resourcesBasePath?: string;
 }

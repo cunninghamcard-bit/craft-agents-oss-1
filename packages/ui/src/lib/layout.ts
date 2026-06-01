@@ -1,8 +1,8 @@
 /**
  * Shared layout constants for chat UI
  *
- * These values ensure visual consistency between Electron and web viewer.
- * Import and use these in both ChatDisplay (Electron) and SessionViewer (UI package).
+ * These values ensure visual consistency between WebUI and web viewer.
+ * Import and use these in both ChatDisplay (WebUI) and SessionViewer (UI package).
  */
 
 /**

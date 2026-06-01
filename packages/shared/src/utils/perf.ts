@@ -6,7 +6,7 @@
  *
  * IMPORTANT: Disabled by default. Only active when:
  * - CLI: --debug flag is passed (calls enableDebug())
- * - Electron: Running from source (!app.isPackaged)
+ * - WebUI: Running from source (!app.isPackaged)
  *
  * Usage:
  *   const end = perf.start('session.load')

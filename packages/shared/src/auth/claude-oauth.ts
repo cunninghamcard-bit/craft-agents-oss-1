@@ -2,7 +2,7 @@
  * Native Claude OAuth with PKCE
  *
  * Implements browser-based OAuth using PKCE (Proof Key for Code Exchange) -
- * the standard secure flow for public clients (desktop/mobile apps) that
+ * the standard secure flow for public clients that
  * does not require a client secret.
  *
  * Based on: https://github.com/grll/claude-code-login

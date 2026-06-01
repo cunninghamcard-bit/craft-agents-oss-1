@@ -25,7 +25,7 @@ export type { GoogleService };
 // Google OAuth configuration - environment variables used as fallback
 // Users can provide their own credentials via source config (preferred for OSS)
 // These env vars are only used if credentials are not provided explicitly
-// Note: Google requires client_secret for Desktop apps despite PKCE support
+// Note: Google requires client_secret for installed-app OAuth flows despite PKCE support
 const GOOGLE_CLIENT_ID_ENV = process.env.GOOGLE_OAUTH_CLIENT_ID || '';
 const GOOGLE_CLIENT_SECRET_ENV = process.env.GOOGLE_OAUTH_CLIENT_SECRET || '';
 
@@ -274,7 +274,7 @@ export function getGoogleScopes(options: GoogleOAuthOptions): string[] {
 export interface PrepareGoogleOAuthOptions {
   service?: GoogleService;
   scopes?: string[];
-  /** Port for the local callback server (Electron). One of callbackPort or callbackUrl required. */
+  /** Port for the local callback server (Web). One of callbackPort or callbackUrl required. */
   callbackPort?: number;
   /** Full callback URL (WebUI). Takes precedence over callbackPort. */
   callbackUrl?: string;
@@ -405,7 +405,7 @@ export async function startGoogleOAuth(
     const state = generateState();
 
     // Start callback server with deeplink for returning to chat session
-    const appType = options.appType || 'electron';
+    const appType = options.appType || 'web';
     const deeplinkUrl = buildOAuthDeeplinkUrl(options.sessionContext);
     const callbackServer = await createCallbackServer({ appType, deeplinkUrl });
     const redirectUri = `${callbackServer.url}/callback`;

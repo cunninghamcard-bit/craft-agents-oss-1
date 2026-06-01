@@ -26,8 +26,8 @@ export default defineConfig({
         main: resolve(__dirname, 'src/index.html'),
         login: resolve(__dirname, 'src/login.html'),
       },
-      // Suppress warnings for Node.js externalized modules — these are
-      // referenced by shared code but only used in server/Electron codepaths.
+      // Suppress warnings for Node.js externalized modules referenced by
+      // shared code but only used in server codepaths.
       onwarn(warning, warn) {
         if (warning.code === 'MODULE_LEVEL_DIRECTIVE') return
         warn(warning)
@@ -36,20 +36,16 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      // Reuse the Electron renderer's components, hooks, pages, etc.
-      '@': resolve(__dirname, '../electron/src/renderer'),
-      // Web-specific overrides
+      // Main web renderer components, hooks, pages, etc.
+      '@': resolve(__dirname, 'src/renderer'),
+      // Web-specific shell
       '@webui': resolve(__dirname, 'src'),
-      // Config alias (same as Electron)
+      // Config alias
       '@config': resolve(__dirname, '../../packages/shared/src/config'),
       // Force single React copy from root node_modules
       'react': resolve(__dirname, '../../node_modules/react'),
       'react-dom': resolve(__dirname, '../../node_modules/react-dom'),
-      // Electron-specific modules → empty shims for browser builds
-      'electron-log/renderer': resolve(__dirname, 'src/shims/electron-log.ts'),
-      'electron-log': resolve(__dirname, 'src/shims/electron-log.ts'),
-      '@sentry/electron/renderer': resolve(__dirname, 'src/shims/sentry-electron.ts'),
-      '@sentry/electron': resolve(__dirname, 'src/shims/sentry-electron.ts'),
+      // Node-oriented modules imported by shared code -> browser-safe shims
       // Node.js 'ws' library → browser uses native WebSocket
       'ws': resolve(__dirname, 'src/shims/ws.ts'),
       // Node.js builtins → browser-safe shims (shared code imports these

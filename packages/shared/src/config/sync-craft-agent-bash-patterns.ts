@@ -42,7 +42,7 @@ function syncCraftAgentPatterns(config: PermissionsConfig): PermissionsConfig {
 function main() {
   const targetPath = process.argv[2]
     ? resolve(process.argv[2])
-    : resolve(process.cwd(), 'apps/electron/resources/permissions/default.json')
+    : resolve(process.cwd(), 'resources/permissions/default.json')
 
   const config = JSON.parse(readFileSync(targetPath, 'utf-8')) as PermissionsConfig
   const nextConfig = syncCraftAgentPatterns(config)

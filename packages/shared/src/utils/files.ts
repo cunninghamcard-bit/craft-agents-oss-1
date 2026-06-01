@@ -53,7 +53,7 @@ export interface FileAttachment {
   base64?: string;
   text?: string;
   size: number;
-  /** Path where file is stored in session attachments folder (set by Electron app) */
+  /** Path where file is stored in session attachments folder (set by WebUI app) */
   storedPath?: string;
   /** Path to converted markdown version (for office files) */
   markdownPath?: string;

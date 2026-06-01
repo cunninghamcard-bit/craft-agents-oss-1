@@ -28,7 +28,7 @@ export type { MicrosoftService };
 // Microsoft OAuth configuration - must be set via environment variables
 // These are baked into the build at compile time
 // Used for all Microsoft services (Outlook, OneDrive, Calendar, Teams, etc.)
-// Uses pure PKCE flow - no client_secret needed for public clients (desktop/mobile apps)
+// Uses pure PKCE flow - no client_secret needed for public clients
 const MICROSOFT_CLIENT_ID = process.env.MICROSOFT_OAUTH_CLIENT_ID || '';
 
 // Microsoft OAuth endpoints (using "common" tenant for multi-tenant support)
@@ -263,7 +263,7 @@ export function getMicrosoftScopes(options: MicrosoftOAuthOptions): string[] {
 export interface PrepareMicrosoftOAuthOptions {
   service?: MicrosoftService;
   scopes?: string[];
-  /** Port for the local callback server (Electron). One of callbackPort or callbackUrl required. */
+  /** Port for the local callback server (Web). One of callbackPort or callbackUrl required. */
   callbackPort?: number;
   /** Full callback URL (WebUI). Takes precedence over callbackPort. */
   callbackUrl?: string;
@@ -374,7 +374,7 @@ export async function startMicrosoftOAuth(
     const state = generateState();
 
     // Start callback server with deeplink for returning to chat session
-    const appType = options.appType || 'electron';
+    const appType = options.appType || 'web';
     const deeplinkUrl = buildOAuthDeeplinkUrl(options.sessionContext);
     const callbackServer = await createCallbackServer({ appType, deeplinkUrl });
     const redirectUri = `${callbackServer.url}/callback`;

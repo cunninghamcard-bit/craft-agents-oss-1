@@ -1,7 +1,7 @@
 /**
  * Server DTO types — data shapes used by RPC handlers and SessionManager.
  *
- * These were previously in apps/electron/src/shared/types.ts.
+ * These were previously in apps/web/src/shared/types.ts.
  * Extracted here so handler code in @craft-agent/server-core can import
  * from @craft-agent/shared/protocol without reaching into the app.
  */
@@ -40,7 +40,7 @@ export type SessionStatus = string
 export type BuiltInStatusId = 'todo' | 'in-progress' | 'needs-review' | 'done' | 'cancelled'
 
 /**
- * Electron-specific Session type (includes runtime state).
+ * Web-specific Session type (includes runtime state).
  * Extends core Session with messages array and processing state.
  */
 export interface Session {
@@ -262,7 +262,7 @@ export interface NewChatActionParams {
 export type { BasePermissionRequest }
 
 /**
- * Permission request with session context (for multi-session Electron app)
+ * Permission request with session context (for multi-session Web app)
  */
 export interface PermissionRequest extends BasePermissionRequest {
   sessionId: string
@@ -485,15 +485,6 @@ export interface GitBashStatus {
   platform: 'win32' | 'darwin' | 'linux'
 }
 
-export interface UpdateInfo {
-  available: boolean
-  currentVersion: string
-  latestVersion: string | null
-  downloadState: 'idle' | 'downloading' | 'ready' | 'installing' | 'error'
-  downloadProgress: number
-  error?: string
-}
-
 // ---------------------------------------------------------------------------
 // Workspace types
 // ---------------------------------------------------------------------------
@@ -555,34 +546,6 @@ export type WindowCloseRequestSource = 'keyboard-shortcut' | 'window-button' | '
 
 export interface WindowCloseRequest {
   source: WindowCloseRequestSource
-}
-
-// ---------------------------------------------------------------------------
-// Browser / navigation types (data shapes used by BroadcastEventMap)
-// ---------------------------------------------------------------------------
-
-export interface BrowserInstanceInfo {
-  id: string
-  url: string
-  title: string
-  favicon: string | null
-  isLoading: boolean
-  canGoBack: boolean
-  canGoForward: boolean
-  boundSessionId: string | null
-  ownerType: 'session' | 'manual'
-  ownerSessionId: string | null
-  isVisible: boolean
-  agentControlActive: boolean
-  themeColor: string | null
-  /**
-   * Workspace that owns this browser instance, or `null` for unbound manual
-   * windows. Renderers filter the tab strip / status badge by `activeWorkspaceId`
-   * so a session in workspace A doesn't see windows opened by workspace B.
-   * Missing/null entries always pass the filter — this keeps older renderers
-   * and main processes that pre-date the field working unchanged.
-   */
-  workspaceId?: string | null
 }
 
 export interface DeepLinkNavigation {

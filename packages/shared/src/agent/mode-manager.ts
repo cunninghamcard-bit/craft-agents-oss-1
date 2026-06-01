@@ -18,7 +18,6 @@ import { debug } from '../utils/debug.ts';
 import { dirname, isAbsolute, relative, resolve } from 'path';
 import { getSessionSafeAllowedToolNames } from '@craft-agent/session-tools-core';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
-import { isBrowserToolNameOrAlias } from './browser-tool-names.ts';
 import type { PermissionsContext, MergedPermissionsConfig } from './permissions-config.ts';
 import {
   validateBashCommand,
@@ -1779,8 +1778,6 @@ const ALWAYS_ALLOWED_TOOLS = new Set([
   'TodoWrite',                      // Task tracking
   'SubmitPlan',                     // Plan submission
   'LSP',                            // Language server (read-only)
-  // Browser automation tool (canonical wrapper)
-  'browser_tool',
 ]);
 
 /**
@@ -1843,12 +1840,6 @@ export function shouldAllowToolInMode(
     if (toolName.endsWith(`__${allowedTool}`)) {
       return { allowed: true };
     }
-  }
-
-  // Browser tool aliases (legacy browser_open/browser_snapshot/...)
-  // are normalized centrally to avoid drift across permission checks.
-  if (isBrowserToolNameOrAlias(toolName)) {
-    return { allowed: true };
   }
 
   // Handle Bash - check if command is read-only

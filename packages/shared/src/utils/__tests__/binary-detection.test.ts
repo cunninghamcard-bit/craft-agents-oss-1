@@ -57,8 +57,8 @@ const TEXT_AS_BASE64 = Buffer.from(
 // Short base64 (below threshold)
 const SHORT_BASE64 = Buffer.from('Hello').toString('base64'); // "SGVsbG8="
 
-const SCREENSHOT_PAYLOAD_PRETTY = JSON.stringify([
-  { type: 'text', text: 'Screenshot captured (108KB PNG)' },
+const EMBEDDED_IMAGE_PAYLOAD_PRETTY = JSON.stringify([
+  { type: 'text', text: 'Image payload captured (108KB PNG)' },
   {
     type: 'image',
     source: {
@@ -69,8 +69,8 @@ const SCREENSHOT_PAYLOAD_PRETTY = JSON.stringify([
   },
 ], null, 2);
 
-const SCREENSHOT_PAYLOAD_MINIFIED = JSON.stringify([
-  { type: 'text', text: 'Screenshot captured (108KB PNG)' },
+const EMBEDDED_IMAGE_PAYLOAD_MINIFIED = JSON.stringify([
+  { type: 'text', text: 'Image payload captured (108KB PNG)' },
   {
     type: 'image',
     source: {
@@ -300,10 +300,10 @@ describe('guardLargeResult (base64 integration)', () => {
 });
 
 describe('guardLargeResult (structured JSON media extraction)', () => {
-  test('extracts screenshot asset from pretty JSON and writes original + linked JSON artifacts', async () => {
-    const result = await guardLargeResult(SCREENSHOT_PAYLOAD_PRETTY, {
+  test('extracts embedded image asset from pretty JSON and writes original + linked JSON artifacts', async () => {
+    const result = await guardLargeResult(EMBEDDED_IMAGE_PAYLOAD_PRETTY, {
       sessionPath: tempSessionDir,
-      toolName: 'browser_screenshot',
+      toolName: 'structured_image_payload',
     });
 
     expect(result).not.toBeNull();
@@ -314,8 +314,8 @@ describe('guardLargeResult (structured JSON media extraction)', () => {
 
     const longResponsesDir = join(tempSessionDir, 'long_responses');
     const files = readdirSync(longResponsesDir);
-    const originalJson = files.find(f => f.includes('browser_screenshot_original') && f.endsWith('.json'));
-    const linkedJson = files.find(f => f.includes('browser_screenshot_linked') && f.endsWith('.json'));
+    const originalJson = files.find(f => f.includes('structured_image_payload_original') && f.endsWith('.json'));
+    const linkedJson = files.find(f => f.includes('structured_image_payload_linked') && f.endsWith('.json'));
 
     expect(originalJson).toBeDefined();
     expect(linkedJson).toBeDefined();
@@ -331,10 +331,10 @@ describe('guardLargeResult (structured JSON media extraction)', () => {
     expect(existsSync(data.assetRef!.path!)).toBe(true);
   });
 
-  test('extracts screenshot asset from minified JSON (whitespace-insensitive regression)', async () => {
-    const result = await guardLargeResult(SCREENSHOT_PAYLOAD_MINIFIED, {
+  test('extracts embedded image asset from minified JSON (whitespace-insensitive regression)', async () => {
+    const result = await guardLargeResult(EMBEDDED_IMAGE_PAYLOAD_MINIFIED, {
       sessionPath: tempSessionDir,
-      toolName: 'browser_screenshot',
+      toolName: 'structured_image_payload',
     });
 
     expect(result).not.toBeNull();
@@ -343,13 +343,13 @@ describe('guardLargeResult (structured JSON media extraction)', () => {
 
   test('dedupes identical structured assets by hash filename', async () => {
     // Run two extractions with the same payload; file path should resolve to the same hash-based asset.
-    const first = await guardLargeResult(SCREENSHOT_PAYLOAD_MINIFIED, {
+    const first = await guardLargeResult(EMBEDDED_IMAGE_PAYLOAD_MINIFIED, {
       sessionPath: tempSessionDir,
-      toolName: 'browser_screenshot',
+      toolName: 'structured_image_payload',
     });
-    const second = await guardLargeResult(SCREENSHOT_PAYLOAD_MINIFIED, {
+    const second = await guardLargeResult(EMBEDDED_IMAGE_PAYLOAD_MINIFIED, {
       sessionPath: tempSessionDir,
-      toolName: 'browser_screenshot',
+      toolName: 'structured_image_payload',
     });
 
     expect(first).not.toBeNull();

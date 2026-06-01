@@ -1,9 +1,8 @@
 /**
  * @craft-agent/ui - Shared React UI components for Craft Agent
  *
- * This package provides platform-agnostic UI components that work in both:
- * - Electron desktop app (full interactive mode)
- * - Web session viewer (read-only mode)
+ * This package provides platform-agnostic UI components for the web app and
+ * shared session viewer surfaces.
  *
  * Key components:
  * - SessionViewer: Read-only session transcript viewer (used by web viewer)
@@ -105,9 +104,6 @@ export {
   StyledDropdownMenuSeparator,
   StyledDropdownMenuSubTrigger,
   StyledDropdownMenuSubContent,
-  BrowserShader,
-  BrowserControls,
-  BrowserEmptyStateCard,
   FilterableSelectPopover,
   Island,
   IslandContentView,
@@ -119,10 +115,6 @@ export {
   type PreviewHeaderProps,
   type PreviewHeaderBadgeProps,
   type PreviewBadgeVariant,
-  type BrowserShaderProps,
-  type BrowserControlsProps,
-  type BrowserEmptyStateCardProps,
-  type BrowserEmptyPromptSample,
   type FilterableSelectPopoverProps,
   type FilterableSelectRenderState,
   type IslandProps,

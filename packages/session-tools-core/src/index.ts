@@ -200,8 +200,6 @@ export {
   TransformDataSchema,
   ScriptSandboxSchema,
   RenderTemplateSchema,
-  // Browser tool schema
-  BrowserToolSchema,
   // Developer feedback schema
   SendDeveloperFeedbackSchema,
   // Descriptions
