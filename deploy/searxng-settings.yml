@@ -1,15 +1,22 @@
 # SearXNG minimal production settings — self-hosted metasearch behind mihomo proxy.
 # Mounted read-only at /etc/searxng/settings.yml in the container.
 use_default_settings: true
+general:
+  instance_name: "craft-search"
 search:
   safe_search: 0
   autocomplete: ''
+  formats:
+    - html
+    - json
 server:
   secret_key: "${SEARXNG_SECRET_KEY:-change-me-in-production}"
   bind_address: "0.0.0.0"
   limiter: false
+  # No public_instance — requires Valkey. limiter:false alone is enough.
 ui:
   static_use_hash: true
+# Disable bot detection — internal Docker network, no abuse risk.
 # Global outgoing proxy — engines reachable only through mihomo from domestic server.
 outgoing:
   proxies:
