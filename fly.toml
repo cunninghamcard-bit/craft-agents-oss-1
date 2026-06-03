@@ -1,0 +1,47 @@
+# =============================================================================
+# Fly.io deployment for the Craft Agents Server (Feishu-first web service).
+#
+# Quick start (full walkthrough in docs/deploy-fly.md):
+#   fly launch --no-deploy --copy-config --name <你的全局唯一名字>
+#   fly volumes create craft_data --size 3 --region hkg
+#   fly secrets set CRAFT_SERVER_TOKEN=$(openssl rand -hex 24) \
+#                   CRAFT_FEISHU_APP_ID=cli_xxx \
+#                   CRAFT_FEISHU_APP_SECRET=xxx
+#   # 把下面 CRAFT_WEBUI_WS_URL 改成 wss://<你的app名>.fly.dev
+#   fly deploy
+# =============================================================================
+
+app = "craft-agent"          # 改成你自己的(Fly 全局唯一)
+primary_region = "hkg"       # 香港机房 — 大陆/飞书访问延迟最低的 Fly 节点
+
+[build]
+  dockerfile = "Dockerfile.server"
+
+[env]
+  CRAFT_RPC_HOST = "0.0.0.0"
+  CRAFT_RPC_PORT = "9100"
+  CRAFT_FEISHU_AUTH_ENABLED = "true"
+  CRAFT_FEISHU_DOMAIN = "feishu"
+  # Fly 边缘已是 HTTPS,强制安全 cookie
+  CRAFT_WEBUI_SECURE_COOKIE = "true"
+  # 开机自动种好默认 workspace(数据落在持久卷里,幂等,重启不覆盖)
+  CRAFT_DEFAULT_WORKSPACE_PATH = "/home/craftagents/.craft-agent/workspaces/default"
+  # ⚠️ 必改:容器内是 ws,但浏览器走 HTTPS,回连地址必须显式给 wss + 你的域名
+  CRAFT_WEBUI_WS_URL = "wss://craft-agent.fly.dev"
+
+[http_service]
+  internal_port = 9100
+  force_https = true
+  auto_stop_machines = false   # 内部工具,常开更省心;想省钱可改 "stop" + min=0
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "2gb"               # 1gb 偏紧(Bun + agent 子进程),2gb 稳
+
+# 持久卷 — 所有配置/session/workspace 数据的命根子。先 `fly volumes create craft_data`。
+[mounts]
+  source = "craft_data"
+  destination = "/home/craftagents/.craft-agent"

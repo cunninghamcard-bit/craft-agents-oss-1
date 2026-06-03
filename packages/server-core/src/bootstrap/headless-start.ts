@@ -1,8 +1,8 @@
 import { writeFileSync, readFileSync, unlinkSync, existsSync } from 'node:fs'
 import { uptime as osUptime } from 'node:os'
-import { join } from 'node:path'
+import { join, basename } from 'node:path'
 import { OAuthFlowStore } from '@craft-agent/shared/auth'
-import { ensureConfigDir, loadStoredConfig, saveConfig } from '@craft-agent/shared/config'
+import { ensureConfigDir, loadStoredConfig, saveConfig, addWorkspace, setActiveWorkspace } from '@craft-agent/shared/config'
 import { CONFIG_DIR } from '@craft-agent/shared/config/paths'
 import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
 import { WsRpcServer, type WsRpcTlsOptions } from '../transport/server'
@@ -235,18 +235,39 @@ function bootstrapConfigArtifacts(platform: PlatformServices): void {
 }
 
 function ensureGlobalConfigExists(platform: PlatformServices): void {
-  const config = loadStoredConfig()
-  if (config) {
+  if (loadStoredConfig()) {
     platform.logger.info('[bootstrap] Global config found')
-    return
+  } else {
+    saveConfig({
+      workspaces: [],
+      activeWorkspaceId: null,
+      activeSessionId: null,
+    })
+    platform.logger.info('[bootstrap] Initialized missing global config')
   }
 
-  saveConfig({
-    workspaces: [],
-    activeWorkspaceId: null,
-    activeSessionId: null,
-  })
-  platform.logger.info('[bootstrap] Initialized missing global config')
+  seedDefaultWorkspace(platform)
+}
+
+/**
+ * Seed a default workspace from CRAFT_DEFAULT_WORKSPACE_PATH at boot, so a
+ * fresh deployment is usable without anyone walking through onboarding.
+ *
+ * Idempotent by design: skips entirely if the env var is unset (preserves the
+ * old empty-config behaviour) or if any workspace already exists (so restarts
+ * and Docker container rebuilds never clobber existing data). Model is left
+ * unset and falls back to the app-level default.
+ */
+function seedDefaultWorkspace(platform: PlatformServices): void {
+  const rootPath = process.env.CRAFT_DEFAULT_WORKSPACE_PATH
+  if (!rootPath) return
+
+  const config = loadStoredConfig()
+  if (config && config.workspaces.length > 0) return
+
+  const ws = addWorkspace({ name: basename(rootPath), rootPath })
+  setActiveWorkspace(ws.id)
+  platform.logger.info(`[bootstrap] Seeded default workspace: ${rootPath} (id=${ws.id})`)
 }
 
 export async function bootstrapServer<TSessionManager, THandlerDeps>(

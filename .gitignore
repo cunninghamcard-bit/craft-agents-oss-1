@@ -72,3 +72,7 @@ credentials.enc
 # act (local GitHub Actions runner)
 .secrets
 .actrc
+deploy/mihomo.yaml
+build-skills/
+build-bin/
+.env.docker

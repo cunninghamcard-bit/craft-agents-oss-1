@@ -1,0 +1,55 @@
+# mihomo 代理链配置模板。用法：cp deploy/mihomo.example.yaml deploy/mihomo.yaml 然后填。
+# deploy/mihomo.yaml 含住宅代理账号，已 .gitignore，别提交。
+#
+# 链路：采集请求 → 本配置的 mixed-port:7899 → GFW 组（公司 Clash 订阅节点翻墙）
+#        → HOME 住宅节点（dialer-proxy 走 GFW 组出去）→ 目标站
+# 最终出口 = 住宅 IP，Cloudflare 自动放行。
+
+mixed-port: 7899
+allow-lan: true          # 容器网络内其他容器要能访问，故允许
+bind-address: '*'
+# 必须 rule 模式：订阅拉取本身要直连。用 global 会把"拉订阅"也塞进代理链，
+# 而代理链又依赖订阅里的节点 → 死循环，mihomo 起不来报 "Provider pull error / EOF"。
+mode: rule
+log-level: warning
+
+# 公司 Clash 订阅（翻墙用），mihomo 自动拉取节点
+proxy-providers:
+  company:
+    type: http
+    url: "<你的_CLASH_订阅_URL>"
+    interval: 86400
+    path: ./providers/company.yaml
+    health-check:
+      enable: true
+      url: https://www.gstatic.com/generate_204
+      interval: 300
+
+proxies:
+  # 住宅代理（最终出口）。它的连接经 dialer-proxy 指向的组出去，从而绕过 GFW
+  - name: HOME
+    type: socks5
+    server: <住宅代理服务器IP>
+    port: 443
+    username: <住宅代理用户名>
+    password: <住宅代理密码>
+    dialer-proxy: GFW
+
+proxy-groups:
+  # 翻墙跳板：从订阅里选一个能用的节点
+  - name: GFW
+    type: select
+    use:
+      - company
+  # 全局出口：走住宅
+  - name: GLOBAL
+    type: select
+    proxies:
+      - HOME
+
+rules:
+  # 订阅 URL 的域名必须直连拉取（否则 rule 模式下也会绕进代理链）。
+  # 把下面换成你订阅 URL 的域名后缀，例如订阅在 *.pages.dev 上就写 pages.dev。
+  - DOMAIN-SUFFIX,<你的订阅域名后缀>,DIRECT
+  # 其余（craft-server 送来的采集流量）走住宅出口
+  - MATCH,GLOBAL

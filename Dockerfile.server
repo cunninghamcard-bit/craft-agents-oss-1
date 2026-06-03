@@ -34,7 +34,7 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # upgrades are explicit — must match the --target in scripts/build-wa-worker.ts.
 ARG NODE_MAJOR=20
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates git ripgrep curl gnupg && \
+    apt-get install -y --no-install-recommends ca-certificates git ripgrep curl gnupg gosu && \
     curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - && \
     apt-get install -y --no-install-recommends nodejs && \
     rm -rf /var/lib/apt/lists/*
@@ -100,7 +100,11 @@ RUN find /app -not -perm -o=r -exec chmod o+r {} + && \
     find /app -type d -not -perm -o=x -exec chmod o+x {} + && \
     chmod -R 777 /home/craftagents
 
-USER craftagents
+# NOTE: we intentionally do NOT `USER craftagents` here. The entrypoint starts
+# as root so it can chown a freshly-mounted persistent volume, then drops to
+# craftagents via gosu before launching the server. A `docker run --user ...`
+# override still works — the entrypoint detects the non-root uid and skips both
+# the chown and the privilege drop.
 
 ENV CRAFT_RPC_HOST=0.0.0.0
 ENV CRAFT_RPC_PORT=9100
@@ -115,4 +119,6 @@ ENV CRAFT_MESSAGING_NODE_BIN=node
 
 EXPOSE 9100
 
-ENTRYPOINT ["bun", "run", "packages/server/src/index.ts"]
+RUN chmod +x /app/scripts/server-entrypoint.sh
+ENTRYPOINT ["/app/scripts/server-entrypoint.sh"]
+CMD ["bun", "run", "packages/server/src/index.ts"]
