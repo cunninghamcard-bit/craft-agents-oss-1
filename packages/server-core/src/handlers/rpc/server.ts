@@ -29,13 +29,18 @@ export function registerServerHandlers(
   // Workspace discovery (moved from workspace.ts — server-level, no workspace context)
   // -----------------------------------------------------------------------
 
-  server.handle(RPC_CHANNELS.server.GET_WORKSPACES, async () => {
-    const workspaces = sessionManager.getWorkspacesInfo()
+  server.handle(RPC_CHANNELS.server.GET_WORKSPACES, async (requestCtx) => {
+    const workspaces = requestCtx.userId && requestCtx.workspaceId
+      ? sessionManager.getWorkspacesInfo().filter((workspace) => workspace.id === requestCtx.workspaceId)
+      : sessionManager.getWorkspacesInfo()
     deps.platform.logger.info(`[server:getWorkspaces] returning ${workspaces.length} workspaces: ${JSON.stringify(workspaces.map(w => ({ id: w.id, name: w.name })))}`)
     return workspaces
   })
 
-  server.handle(RPC_CHANNELS.server.CREATE_WORKSPACE, async (_ctx, name: string) => {
+  server.handle(RPC_CHANNELS.server.CREATE_WORKSPACE, async (requestCtx, name: string) => {
+    if (requestCtx.userId) {
+      throw new Error('Workspace creation is disabled for Feishu user sessions')
+    }
     if (!name?.trim()) throw new Error('Workspace name is required')
     const trimmed = name.trim()
 
@@ -67,8 +72,10 @@ export function registerServerHandlers(
   // Server Status
   // -----------------------------------------------------------------------
 
-  server.handle(RPC_CHANNELS.server.GET_STATUS, async () => {
-    const workspaces = sessionManager.getWorkspacesInfo()
+  server.handle(RPC_CHANNELS.server.GET_STATUS, async (requestCtx) => {
+    const workspaces = requestCtx.userId && requestCtx.workspaceId
+      ? sessionManager.getWorkspacesInfo().filter((workspace) => workspace.id === requestCtx.workspaceId)
+      : sessionManager.getWorkspacesInfo()
     const workspaceStatuses = workspaces.map(ws => {
       const summary = sessionManager.getWorkspaceAutomationSummary(ws.id)
       return {
@@ -110,8 +117,11 @@ export function registerServerHandlers(
   // Active Session Discovery
   // -----------------------------------------------------------------------
 
-  server.handle(RPC_CHANNELS.server.GET_ACTIVE_SESSIONS, async () => {
-    return sessionManager.getActiveSessionsInfo()
+  server.handle(RPC_CHANNELS.server.GET_ACTIVE_SESSIONS, async (requestCtx) => {
+    const activeSessions = sessionManager.getActiveSessionsInfo()
+    return requestCtx.userId && requestCtx.workspaceId
+      ? activeSessions.filter((session) => session.workspaceId === requestCtx.workspaceId)
+      : activeSessions
   })
 
   // -----------------------------------------------------------------------

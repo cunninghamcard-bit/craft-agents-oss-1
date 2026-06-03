@@ -166,6 +166,12 @@ interface FeishuUserInfo {
   tenantKey?: string
 }
 
+function getFeishuOpenId(session: Awaited<ReturnType<typeof validateSession>>): string | null {
+  if (!session) return null
+  if (session.authProvider !== 'feishu' && session.authProvider !== 'lark') return null
+  return session.feishuUser?.openId?.trim() || null
+}
+
 let cachedFeishuAppToken: {
   cacheKey: string
   token: string
@@ -510,6 +516,17 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       if (!configSession) {
         return Response.json({ error: 'Unauthorized' }, { status: 401 })
       }
+      const feishuOpenId = getFeishuOpenId(configSession)
+      if (feishuOpenId) {
+        const { resolveUserWorkspaceId } = await import('@craft-agent/shared/config')
+        return Response.json({
+          defaultWorkspaceId: await resolveUserWorkspaceId(feishuOpenId),
+        })
+      }
+      if (configSession.authProvider === 'feishu' || configSession.authProvider === 'lark') {
+        return Response.json({ error: 'Feishu open_id is required' }, { status: 401 })
+      }
+
       const { getActiveWorkspace } = await import('@craft-agent/shared/config/storage')
       const active = getActiveWorkspace()
       return Response.json({

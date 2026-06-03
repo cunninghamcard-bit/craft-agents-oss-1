@@ -12,6 +12,7 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { createServer as createHttpsServer, type Server as HttpsServer } from 'node:https'
 import { randomUUID } from 'node:crypto'
 import {
+  RPC_CHANNELS,
   PROTOCOL_VERSION,
   HEARTBEAT_INTERVAL_MS,
   HEARTBEAT_MAX_MISSED,
@@ -42,6 +43,7 @@ interface ClientConnection {
   id: string
   ws: WebSocket
   workspaceId: string | null
+  userId: string | null
   webContentsId: number | null
   capabilities: Set<string>
   missedPongs: number
@@ -76,6 +78,13 @@ export interface WsRpcTlsOptions {
   passphrase?: string
 }
 
+export interface SessionCookieIdentity {
+  authProvider?: string
+  feishuUser?: {
+    openId?: string
+  }
+}
+
 export interface WsRpcServerOptions {
   /** Host to bind to. Default: '127.0.0.1' */
   host?: string
@@ -90,7 +99,13 @@ export interface WsRpcServerOptions {
    * Called with the Cookie header from the HTTP upgrade request.
    * If provided, a valid session cookie is accepted as an alternative to a bearer token.
    */
-  validateSessionCookie?: (cookieHeader: string | null) => Promise<boolean>
+  validateSessionCookie?: (cookieHeader: string | null) => Promise<SessionCookieIdentity | boolean | null>
+  /** Resolve the per-user workspace ID for a Feishu/Lark open_id. */
+  resolveUserWorkspace?: (userId: string) => Promise<string>
+  /** Optional guard for session-id-only RPC calls from user-scoped browser sessions. */
+  validateSessionAccess?: (sessionId: string, workspaceId: string) => Promise<boolean> | boolean
+  /** Optional guard for task-output RPC calls from user-scoped browser sessions. */
+  validateTaskAccess?: (taskId: string, workspaceId: string) => Promise<boolean> | boolean
   /** Server identity stamp on outgoing events. Default: 'local' */
   serverId?: string
   /** TLS configuration. When provided, the server listens on wss:// instead of ws://. */
@@ -115,6 +130,104 @@ export interface WsRpcServerOptions {
 
 const transportLog = createLogger('ws-rpc-server')
 
+const FIRST_ARG_WORKSPACE_CHANNELS = new Set<string>([
+  RPC_CHANNELS.sessions.MARK_ALL_READ,
+  RPC_CHANNELS.sessions.CREATE,
+  RPC_CHANNELS.sessions.SEARCH_CONTENT,
+  RPC_CHANNELS.sessions.IMPORT,
+  RPC_CHANNELS.sessions.IMPORT_REMOTE_TRANSFER,
+  RPC_CHANNELS.workspaces.UPDATE_REMOTE,
+  RPC_CHANNELS.window.SWITCH_WORKSPACE,
+  RPC_CHANNELS.theme.GET_WORKSPACE_COLOR_THEME,
+  RPC_CHANNELS.theme.SET_WORKSPACE_COLOR_THEME,
+  RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME,
+  RPC_CHANNELS.llmConnections.SET_WORKSPACE_DEFAULT,
+  RPC_CHANNELS.sources.GET,
+  RPC_CHANNELS.sources.CREATE,
+  RPC_CHANNELS.sources.DELETE,
+  RPC_CHANNELS.sources.SAVE_CREDENTIALS,
+  RPC_CHANNELS.sources.GET_PERMISSIONS,
+  RPC_CHANNELS.sources.GET_MCP_TOOLS,
+  RPC_CHANNELS.workspace.GET_PERMISSIONS,
+  RPC_CHANNELS.workspace.READ_IMAGE,
+  RPC_CHANNELS.workspace.WRITE_IMAGE,
+  RPC_CHANNELS.workspace.SETTINGS_GET,
+  RPC_CHANNELS.workspace.SETTINGS_UPDATE,
+  RPC_CHANNELS.skills.GET,
+  RPC_CHANNELS.skills.GET_FILES,
+  RPC_CHANNELS.skills.DELETE,
+  RPC_CHANNELS.skills.OPEN_EDITOR,
+  RPC_CHANNELS.skills.OPEN_FINDER,
+  RPC_CHANNELS.statuses.LIST,
+  RPC_CHANNELS.statuses.REORDER,
+  RPC_CHANNELS.labels.LIST,
+  RPC_CHANNELS.labels.CREATE,
+  RPC_CHANNELS.labels.DELETE,
+  RPC_CHANNELS.views.LIST,
+  RPC_CHANNELS.views.SAVE,
+  RPC_CHANNELS.automations.GET,
+  RPC_CHANNELS.automations.SET_ENABLED,
+  RPC_CHANNELS.automations.DUPLICATE,
+  RPC_CHANNELS.automations.DELETE,
+  RPC_CHANNELS.automations.GET_HISTORY,
+  RPC_CHANNELS.automations.GET_LAST_EXECUTED,
+  RPC_CHANNELS.automations.REPLAY,
+  RPC_CHANNELS.resources.EXPORT,
+  RPC_CHANNELS.resources.IMPORT,
+])
+
+const SECOND_ARG_WORKSPACE_CHANNELS = new Set<string>([
+  RPC_CHANNELS.sessions.GET_MODEL,
+  RPC_CHANNELS.sessions.SET_MODEL,
+])
+
+const FIRST_ARG_SESSION_CHANNELS = new Set<string>([
+  RPC_CHANNELS.sessions.GET_MESSAGES,
+  RPC_CHANNELS.sessions.DELETE,
+  RPC_CHANNELS.sessions.SEND_MESSAGE,
+  RPC_CHANNELS.sessions.CANCEL,
+  RPC_CHANNELS.sessions.KILL_SHELL,
+  RPC_CHANNELS.sessions.RESPOND_TO_PERMISSION,
+  RPC_CHANNELS.sessions.RESPOND_TO_CREDENTIAL,
+  RPC_CHANNELS.sessions.COMMAND,
+  RPC_CHANNELS.sessions.GET_PENDING_PLAN_EXECUTION,
+  RPC_CHANNELS.sessions.GET_PERMISSION_MODE_STATE,
+  RPC_CHANNELS.sessions.GET_MODEL,
+  RPC_CHANNELS.sessions.SET_MODEL,
+  RPC_CHANNELS.sessions.GET_FILES,
+  RPC_CHANNELS.sessions.GET_NOTES,
+  RPC_CHANNELS.sessions.SET_NOTES,
+  RPC_CHANNELS.sessions.WATCH_FILES,
+  RPC_CHANNELS.sessions.EXPORT,
+  RPC_CHANNELS.sessions.EXPORT_REMOTE_TRANSFER,
+  RPC_CHANNELS.drafts.GET,
+  RPC_CHANNELS.drafts.SET,
+  RPC_CHANNELS.drafts.DELETE,
+  RPC_CHANNELS.file.STORE_ATTACHMENT,
+])
+
+function extractFeishuOpenId(identity: SessionCookieIdentity | null): string | null {
+  if (!identity) return null
+  if (identity.authProvider !== 'feishu' && identity.authProvider !== 'lark') return null
+  return identity.feishuUser?.openId?.trim() || null
+}
+
+function scopeWorkspaceValues(value: unknown, workspaceId: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => scopeWorkspaceValues(item, workspaceId))
+  }
+
+  if (!value || typeof value !== 'object') return value
+
+  const scoped: Record<string, unknown> = {}
+  for (const [key, child] of Object.entries(value)) {
+    scoped[key] = key === 'workspaceId' || key === 'targetWorkspaceId'
+      ? workspaceId
+      : scopeWorkspaceValues(child, workspaceId)
+  }
+  return scoped
+}
+
 // ---------------------------------------------------------------------------
 // WsRpcServer
 // ---------------------------------------------------------------------------
@@ -137,7 +250,10 @@ export class WsRpcServer implements RpcServer {
   private readonly requestedPort: number
   private readonly requireAuth: boolean
   private readonly validateToken: ((token: string) => Promise<boolean>) | null
-  private readonly validateSessionCookie: ((cookieHeader: string | null) => Promise<boolean>) | null
+  private readonly validateSessionCookie: ((cookieHeader: string | null) => Promise<SessionCookieIdentity | boolean | null>) | null
+  private readonly resolveUserWorkspace: ((userId: string) => Promise<string>) | null
+  private readonly validateSessionAccess: ((sessionId: string, workspaceId: string) => Promise<boolean> | boolean) | null
+  private readonly validateTaskAccess: ((taskId: string, workspaceId: string) => Promise<boolean> | boolean) | null
   private readonly serverId: string
   private readonly tlsOptions: WsRpcTlsOptions | null
   private readonly serverVersion: string
@@ -152,6 +268,9 @@ export class WsRpcServer implements RpcServer {
     this.requireAuth = opts?.requireAuth ?? false
     this.validateToken = opts?.validateToken ?? null
     this.validateSessionCookie = opts?.validateSessionCookie ?? null
+    this.resolveUserWorkspace = opts?.resolveUserWorkspace ?? null
+    this.validateSessionAccess = opts?.validateSessionAccess ?? null
+    this.validateTaskAccess = opts?.validateTaskAccess ?? null
     this.serverId = opts?.serverId ?? 'local'
     this.serverVersion = opts?.serverVersion ?? ''
     this.tlsOptions = opts?.tls ?? null
@@ -192,12 +311,16 @@ export class WsRpcServer implements RpcServer {
 
     for (const client of this.clients.values()) {
       if (!this.matchesTarget(client, target)) continue
-      this.bufferAndMaybeSendEvent(client, channel, args, timestamp, true)
+      const scopedArgs = this.scopePushArgs(client, channel, args)
+      if (!scopedArgs) continue
+      this.bufferAndMaybeSendEvent(client, channel, scopedArgs, timestamp, true)
     }
 
     for (const { client } of this.disconnectedClients.values()) {
       if (!this.matchesTarget(client, target)) continue
-      this.bufferAndMaybeSendEvent(client, channel, args, timestamp, false)
+      const scopedArgs = this.scopePushArgs(client, channel, args)
+      if (!scopedArgs) continue
+      this.bufferAndMaybeSendEvent(client, channel, scopedArgs, timestamp, false)
     }
   }
 
@@ -427,6 +550,7 @@ export class WsRpcServer implements RpcServer {
         }
 
         // Auth check — bearer token OR session cookie (web UI)
+        let sessionIdentity: SessionCookieIdentity | null = null
         if (this.requireAuth) {
           let authenticated = false
 
@@ -437,12 +561,35 @@ export class WsRpcServer implements RpcServer {
 
           // 2. Fallback: try session cookie from HTTP upgrade request (web UI path)
           if (!authenticated && this.validateSessionCookie && upgradeRequestCookie) {
-            authenticated = await this.validateSessionCookie(upgradeRequestCookie)
+            const cookieIdentity = await this.validateSessionCookie(upgradeRequestCookie)
+            authenticated = !!cookieIdentity
+            if (cookieIdentity && cookieIdentity !== true) {
+              sessionIdentity = cookieIdentity
+            }
           }
 
           if (!authenticated) {
             const reason = envelope.token ? 'Invalid token' : 'Token required'
             this.sendError(ws, envelope.id, 'AUTH_FAILED', reason)
+            ws.close(4005, 'Auth failed')
+            return
+          }
+        }
+
+        const userId = extractFeishuOpenId(sessionIdentity)
+        let resolvedWorkspaceId = envelope.workspaceId ?? null
+        if (sessionIdentity?.authProvider === 'feishu' || sessionIdentity?.authProvider === 'lark') {
+          if (!userId || !this.resolveUserWorkspace) {
+            this.sendError(ws, envelope.id, 'AUTH_FAILED', 'Feishu user workspace resolver unavailable')
+            ws.close(4005, 'Auth failed')
+            return
+          }
+
+          try {
+            resolvedWorkspaceId = await this.resolveUserWorkspace(userId)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            this.sendError(ws, envelope.id, 'AUTH_FAILED', message)
             ws.close(4005, 'Auth failed')
             return
           }
@@ -456,7 +603,8 @@ export class WsRpcServer implements RpcServer {
 
             // Identity must match (workspace + webContentsId)
             const identityMatch =
-              prevClient.workspaceId === (envelope.workspaceId ?? null) &&
+              prevClient.workspaceId === resolvedWorkspaceId &&
+              prevClient.userId === userId &&
               prevClient.webContentsId === (envelope.webContentsId ?? null)
 
             if (identityMatch) {
@@ -559,7 +707,8 @@ export class WsRpcServer implements RpcServer {
         const client: ClientConnection = {
           id: clientId,
           ws,
-          workspaceId: envelope.workspaceId ?? null,
+          workspaceId: resolvedWorkspaceId,
+          userId,
           webContentsId: envelope.webContentsId ?? null,
           capabilities: new Set(envelope.clientCapabilities ?? []),
           missedPongs: 0,
@@ -656,12 +805,14 @@ export class WsRpcServer implements RpcServer {
     const ctx: RequestContext = {
       clientId: client.id,
       workspaceId: client.workspaceId,
+      userId: client.userId,
       webContentsId: client.webContentsId,
     }
 
     try {
+      const scopedArgs = await this.scopeRequestArgs(client, channel, args ?? [])
       const result = await Promise.race([
-        handler(ctx, ...(args ?? [])),
+        handler(ctx, ...scopedArgs),
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error(`Handler timeout: ${channel} (${WsRpcServer.HANDLER_TIMEOUT_MS}ms)`)),
             WsRpcServer.HANDLER_TIMEOUT_MS),
@@ -680,6 +831,61 @@ export class WsRpcServer implements RpcServer {
       const code: ErrorCode = isErrorCode(rawCode) ? rawCode : 'HANDLER_ERROR'
       this.sendResponseError(client.ws, id, channel, code, message)
     }
+  }
+
+  private async scopeRequestArgs(client: ClientConnection, channel: string, args: any[]): Promise<any[]> {
+    if (!client.userId || !client.workspaceId) return args
+    const workspaceId = client.workspaceId
+
+    const scopedArgs = args.map((arg) => scopeWorkspaceValues(arg, workspaceId))
+
+    if (FIRST_ARG_WORKSPACE_CHANNELS.has(channel)) {
+      scopedArgs[0] = client.workspaceId
+    }
+    if (SECOND_ARG_WORKSPACE_CHANNELS.has(channel)) {
+      scopedArgs[1] = client.workspaceId
+    }
+
+    const sessionId = FIRST_ARG_SESSION_CHANNELS.has(channel) ? scopedArgs[0] : null
+    if (typeof sessionId === 'string' && this.validateSessionAccess) {
+      const allowed = await this.validateSessionAccess(sessionId, client.workspaceId)
+      if (!allowed) {
+        throw new Error('Session not found')
+      }
+    }
+
+    if (channel === RPC_CHANNELS.tasks.GET_OUTPUT && typeof scopedArgs[0] === 'string' && this.validateTaskAccess) {
+      const allowed = await this.validateTaskAccess(scopedArgs[0], client.workspaceId)
+      if (!allowed) {
+        throw new Error('Task output not found')
+      }
+    }
+
+    return scopedArgs
+  }
+
+  private scopePushArgs(client: ClientConnection, channel: string, args: any[]): any[] | null {
+    if (!client.userId || !client.workspaceId) return args
+
+    if (channel === RPC_CHANNELS.sessions.UNREAD_SUMMARY_CHANGED) {
+      const summary = args[0] as {
+        byWorkspace?: Record<string, number>
+        hasUnreadByWorkspace?: Record<string, boolean>
+      } | undefined
+      const unreadCount = summary?.byWorkspace?.[client.workspaceId] ?? 0
+      return [{
+        totalUnreadSessions: unreadCount,
+        byWorkspace: { [client.workspaceId]: unreadCount },
+        hasUnreadByWorkspace: { [client.workspaceId]: !!summary?.hasUnreadByWorkspace?.[client.workspaceId] },
+      }]
+    }
+
+    if (channel === RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED) {
+      const data = args[0] as { workspaceId?: string } | undefined
+      return data?.workspaceId === client.workspaceId ? args : null
+    }
+
+    return args
   }
 
   // -------------------------------------------------------------------------

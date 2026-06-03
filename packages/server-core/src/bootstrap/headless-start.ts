@@ -5,7 +5,7 @@ import { OAuthFlowStore } from '@craft-agent/shared/auth'
 import { ensureConfigDir, loadStoredConfig, saveConfig, addWorkspace, setActiveWorkspace } from '@craft-agent/shared/config'
 import { CONFIG_DIR } from '@craft-agent/shared/config/paths'
 import { setBundledAssetsRoot } from '@craft-agent/shared/utils'
-import { WsRpcServer, type WsRpcTlsOptions } from '../transport/server'
+import { WsRpcServer, type SessionCookieIdentity, type WsRpcTlsOptions } from '../transport/server'
 import type { EventSink, RpcServer } from '../transport/types'
 import { createHeadlessPlatform } from '../runtime/platform-headless'
 import type { PlatformServices } from '../runtime/platform'
@@ -41,7 +41,13 @@ export interface ServerBootstrapOptions<TSessionManager, THandlerDeps> {
   /** TLS configuration. When provided, the server listens on wss:// instead of ws://. */
   tls?: WsRpcTlsOptions
   /** Cookie-based session validator for web UI auth on WebSocket upgrade. */
-  validateSessionCookie?: (cookieHeader: string | null) => Promise<boolean>
+  validateSessionCookie?: (cookieHeader: string | null) => Promise<SessionCookieIdentity | boolean | null>
+  /** Resolve the per-user workspace ID for a Feishu/Lark open_id. */
+  resolveUserWorkspace?: (userId: string) => Promise<string>
+  /** Guard session-id-only RPC calls from user-scoped browser sessions. */
+  validateSessionAccess?: (sessionManager: TSessionManager, sessionId: string, workspaceId: string) => Promise<boolean> | boolean
+  /** Guard task-output RPC calls from user-scoped browser sessions. */
+  validateTaskAccess?: (sessionManager: TSessionManager, taskId: string, workspaceId: string) => Promise<boolean> | boolean
   /**
    * Optional HTTP request handler for non-WebSocket requests on the RPC port.
    * When provided, the WsRpcServer serves HTTP (e.g. WebUI) on the same port.
@@ -316,6 +322,13 @@ export async function bootstrapServer<TSessionManager, THandlerDeps>(
     requireAuth: true,
     validateToken: async (t) => t === serverToken,
     validateSessionCookie: options.validateSessionCookie,
+    resolveUserWorkspace: options.resolveUserWorkspace,
+    validateSessionAccess: options.validateSessionAccess
+      ? (sessionId, workspaceId) => options.validateSessionAccess!(sessionManager, sessionId, workspaceId)
+      : undefined,
+    validateTaskAccess: options.validateTaskAccess
+      ? (taskId, workspaceId) => options.validateTaskAccess!(sessionManager, taskId, workspaceId)
+      : undefined,
     serverId: options.serverId ?? 'headless',
     serverVersion: options.serverVersion,
     tls: options.tls,

@@ -39,7 +39,7 @@ import { bootstrapServer, startHealthHttpServer, generateServerToken } from '@cr
 import { validateSession, createWebuiHandler, nodeHttpAdapter } from '@craft-agent/server-core/webui'
 import type { WebuiHandler } from '@craft-agent/server-core/webui'
 import { getCredentialManager } from '@craft-agent/shared/credentials'
-import { getWorkspaces } from '@craft-agent/shared/config'
+import { getWorkspaces, resolveUserWorkspaceId } from '@craft-agent/shared/config'
 import { createMessagingBootstrap, type MessagingBootstrapHandle } from '@craft-agent/messaging-gateway'
 
 // --generate-token: print a crypto-random token and exit
@@ -190,11 +190,13 @@ const instance = await (async () => {
       tls,
       // When web UI is enabled, accept JWT session cookies on WebSocket upgrade
       validateSessionCookie: webuiEnabled && serverToken
-        ? async (cookieHeader) => {
-            const session = await validateSession(cookieHeader, serverToken)
-            return session !== null
-          }
+        ? (cookieHeader) => validateSession(cookieHeader, serverToken)
         : undefined,
+      resolveUserWorkspace: resolveUserWorkspaceId,
+      validateSessionAccess: (sessionManager, sessionId, workspaceId) =>
+        sessionManager.getSessions(workspaceId).some((session) => session.id === sessionId),
+      validateTaskAccess: (sessionManager, taskId, workspaceId) =>
+        sessionManager.getTaskWorkspaceId(taskId) === workspaceId,
       // Embed the WebUI HTTP handler on the WS server's port
       httpHandler: webuiNodeHandler,
       applyPlatformToSubsystems: (platform) => {

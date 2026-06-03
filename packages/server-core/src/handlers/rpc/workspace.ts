@@ -39,12 +39,18 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   const windowManager = deps.windowManager
 
   // Get workspaces (LOCAL_ONLY — includes rootPath for local Web renderer)
-  server.handle(RPC_CHANNELS.workspaces.GET, async () => {
-    return sessionManager.getWorkspaces()
+  server.handle(RPC_CHANNELS.workspaces.GET, async (ctx) => {
+    const workspaces = sessionManager.getWorkspaces()
+    return ctx.userId && ctx.workspaceId
+      ? workspaces.filter((workspace) => workspace.id === ctx.workspaceId)
+      : workspaces
   })
 
   // Create a new workspace at a folder path (Obsidian-style: folder IS the workspace)
-  server.handle(RPC_CHANNELS.workspaces.CREATE, async (_ctx, folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }) => {
+  server.handle(RPC_CHANNELS.workspaces.CREATE, async (ctx, folderPath: string, name: string, remoteServer?: { url: string; token: string; remoteWorkspaceId: string }) => {
+    if (ctx.userId) {
+      throw new Error('Workspace creation is disabled for Feishu user sessions')
+    }
     const rootPath = folderPath.trim()
     const validation = isValidWorkspaceRootPath(rootPath)
     if (!validation.valid) {
@@ -327,10 +333,12 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
     setWorkspaceColorTheme(workspace.rootPath, themeId ?? undefined)
   })
 
-  server.handle(RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES, async () => {
+  server.handle(RPC_CHANNELS.theme.GET_ALL_WORKSPACE_THEMES, async (ctx) => {
     const { getWorkspaces } = await import('@craft-agent/shared/config/storage')
     const { getWorkspaceColorTheme } = await import('@craft-agent/shared/workspaces/storage')
-    const workspaces = getWorkspaces()
+    const workspaces = ctx.userId && ctx.workspaceId
+      ? getWorkspaces().filter((workspace) => workspace.id === ctx.workspaceId)
+      : getWorkspaces()
     const themes: Record<string, string | undefined> = {}
     for (const ws of workspaces) {
       themes[ws.id] = getWorkspaceColorTheme(ws.rootPath)
@@ -339,8 +347,8 @@ export function registerWorkspaceCoreHandlers(server: RpcServer, deps: HandlerDe
   })
 
   // Broadcast workspace theme change to all other windows (for cross-window sync)
-  server.handle(RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME, async (ctx, workspaceId: string, themeId: string | null) => {
-    pushTyped(server, RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED, { to: 'all' }, { workspaceId, themeId })
+  server.handle(RPC_CHANNELS.theme.BROADCAST_WORKSPACE_THEME, async (_ctx, workspaceId: string, themeId: string | null) => {
+    pushTyped(server, RPC_CHANNELS.theme.WORKSPACE_THEME_CHANGED, { to: 'workspace', workspaceId }, { workspaceId, themeId })
   })
 
   // ============================================================

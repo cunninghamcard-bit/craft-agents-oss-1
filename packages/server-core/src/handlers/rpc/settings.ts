@@ -213,8 +213,16 @@ export function registerSettingsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Get all drafts (for loading on app start)
-  server.handle(RPC_CHANNELS.drafts.GET_ALL, async () => {
-    return getAllSessionDrafts()
+  server.handle(RPC_CHANNELS.drafts.GET_ALL, async (ctx) => {
+    const drafts = getAllSessionDrafts()
+    if (!ctx.userId || !ctx.workspaceId) return drafts
+
+    const scopedSessionIds = new Set(
+      deps.sessionManager.getSessions(ctx.workspaceId).map((session) => session.id)
+    )
+    return Object.fromEntries(
+      Object.entries(drafts).filter(([sessionId]) => scopedSessionIds.has(sessionId))
+    )
   })
 
   // ============================================================

@@ -5940,6 +5940,13 @@ export class SessionManager implements ISessionManager {
     }
   }
 
+  getTaskWorkspaceId(taskId: string): string | null {
+    const sessionId = this.taskOutputIndex.get(taskId)
+    if (!sessionId) return null
+    const managed = this.sessions.get(sessionId)
+    return managed?.workspace.id ?? null
+  }
+
   /**
    * Respond to a pending permission request
    * Returns true if the response was delivered, false if agent/session is gone

@@ -163,11 +163,22 @@ export function registerSessionsHandlers(server: RpcServer, deps: HandlerDeps): 
   })
 
   // Get unread summary across all workspaces
-  server.handle(RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY, async () => {
+  server.handle(RPC_CHANNELS.sessions.GET_UNREAD_SUMMARY, async (ctx) => {
     try {
       await sessionManager.waitForInit()
     } catch (error) {
       log.error('GET_UNREAD_SUMMARY continuing after initialization failure:', error)
+    }
+    if (ctx.userId && ctx.workspaceId) {
+      const sessions = sessionManager.getSessions(ctx.workspaceId)
+      const unreadCount = sessions.filter((session) =>
+        session.hasUnread && !session.hidden && !session.isArchived
+      ).length
+      return {
+        totalUnreadSessions: unreadCount,
+        byWorkspace: { [ctx.workspaceId]: unreadCount },
+        hasUnreadByWorkspace: { [ctx.workspaceId]: unreadCount > 0 },
+      }
     }
     return sessionManager.getUnreadSummary()
   })

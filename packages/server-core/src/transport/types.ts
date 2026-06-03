@@ -7,6 +7,7 @@ import type { PushTarget } from '@craft-agent/shared/protocol'
 export interface RequestContext {
   clientId: string
   workspaceId: string | null
+  userId: string | null
   webContentsId: number | null
 }
 
