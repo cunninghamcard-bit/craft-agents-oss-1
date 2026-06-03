@@ -99,6 +99,12 @@ RUN printf '#!/bin/sh\nexec /home/craftagents/.local/share/uv/tools/cloakbrowser
 # --- skill（构建脚本把 procurement-agent/.agents/skills 暂存到 build-skills/）---
 COPY --chown=craftagents:craftagents build-skills/ /home/craftagents/.agents/skills/
 
+# --- 工作区权限白名单 ---
+# 只读(Explore)模式下放行 skill 脚本命令（cloakbrowser-python/python/node/lark-cli）。
+# 代码用 {workspaceRootPath}/permissions.json，workspace rootPath=~=/home/craftagents，
+# 故必须放这里（不是 .craft-agent/workspaces/...，那是过时的文档路径）。
+COPY --chown=craftagents:craftagents deploy/permissions.json /home/craftagents/permissions.json
+
 # --- 权限 + 预建数据目录 ---
 RUN mkdir -p /home/craftagents/.craft-agent && \
     find /app -not -perm -o=r -exec chmod o+r {} + && \

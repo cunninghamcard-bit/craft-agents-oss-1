@@ -9,8 +9,10 @@
 #   - 服务器上已放好 docker-compose.yml + .env + deploy/mihomo.yaml（见 DOCKER.md 首次部署）
 #
 # 用法：
-#   ./scripts/build-and-deploy.sh           # 构建 + 传 + 在服务器起容器
-#   ./scripts/build-and-deploy.sh --build   # 只构建本机镜像（不传不部署）
+#   ./scripts/build-and-deploy.sh                 # 构建 + 传镜像 + 同步配置/密钥 + 起容器
+#   ./scripts/build-and-deploy.sh --build         # 只构建本机镜像（不传不部署）
+#   ./scripts/build-and-deploy.sh --config-only   # 只同步配置/密钥并重启（不碰镜像）
+#                                                 # 改了 .env / deploy/mihomo.yaml 用这个
 # =============================================================================
 set -euo pipefail
 
@@ -22,12 +24,44 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SKILLS_SRC="${SKILLS_SRC:-$HOME/Projects/procurement-agent/.agents/skills}"
 cd "$ROOT"
 
-echo "==> [1/6] 暂存 skill 进 build context（build-skills/）"
+# 把本机的配置 + 密钥同步到服务器（密钥不进 git，本机是唯一真相源 + 备份）。
+# docker-compose.yml 进 git；.env / deploy/mihomo.yaml 是密钥（.gitignore）。
+sync_config() {
+  echo "==> 同步配置/密钥到 $SERVER:$REMOTE_DIR"
+  local missing=0
+  for f in .env deploy/mihomo.yaml; do
+    [[ -f "$f" ]] || { echo "    !! 本机缺 $f（密钥文件），跳过——服务器上的保持不变" >&2; missing=1; }
+  done
+  # 暂存到 /tmp 再 sudo cp（REMOTE_DIR 属 root）
+  scp docker-compose.yml "$SERVER:/tmp/dc.yml"
+  ssh "$SERVER" "sudo cp /tmp/dc.yml $REMOTE_DIR/docker-compose.yml && rm /tmp/dc.yml"
+  if [[ -f .env ]]; then
+    scp .env "$SERVER:/tmp/craft.env"
+    ssh "$SERVER" "sudo cp /tmp/craft.env $REMOTE_DIR/.env && rm /tmp/craft.env"
+  fi
+  if [[ -f deploy/mihomo.yaml ]]; then
+    scp deploy/mihomo.yaml "$SERVER:/tmp/mihomo.yaml"
+    ssh "$SERVER" "sudo mkdir -p $REMOTE_DIR/deploy && sudo cp /tmp/mihomo.yaml $REMOTE_DIR/deploy/mihomo.yaml && rm /tmp/mihomo.yaml"
+  fi
+  [[ "$missing" == 0 ]] && echo "    配置 + 密钥已同步" || echo "    配置已同步（部分密钥本机缺失，见上）"
+}
+
+# 只同步配置/密钥并重启，不构建/传镜像（改密钥用）
+if [[ "${1:-}" == "--config-only" ]]; then
+  sync_config
+  echo "==> 服务器：重建容器（应用新配置/密钥）"
+  ssh "$SERVER" "cd $REMOTE_DIR && sudo docker compose up -d"
+  ssh "$SERVER" "sudo docker compose -f $REMOTE_DIR/docker-compose.yml ps"
+  echo "==> 完成（仅配置）。"
+  exit 0
+fi
+
+echo "==> [1/7] 暂存 skill 进 build context（build-skills/）"
 rm -rf build-skills && mkdir -p build-skills
 rsync -a --exclude=__pycache__ --exclude='*.pyc' "$SKILLS_SRC/" build-skills/
 echo "    skills: $(ls build-skills | wc -l) 个"
 
-echo "==> [2/6] docker build（--network=host，下载走 clash $PROXY）"
+echo "==> [2/7] docker build（--network=host，下载走 clash $PROXY）"
 docker build --network=host \
   --build-arg HTTPS_PROXY="$PROXY" --build-arg HTTP_PROXY="$PROXY" \
   -f Dockerfile.full -t "$IMAGE" .
@@ -37,17 +71,20 @@ if [[ "${1:-}" == "--build" ]]; then
   exit 0
 fi
 
-echo "==> [3/6] 打包镜像（docker save | gzip）"
+echo "==> [3/7] 打包镜像（docker save | gzip）"
 docker save "$IMAGE" | gzip > /tmp/craft-agents-full.tar.gz
 echo "    大小：$(du -h /tmp/craft-agents-full.tar.gz | cut -f1)"
 
-echo "==> [4/6] 传到服务器并加载"
+echo "==> [4/7] 传到服务器并加载"
 scp /tmp/craft-agents-full.tar.gz "$SERVER:/tmp/"
 ssh "$SERVER" "gunzip -c /tmp/craft-agents-full.tar.gz | sudo docker load && rm /tmp/craft-agents-full.tar.gz"
 
-echo "==> [5/6] 服务器：起容器（compose 在 $REMOTE_DIR）"
+echo "==> [5/7] 同步配置/密钥"
+sync_config
+
+echo "==> [6/7] 服务器：起容器（compose 在 $REMOTE_DIR）"
 ssh "$SERVER" "cd $REMOTE_DIR && sudo docker compose up -d"
 
-echo "==> [6/6] 状态"
+echo "==> [7/7] 状态"
 ssh "$SERVER" "sudo docker compose -f $REMOTE_DIR/docker-compose.yml ps"
 echo "==> 完成。验证：curl -s -o /dev/null -w '%{http_code}\\n' https://agent.inotoday.asia/"
