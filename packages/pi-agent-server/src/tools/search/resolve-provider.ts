@@ -15,6 +15,7 @@ import { ResponsesApiSearchProvider } from './providers/openai.ts';
 import { ChatGPTBackendSearchProvider, extractChatGptAccountId } from './providers/chatgpt.ts';
 import { GoogleSearchProvider } from './providers/google.ts';
 import { DDGSearchProvider } from './providers/ddg.ts';
+import { SearXNGSearchProvider } from './providers/searxng.ts';
 
 export type SearchProviderCredential =
   | { type: 'api_key'; key: string }
@@ -50,6 +51,16 @@ function getOpenAiCodexAccessToken(piAuth?: SearchProviderAuthConfig): string | 
 }
 
 export function resolveSearchProvider(piAuth?: SearchProviderAuthConfig): WebSearchProvider {
+  // Self-hosted SearXNG — preferred when available, no API key needed.
+  // Falls back to provider-native or DDG when SEARXNG_URL is not set, exactly
+  // like the original resolution. createSearchTool already chains a second
+  // fallback (DDG) for the SearXNG path, so a SearXNG outage degrades
+  // automatically.
+  const searxngUrl = process.env.SEARXNG_URL?.trim();
+  if (searxngUrl) {
+    return new SearXNGSearchProvider(searxngUrl);
+  }
+
   const provider = piAuth?.provider;
   const apiKey = getApiKey(piAuth);
   const openAiCodexAccess = getOpenAiCodexAccessToken(piAuth);

@@ -3,6 +3,7 @@
 #
 # 服务（看这份文件就知道服务器跑了什么）：
 #   mihomo        代理链：Clash 订阅节点翻墙 + 住宅代理出口，容器网络内 :7899
+#   searxng       自建元搜索引擎(Google+Bing+DDG 聚合)，容器网络内 :8080
 #   craft-server  应用本体（bun+lark-cli+CloakBrowser+skill），发布到 127.0.0.1:9100
 #
 # 宿主机 cloudflared（systemd，保持不动）把 127.0.0.1:9100 经隧道暴露成
@@ -26,14 +27,26 @@ services:
     expose:
       - "7899"
 
+  searxng:
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    volumes:
+      - ./deploy/searxng-settings.yml:/etc/searxng/settings.yml:ro
+    expose:
+      - "8080"
+    environment:
+      # 容器内搜索请求经 mihomo 出去(Google/Bing…在国内不可达)
+      HTTP_PROXY: http://mihomo:7899
+      HTTPS_PROXY: http://mihomo:7899
+      NO_PROXY: localhost,127.0.0.1,::1
+
   craft-server:
     image: craft-agents-full:latest
     restart: unless-stopped
-    # 容器内绑 0.0.0.0（才能被映射端口访问）。仅发布到宿主 127.0.0.1，
-    # cloudflared 在边缘做 TLS，故容器内明文绑定安全，需此 flag 放行。
     command: ["bun", "run", "packages/server/src/index.ts", "--allow-insecure-bind"]
     depends_on:
       - mihomo
+      - searxng
     env_file:
       - .env
     environment:
@@ -45,12 +58,14 @@ services:
       # 这里给容器全局出站挂上 mihomo，NO_PROXY 里的境内/内部域名直连放行。
       HTTP_PROXY: http://mihomo:7899
       HTTPS_PROXY: http://mihomo:7899
-      # 直连放行（不走代理）：本机/容器内部、DeepSeek(境内直连且快)、飞书登录、
-      # 国内采集站点（lcsc/云汉ickey/hqew，避免 Chromium 误读 http_proxy 走住宅）。
-      NO_PROXY: localhost,127.0.0.1,::1,mihomo,api.deepseek.com,.deepseek.com,.feishu.cn,open.feishu.cn,.larksuite.com,.feishucdn.com,.szlcsc.com,.ickey.cn,.hqew.com
-      # lark-cli 只与境内飞书通信，永不走代理（避免凭证过代理告警/绕路）。
+      # 直连放行（不走代理）：本机/容器内部、DeepSeek、飞书、国内采集、SearXNG
+      NO_PROXY: localhost,127.0.0.1,::1,mihomo,searxng,api.deepseek.com,.deepseek.com,.feishu.cn,open.feishu.cn,.larksuite.com,.feishucdn.com,.szlcsc.com,.ickey.cn,.hqew.com
+      # lark-cli 只与境内飞书通信，永不走代理
       LARK_CLI_NO_PROXY: "1"
       CRAFT_WEBUI_SECURE_COOKIE: "true"
+      # SearXNG——自建元搜索引擎,替代 DDG
+      SEARXNG_URL: http://searxng:8080
+      SEARXNG_SECRET_KEY: "${SEARXNG_SECRET_KEY:-change-me-in-production}"
     volumes:
       - craft_data:/home/craftagents/.craft-agent          # 数据（命根子）
       - craft_lark:/home/craftagents/.lark-cli              # lark-cli 配置

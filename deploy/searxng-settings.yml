@@ -1,0 +1,17 @@
+# SearXNG minimal production settings — self-hosted metasearch behind mihomo proxy.
+# Mounted read-only at /etc/searxng/settings.yml in the container.
+use_default_settings: true
+search:
+  safe_search: 0
+  autocomplete: ''
+server:
+  secret_key: "${SEARXNG_SECRET_KEY:-change-me-in-production}"
+  bind_address: "0.0.0.0"
+  limiter: false
+ui:
+  static_use_hash: true
+# Global outgoing proxy — engines reachable only through mihomo from domestic server.
+outgoing:
+  proxies:
+    all://:
+      - http://mihomo:7899
