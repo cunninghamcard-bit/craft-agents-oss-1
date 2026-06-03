@@ -13,7 +13,7 @@ import { SignJWT, jwtVerify } from 'jose'
 // JWT helpers (via jose library)
 // ---------------------------------------------------------------------------
 
-const JWT_EXPIRY_SECONDS = 86_400 // 24 hours
+const JWT_EXPIRY_SECONDS = 2_592_000 // 30 days
 
 export interface JwtPayload {
   sub: string
