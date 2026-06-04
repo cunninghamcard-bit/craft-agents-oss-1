@@ -8,9 +8,13 @@
   <link rel="icon" type="image/x-icon" href="./favicon.ico" />
   <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
   <meta name="theme-color" content="#1F1F24" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600&display=swap" rel="stylesheet">
+  <style>
+    /* system font stack — no Google Fonts (GFW blocked, triggers Feishu security warning) */
+    @font-face {
+      font-family: 'Inter-fallback';
+      src: local('Inter'), local('system-ui'), local('-apple-system'), local('BlinkMacSystemFont');
+    }
+  </style>
   <style>
     :root {
       color-scheme: light dark;
