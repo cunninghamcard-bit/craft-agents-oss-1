@@ -569,7 +569,10 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
     if (!session) {
       const accept = req.headers.get('accept') ?? ''
       if (accept.includes('text/html') || path === '/' || path === '') {
-        return Response.redirect('/login', 302)
+        // Preserve the query string (notably ?app=<key> for multi-app routing) —
+        // otherwise the homepage URL https://host/?app=b loses the param on the
+        // hop to /login and falls back to the first app.
+        return Response.redirect(`/login${url.search}`, 302)
       }
       return Response.json({ error: 'Unauthorized' }, { status: 401 })
     }

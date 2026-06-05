@@ -310,7 +310,10 @@
               else reject(new Error('Feishu did not return an authorization code.'));
             },
             fail: (err) => {
-              reject(new Error(err?.errMsg || err?.message || 'Feishu authorization failed.'));
+              // Surface the real cause: Feishu hides the reason in err.errno/errString
+              // behind a useless "please check errno" errMsg.
+              let detail; try { detail = JSON.stringify(err); } catch (e) { detail = String(err); }
+              reject(new Error((err?.errMsg || err?.message || 'Feishu authorization failed.') + ' [appID=' + appId + ' errno=' + (err?.errno ?? '?') + ' ' + detail + ']'));
             },
           });
         };
