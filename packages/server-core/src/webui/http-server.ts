@@ -333,7 +333,12 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
       const loginFile = Bun.file(join(webuiDir, 'login.html'))
       if (await loginFile.exists()) {
         return new Response(loginFile, {
-          headers: { 'Content-Type': 'text/html; charset=utf-8' },
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            // Never cache the login page — the Feishu webview otherwise serves a
+            // stale copy and loses the ?app=<key> routing param.
+            'Cache-Control': 'no-store, must-revalidate',
+          },
         })
       }
       return new Response('Login page not found', { status: 404 })
