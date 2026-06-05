@@ -89,7 +89,9 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 # cloakbrowser 包不在国内镜像（清华返回 403），用官方 PyPI；构建期经 clash 代理
 # （HTTPS_PROXY build-arg + --network=host）。Chromium 下载同样走代理。
 USER craftagents
-RUN HOME=/home/craftagents /usr/local/bin/uv tool install --with "httpx[socks]" --with geoip2 cloakbrowser && \
+# UV_HTTP_TIMEOUT bumps uv's per-request timeout (default 30s) — pythonhosted.org
+# via clash is slow and was timing out on large wheels (aiohttp). 180s + retries.
+RUN HOME=/home/craftagents UV_HTTP_TIMEOUT=180 /usr/local/bin/uv tool install --with "httpx[socks]" --with geoip2 cloakbrowser && \
     HOME=/home/craftagents /home/craftagents/.local/share/uv/tools/cloakbrowser/bin/cloakbrowser install
 USER root
 # cloakbrowser-python wrapper（venv python 直跑，符合 SKILL.md 里的硬编码路径）
