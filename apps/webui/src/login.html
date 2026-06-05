@@ -324,19 +324,31 @@
       });
     }
 
+    // Pick the app this webview belongs to. Multi-app: read ?app=<key> and match
+    // feishuConfig.apps; fall back to the first app, then to the legacy single appId.
+    function resolveActiveApp(cfg) {
+      const apps = Array.isArray(cfg?.apps) ? cfg.apps : [];
+      if (apps.length === 0) {
+        return cfg?.appId ? { key: undefined, appId: cfg.appId } : null;
+      }
+      const wanted = new URLSearchParams(window.location.search).get('app');
+      return (wanted && apps.find((a) => a.key === wanted)) || apps[0];
+    }
+
     async function signInWithFeishu() {
-      if (!feishuConfig?.enabled || !feishuConfig.appId) return;
+      const active = resolveActiveApp(feishuConfig);
+      if (!feishuConfig?.enabled || !active) return;
       clearError();
       feishuBtn.disabled = true;
       feishuBtn.textContent = 'Signing in with Feishu...';
 
       try {
         await ensureFeishuSdk(feishuConfig.domain);
-        const code = await requestFeishuCode(feishuConfig.appId);
+        const code = await requestFeishuCode(active.appId);
         const res = await fetch('/api/auth/feishu/session', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
+          body: JSON.stringify({ code, appKey: active.key }),
         });
         if (res.ok) {
           window.location.href = '/';

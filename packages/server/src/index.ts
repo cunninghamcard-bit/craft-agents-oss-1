@@ -23,8 +23,9 @@
  *   CRAFT_WEBUI_WS_URL         — optional browser-facing ws:// or wss:// URL returned by /api/config
  *   CRAFT_FEISHU_AUTH_ENABLED  — enable Feishu/Lark in-app passwordless login
  *   CRAFT_FEISHU_DOMAIN        — feishu or lark (default: feishu)
- *   CRAFT_FEISHU_APP_ID        — Feishu/Lark app ID
- *   CRAFT_FEISHU_APP_SECRET    — Feishu/Lark app secret
+ *   CRAFT_FEISHU_APP_ID        — Feishu/Lark app ID (single-app mode)
+ *   CRAFT_FEISHU_APP_SECRET    — Feishu/Lark app secret (single-app mode)
+ *   CRAFT_FEISHU_APPS          — JSON array for multi-app mode: [{"key","appId","appSecret"}]; each app opens /?app=<key>
  *   CRAFT_FEISHU_PASSWORD_FALLBACK — keep password login available when Feishu auth is enabled
  *   CRAFT_MESSAGING_WA_WORKER  — absolute path to worker.cjs (default: packages/messaging-whatsapp-worker/dist/worker.cjs)
  *   CRAFT_MESSAGING_NODE_BIN   — Node binary used to spawn the WhatsApp worker (default: node)
@@ -130,6 +131,40 @@ if (feishuDomainRaw !== 'feishu' && feishuDomainRaw !== 'lark') {
 }
 const serverToken = process.env.CRAFT_SERVER_TOKEN
 
+// Multi-app Feishu config (optional). JSON array, e.g.
+//   CRAFT_FEISHU_APPS=[{"key":"a","appId":"cli_x","appSecret":"y"},{"key":"b","appId":"cli_z","appSecret":"w"}]
+// When set, takes precedence over the single CRAFT_FEISHU_APP_ID/SECRET pair.
+// Each app's webview opens https://<host>/?app=<key> so the login page knows which app it is.
+function parseFeishuApps(raw: string | undefined): Array<{ key: string; appId: string; appSecret: string }> | undefined {
+  if (!raw?.trim()) return undefined
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    console.error('Invalid CRAFT_FEISHU_APPS: not valid JSON.')
+    process.exit(1)
+  }
+  if (!Array.isArray(parsed)) {
+    console.error('Invalid CRAFT_FEISHU_APPS: expected a JSON array.')
+    process.exit(1)
+  }
+  const apps = parsed.map((a, i) => {
+    const o = a as Record<string, unknown>
+    if (typeof o?.key !== 'string' || typeof o?.appId !== 'string' || typeof o?.appSecret !== 'string') {
+      console.error(`Invalid CRAFT_FEISHU_APPS[${i}]: each app needs string key, appId, appSecret.`)
+      process.exit(1)
+    }
+    return { key: o.key, appId: o.appId, appSecret: o.appSecret }
+  })
+  const keys = new Set(apps.map((a) => a.key))
+  if (keys.size !== apps.length) {
+    console.error('Invalid CRAFT_FEISHU_APPS: app keys must be unique.')
+    process.exit(1)
+  }
+  return apps
+}
+const feishuApps = parseFeishuApps(process.env.CRAFT_FEISHU_APPS)
+
 // ---------------------------------------------------------------------------
 // Create WebUI handler early so it can be embedded in the WsRpcServer.
 // The handler is a pure function — it doesn't need the session manager yet
@@ -156,6 +191,7 @@ if (webuiEnabled && serverToken) {
     feishuAuth: {
       enabled: feishuAuthEnabled,
       domain: feishuDomainRaw,
+      apps: feishuApps,
       appId: process.env.CRAFT_FEISHU_APP_ID,
       appSecret: process.env.CRAFT_FEISHU_APP_SECRET,
       passwordFallback: feishuPasswordFallback,

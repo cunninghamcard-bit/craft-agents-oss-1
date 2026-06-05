@@ -149,12 +149,36 @@ export interface WebuiHandlerOptions {
   trustedProxies?: string[]
 }
 
+export interface FeishuApp {
+  /** Stable key used to disambiguate which app a webview belongs to (via ?app=<key>). */
+  key: string
+  appId: string
+  appSecret: string
+}
+
 export interface FeishuAuthOptions {
   enabled: boolean
   domain: 'feishu' | 'lark'
+  /** Multi-app list. When set, takes precedence over the single appId/appSecret below. */
+  apps?: FeishuApp[]
   appId?: string
   appSecret?: string
   passwordFallback?: boolean
+}
+
+/**
+ * Normalize the auth config into a flat list of apps.
+ * Multi-app `apps` wins; otherwise fall back to the legacy single appId/appSecret pair.
+ * Returns [] when nothing usable is configured.
+ */
+function resolveFeishuApps(feishuAuth?: FeishuAuthOptions): FeishuApp[] {
+  if (!feishuAuth?.enabled) return []
+  const list = (feishuAuth.apps ?? []).filter((a) => a.appId && a.appSecret)
+  if (list.length > 0) return list
+  if (feishuAuth.appId && feishuAuth.appSecret) {
+    return [{ key: 'default', appId: feishuAuth.appId, appSecret: feishuAuth.appSecret }]
+  }
+  return []
 }
 
 interface FeishuUserInfo {
@@ -172,11 +196,7 @@ function getFeishuOpenId(session: Awaited<ReturnType<typeof validateSession>>): 
   return session.feishuUser?.openId?.trim() || null
 }
 
-let cachedFeishuAppToken: {
-  cacheKey: string
-  token: string
-  expiresAt: number
-} | null = null
+const feishuAppTokenCache = new Map<string, { token: string; expiresAt: number }>()
 
 function getFeishuOpenApiBase(domain: 'feishu' | 'lark'): string {
   return domain === 'lark'
@@ -187,8 +207,9 @@ function getFeishuOpenApiBase(domain: 'feishu' | 'lark'): string {
 async function getFeishuAppAccessToken(options: Required<Pick<FeishuAuthOptions, 'domain' | 'appId' | 'appSecret'>>): Promise<string> {
   const cacheKey = `${options.domain}:${options.appId}`
   const now = Date.now()
-  if (cachedFeishuAppToken?.cacheKey === cacheKey && cachedFeishuAppToken.expiresAt > now + 60_000) {
-    return cachedFeishuAppToken.token
+  const cached = feishuAppTokenCache.get(cacheKey)
+  if (cached && cached.expiresAt > now + 60_000) {
+    return cached.token
   }
 
   const res = await fetch(`${getFeishuOpenApiBase(options.domain)}/open-apis/auth/v3/app_access_token/internal`, {
@@ -205,11 +226,10 @@ async function getFeishuAppAccessToken(options: Required<Pick<FeishuAuthOptions,
   }
 
   const ttlSeconds = Number(json.expire) || 7200
-  cachedFeishuAppToken = {
-    cacheKey,
+  feishuAppTokenCache.set(cacheKey, {
     token: json.app_access_token,
     expiresAt: now + Math.max(60, ttlSeconds - 300) * 1000,
-  }
+  })
   return json.app_access_token
 }
 
@@ -382,24 +402,29 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
 
     // ── Feishu/Lark auth config (no auth) ──
     if (path === '/api/auth/feishu/config' && req.method === 'GET') {
-      const enabled = !!(feishuAuth?.enabled && feishuAuth.appId && feishuAuth.appSecret)
+      const apps = resolveFeishuApps(feishuAuth)
+      const enabled = apps.length > 0
       return Response.json({
         enabled,
         domain: feishuAuth?.domain ?? 'feishu',
-        appId: enabled ? feishuAuth?.appId : undefined,
+        // Multi-app: keys + ids the frontend picks from via ?app=<key>.
+        apps: apps.map((a) => ({ key: a.key, appId: a.appId })),
+        // Legacy single-app field — first app, kept for older clients.
+        appId: enabled ? apps[0]!.appId : undefined,
         passwordFallback: feishuAuth?.passwordFallback ?? true,
       })
     }
 
     // ── Feishu/Lark passwordless session exchange (no cookie auth) ──
     if (path === '/api/auth/feishu/session' && req.method === 'POST') {
-      if (!feishuAuth?.enabled || !feishuAuth.appId || !feishuAuth.appSecret) {
+      const apps = resolveFeishuApps(feishuAuth)
+      if (!feishuAuth?.enabled || apps.length === 0) {
         return Response.json({ error: 'Feishu auth is not enabled' }, { status: 404 })
       }
 
-      let body: { code?: string }
+      let body: { code?: string; appKey?: string }
       try {
-        body = await req.json() as { code?: string }
+        body = await req.json() as { code?: string; appKey?: string }
       } catch {
         return Response.json({ error: 'Invalid request body' }, { status: 400 })
       }
@@ -407,11 +432,14 @@ export function createWebuiHandler(options: WebuiHandlerOptions): WebuiHandler {
         return Response.json({ error: 'Feishu code is required' }, { status: 400 })
       }
 
+      // Pick the app the code was issued by; fall back to the first when unspecified.
+      const app = (body.appKey && apps.find((a) => a.key === body.appKey)) || apps[0]!
+
       try {
         const user = await exchangeFeishuCode({
           domain: feishuAuth.domain,
-          appId: feishuAuth.appId,
-          appSecret: feishuAuth.appSecret,
+          appId: app.appId,
+          appSecret: app.appSecret,
         }, body.code)
         const sub = user.openId ?? user.userId ?? user.unionId
         if (!sub) {
