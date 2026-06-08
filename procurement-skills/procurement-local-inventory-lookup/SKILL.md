@@ -24,9 +24,9 @@ metadata:
 
        lark-cli base +field-list --base-token Mjlkb49B9aoptssVw8Jc0wGwnhh --table-id tbl9I8ZWFwCMlxNm
 
-2. 按型号搜 `查找库存`（把 `型号字段名` 换成上一步里的实际字段、`<型号>` 换成查询型号）：
+2. 按型号搜 `查找库存`（`<型号>` 换成查询型号）：
 
-       lark-cli base +record-search --base-token Mjlkb49B9aoptssVw8Jc0wGwnhh --table-id tbl9I8ZWFwCMlxNm --json '{"keyword":"<型号>","search_fields":["型号字段名"]}'
+       lark-cli base +record-search --base-token Mjlkb49B9aoptssVw8Jc0wGwnhh --table-id tbl9I8ZWFwCMlxNm --json '{"keyword":"<型号>","search_fields":["型号"]}'
 
 3. 命中清楚（供应商/数量/单价/自家库存）就直接展示。
 4. 没命中、型号被模糊扩展、合并不清、或需原始明细，再用同样方式查 A/B/C/自家源表（换 table-id）。
