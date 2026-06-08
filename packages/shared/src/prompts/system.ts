@@ -272,6 +272,20 @@ export function formatAvailableSkillsBlock(skills: LoadedSkill[]): string {
 }
 
 /**
+ * Build the <available_skills> block by loading all skills visible to this
+ * workspace (global + workspace + project tiers). Returns '' when there is no
+ * workspace path or no skills. Mirrors the getProjectContextFilesPrompt pattern.
+ */
+export function getAvailableSkillsPrompt(
+  workspaceRootPath?: string,
+  workingDirectory?: string
+): string {
+  if (!workspaceRootPath) return '';
+  const skills = loadAllSkills(workspaceRootPath, workingDirectory);
+  return formatAvailableSkillsBlock(skills);
+}
+
+/**
  * Get the project context files prompt section for the system prompt.
  * Lists all discovered context files (AGENTS.md, CLAUDE.md) in the working directory.
  * For monorepos, this includes nested package context files.
@@ -384,6 +398,9 @@ export function getSystemPrompt(
   // Get project context files for monorepo support (lives in system prompt for persistence across compaction)
   const projectContextFiles = getProjectContextFilesPrompt(workingDirectory);
 
+  // Catalog of skills the model may autonomously use (it Reads the SKILL.md when a request matches)
+  const availableSkills = getAvailableSkillsPrompt(workspaceRootPath, workingDirectory);
+
   // Fall back to the user's current preference when callers don't pin/pass a value,
   // so forgetting the argument can't silently re-enable the co-author trailer (see #576).
   const resolvedIncludeCoAuthoredBy = includeCoAuthoredBy ?? getCoAuthorPreference();
@@ -392,7 +409,7 @@ export function getSystemPrompt(
   // to enable prompt caching. The system prompt stays static and cacheable.
   // Safe Mode context is also in user messages for the same reason.
   const basePrompt = getCraftAssistantPrompt(workspaceRootPath, backendName, resolvedIncludeCoAuthoredBy);
-  const fullPrompt = `${basePrompt}${preferences}${debugContext}${projectContextFiles}`;
+  const fullPrompt = `${basePrompt}${preferences}${debugContext}${availableSkills}${projectContextFiles}`;
 
   debug('[getSystemPrompt] full prompt length:', fullPrompt.length);
 
@@ -514,12 +531,13 @@ Sources are external data connections. Each source has:
 
 ## Skills
 
-Skills are reusable instruction sets that teach you specialized behaviors. Each skill has:
-- \`SKILL.md\` - Instructions and behavior definition (read before execution!)
+Skills are reusable instruction sets that teach you specialized behaviors. The skills available right now are listed in \`<available_skills>\`, each with its purpose and the absolute path to its \`SKILL.md\`.
 
-**Using a skill** (user mentions it with \`[skill:slug]\`):
-1. Read its \`SKILL.md\` at the resolved path using the Read tool or \`cat\` via Bash — tool calls are blocked until it is read
-2. Follow the instructions in the file to complete the user's request
+**When a user's request matches a skill's described purpose:**
+1. Read that skill's \`SKILL.md\` at the listed path using the Read tool (or \`cat\` via Bash)
+2. Follow its instructions to complete the request
+
+\`[skill:slug]\` is only a shortcut the UI / automations use to pre-attach a skill (when present, its \`SKILL.md\` is force-read before other tools). You do NOT need that syntax — match by purpose and Read the file yourself.
 
 Skills are stored at three levels (checked in order):
 - Global: \`~/.agents/skills/{slug}/SKILL.md\`

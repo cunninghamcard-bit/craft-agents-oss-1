@@ -9,8 +9,11 @@ mock.module('../../config/preferences.ts', () => ({
   formatPreferencesForPrompt: () => '',
 }))
 
-import { getSystemPrompt, formatAvailableSkillsBlock } from '../system'
+import { getSystemPrompt, formatAvailableSkillsBlock, getAvailableSkillsPrompt } from '../system'
 import type { LoadedSkill } from '../../skills/types.ts'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join as pathJoin } from 'path'
 
 const GIT_CONVENTIONS_HEADING = '## Git Conventions'
 const CO_AUTHOR_TRAILER = 'Co-Authored-By: Craft Agent <agents-noreply@craft.do>'
@@ -128,5 +131,39 @@ describe('formatAvailableSkillsBlock', () => {
     expect(block).toContain('采购平台报价线索查找')
     expect(block).toContain('在平台查报价')
     expect(block).toContain('/ws/skills/procurement-platform-search/SKILL.md')
+  })
+})
+
+function makeWorkspaceWithSkill(slug: string, description: string): string {
+  const ws = mkdtempSync(pathJoin(tmpdir(), 'craft-ws-'))
+  const dir = pathJoin(ws, 'skills', slug)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    pathJoin(dir, 'SKILL.md'),
+    `---\nname: ${slug} 名称\ndescription: ${description}\n---\n\n正文指令。\n`
+  )
+  return ws
+}
+
+describe('getAvailableSkillsPrompt / getSystemPrompt skills injection', () => {
+  it('returns empty when no workspace path', () => {
+    expect(getAvailableSkillsPrompt(undefined, undefined)).toBe('')
+  })
+
+  it('injects workspace skills into the catalog', () => {
+    const ws = makeWorkspaceWithSkill('demo-skill', '当用户要演示时使用')
+    const block = getAvailableSkillsPrompt(ws, undefined)
+    expect(block).toContain('<available_skills>')
+    expect(block).toContain('demo-skill')
+    expect(block).toContain('当用户要演示时使用')
+  })
+
+  it('getSystemPrompt embeds the catalog and the autonomous-use guidance', () => {
+    const ws = makeWorkspaceWithSkill('demo-skill', '当用户要演示时使用')
+    const prompt = getSystemPrompt(undefined, undefined, ws, ws)
+    expect(prompt).toContain('<available_skills>')
+    expect(prompt).toContain('demo-skill')
+    expect(prompt).toContain('When a user')
+    expect(prompt).toContain('Read')
   })
 })
