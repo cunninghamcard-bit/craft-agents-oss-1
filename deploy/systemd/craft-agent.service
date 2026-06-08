@@ -1,0 +1,19 @@
+[Unit]
+Description=Craft Agents Server (bun, native)
+After=network-online.target mihomo.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=craft
+Group=craft
+WorkingDirectory=/opt/craft-agents
+EnvironmentFile=/etc/craft-agent.env
+ExecStart=/usr/local/bin/bun run packages/server/src/index.ts
+Restart=always
+RestartSec=3
+# 给 bun/agent 足够文件句柄（会话/工具子进程多）
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
