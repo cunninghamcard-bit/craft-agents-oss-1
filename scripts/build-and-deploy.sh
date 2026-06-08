@@ -21,7 +21,7 @@ PROXY="${BUILD_PROXY:-http://127.0.0.1:7897}"
 IMAGE=craft-agents-full:latest
 REMOTE_DIR=/opt/craft-docker
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-SKILLS_SRC="${SKILLS_SRC:-$HOME/Projects/procurement-agent/.agents/skills}"
+SKILLS_SRC="${SKILLS_SRC:-$ROOT/procurement-skills}"
 cd "$ROOT"
 
 # 把本机的配置 + 密钥同步到服务器（密钥不进 git，本机是唯一真相源 + 备份）。

@@ -1,0 +1,11 @@
+interface:
+  display_name: "采购平台报价线索"
+  short_description: "在平台查找型号的库存、价格和产品页线索"
+  default_prompt: "使用 $procurement-platform-search 查询单个型号的平台报价和库存线索。本 skill 可单独运行，也可在本地无明确库存时与供应商候选筛选并行组合；它只输出平台线索，后续合并对比由当前采购任务完成。只整理平台显示的型号命中、品牌、库存、价格、MOQ/SPQ、datasheet/产品页链接、拦截或登录阻碍；不做价格优劣、供应商真假、下单或替代判断。"
+
+runtime:
+  model: "gpt-5.5"
+  reasoning_effort: "low"
+
+policy:
+  allow_implicit_invocation: true

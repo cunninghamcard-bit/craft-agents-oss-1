@@ -76,3 +76,7 @@ deploy/mihomo.yaml
 build-skills/
 build-bin/
 .env.docker
+
+# procurement skills: 忽略 python 缓存
+procurement-skills/**/__pycache__/
+procurement-skills/**/*.pyc

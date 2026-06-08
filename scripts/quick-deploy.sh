@@ -21,8 +21,9 @@ set -euo pipefail
 SERVER="${CRAFT_DEPLOY_SERVER:-ubuntu@124.222.62.164}"
 REMOTE_APP=/opt/craft-agents
 REMOTE_SKILLS=/home/craft/.agents/skills
-SKILLS_SRC="${SKILLS_SRC:-$HOME/Projects/procurement-agent/.agents/skills}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# skill 真源现在在仓库内（procurement-skills/），便于版本化开发管理
+SKILLS_SRC="${SKILLS_SRC:-$ROOT/procurement-skills}"
 cd "$ROOT"
 
 DO_BUILD=1; DO_DEPS=0

@@ -1,0 +1,11 @@
+interface:
+  display_name: "飞书表格写入"
+  short_description: "向飞书 Base AI 专用表写入数据"
+  default_prompt: "使用 $procurement-feishu-table-fill 向飞书 Base 写入已经整理好的结构化记录。只能写 AI- 前缀的专用表，禁止写业务表；本 skill 不生成线索、不判断业务。必须先建表（如不存在）、dry-run 获取 dry_run_token，再在用户确认后带 token 写入。写入为追加记录，不做去重或业务合并。"
+
+runtime:
+  model: "gpt-5.5"
+  reasoning_effort: "low"
+
+policy:
+  allow_implicit_invocation: true

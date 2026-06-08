@@ -1,0 +1,11 @@
+interface:
+  display_name: "本地库存查询"
+  short_description: "通过飞书多维表格查询本地/供应商库存"
+  default_prompt: "使用 $procurement-local-inventory-lookup 查询本地/供应商库存。先查查找库存汇总表，无明确结果时继续查A/B/C/自家库存源表复核。命中相近型号或变体时按'命中但需复核'处理，不能直接写成有库存。只输出库存线索：型号、命中情况、自家库存、供应商库存（含等级/来源表/数量/单价）、资料来源、需人工确认项。不做比价、供应商真假、下单建议、替代料判断。库存线索只展示，不下可否下单结论。"
+
+runtime:
+  model: "gpt-5.5"
+  reasoning_effort: "low"
+
+policy:
+  allow_implicit_invocation: true

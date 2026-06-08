@@ -1,0 +1,11 @@
+interface:
+  display_name: "供应商候选名单筛选"
+  short_description: "按品牌/品类/型号特征筛选采购候选供应商"
+  default_prompt: "使用 $procurement-supplier-shortlist 筛选供应商候选名单。按品牌、品类、型号特征查询供应商档案，输出候选名单：供应商名称、类型/等级、品牌/品类匹配强弱、联系方式、官网/店铺、联系状态、未覆盖信息、人工确认项。匹配原因必须区分强弱：品牌命中(主营品牌)、品牌提及(优势产品)、品牌弱命中(备注/询价品牌)。短品牌名防止子串误命中。候选名单不是准入结论，不判断付款风险，不做供应商真假判断。"
+
+runtime:
+  model: "gpt-5.5"
+  reasoning_effort: "low"
+
+policy:
+  allow_implicit_invocation: true
