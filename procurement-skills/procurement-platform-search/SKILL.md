@@ -8,30 +8,32 @@ metadata:
 
 # 采购平台报价线索查找
 
-输入一个型号，在 4 个平台上同时找采购线索（exact MPN 命中、品牌、库存、价格/MOQ、交期、datasheet/产品页、替代/相似料提示），按可靠度优先：① Digikey（得捷）② Mouser（贸泽）③ 云汉（ickey.cn）④ master（masterelectronics.com）。
+输入一个型号，在 4 个平台上找采购线索（exact MPN 命中、品牌、库存、价格/MOQ、交期、datasheet/产品页、替代/相似料提示）：① Digikey（得捷）② Mouser（贸泽）③ 云汉（ickey.cn）④ master（masterelectronics.com）。
 
 不做供应商真假、价格优劣、是否下单、是否可替代判断。
 
-## Digikey + Mouser（有 API，最可靠）
+## Digikey + Mouser —— API（最快最稳）
 
-跑脚本，一次并发查两个平台，返回归一化 JSON（platform/mpn/manufacturer/stock/price/datasheet/url）：
+并发查两个平台，返回归一化 JSON（platform/mpn/manufacturer/stock/price/datasheet/url）：
 
     python3 .agents/skills/procurement-platform-search/scripts/api_search.py --part "<型号>"
 
-凭证已配在服务器环境（`DIGIKEY_*` / `MOUSER_API_KEY`），脚本自动走代理。只查其一：`--source digikey` 或 `--source mouser`。
+凭证在服务器环境，脚本自动走代理。只查其一加 `--source digikey` 或 `--source mouser`。
 
-## 云汉 + master（暂无 API）
+## 云汉 + master —— CloakBrowser 采集（这两站有反爬，必须真浏览器）
 
-用你自己的 WebSearch / WebFetch 查这两个站的型号页/报价线索。注意：
+master 是 Akamai、云汉有验证码，普通 fetch 过不了。用 cloak_search.py（CloakBrowser 真 Chromium，实测能过并渲染出结果），返回渲染后的搜索结果页文本，你从里面抽型号/库存/价格/供应商：
 
-- 云汉（ickey.cn）有验证码 + 限频，数据 JS 渲染，常拿不到完整结果。
-- master（masterelectronics.com）搜索是 JS 渲染页。
+    cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "<型号>"
 
-拿不到就如实写“线索不可用/被拦”，不要硬编或猜测库存价格。
+只查其一加 `--source master` 或 `--source ickey`；云汉页较长可加 `--max-chars 14000`。注意：
+- 启动真 Chromium 较慢（每平台十几秒），脚本已串行+用完即关防 OOM，**别并发多开**。
+- master 走住宅代理、云汉境内直连，脚本内部已设好。
+- master 目录偏继电器/保护/被动件等，未必有 MCU；查不到就如实写“该平台无此料”。
 
 ## 输出
 
-把 4 个平台的结果合并给采购（保留可合并字段）：平台、型号是否命中、品牌/品类、库存、价格/MOQ、交期、链接、备注；以及阻碍项（哪些平台没查到/被拦）。
+把 4 个平台结果合并给采购（保留可合并字段）：平台、型号是否命中、品牌/品类、库存、价格/MOQ、交期、链接、备注；以及阻碍项（哪些平台没查到/被拦）。
 
 ## 边界
 
