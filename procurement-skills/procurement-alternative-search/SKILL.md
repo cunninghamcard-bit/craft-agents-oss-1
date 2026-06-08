@@ -12,17 +12,21 @@ metadata:
 
 ## 第一步：找候选（四个源，能并发就并）
 
-1. **云汉原生替代料接口（最直接，带规格摘要）**：
+1. **Octopart 替代料（最强：跨品牌 + 规格逐项对比，优先用）**：
+
+       cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "<型号>" --source octopart-alt 2>/dev/null
+
+   返回 Octopart 详情页 Alternate Parts 对比表：原型号 vs 替代型号（含**跨品牌**，如 STM32 ↔ Microchip ATSAM），逐列对比封装/引脚/内核/主频/Memory/电压/接口/外设 + Price@1000/库存。**这张表同时给了候选和第二步判断要的规格对比。**
+
+2. **云汉原生替代料接口（国内料，带规格摘要）**：
 
        cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "<型号>" --source ickey-replace 2>/dev/null
 
-   返回每个替代料：`型号 | 规格摘要 | 品类 | 库存 | 交期 | 阶梯价 | datasheet`。规格摘要（如“10uF ±10% 25V X5R”）正好拿来跟原型号对比。
-
-2. **平台 similar/alternate 提示**：先 `api_search.py --part "<型号>"` 拿原型号的厂牌/品类/封装/datasheet；再看 Digikey/Mouser/master 结果里的“替代/相似料提示”（platform-search 的 `--source master` 等会带）。
+   返回每个替代料：`型号 | 规格摘要 | 品类 | 库存 | 交期 | 阶梯价 | datasheet`。
 
 3. **网查 cross-reference**：WebSearch `"<型号>" cross reference / replacement / equivalent / 替代型号`，找原厂或第三方替换表、停产替代通知（PCN）。
 
-4. **同品类同规格换品牌**：用第 1/2 步拿到的规格（封装+核心参数），在平台搜其它品牌的同规格料作候选。
+4. **同品类同规格换品牌**：用上面拿到的规格（封装+核心参数），在平台搜其它品牌的同规格料作候选。
 
 把候选去重，每个记：替代型号、品牌、规格、来源、库存/价（有就带）。
 

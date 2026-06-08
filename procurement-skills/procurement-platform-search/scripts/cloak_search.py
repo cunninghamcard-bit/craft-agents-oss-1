@@ -177,11 +177,50 @@ def scrape_octopart(part, wait, limit):
         b.close()
 
 
+def scrape_octopart_alt(part, wait, limit):
+    """Octopart 替代料 —— 部件详情页的 Alternate Parts 对比表（含跨品牌替代 + 价/库存/封装
+    逐列对比，SiliconExpert 数据，爬网页即得）。走住宅代理。"""
+    b = launch(headless=True, humanize=True, proxy=MIHOMO)
+    try:
+        p = b.new_page()
+        try:
+            p.goto(f"https://octopart.com/search?q={part}", wait_until="networkidle", timeout=wait * 1000)
+        except Exception:
+            pass
+        p.wait_for_timeout(3000)
+        detail = None
+        for a in p.query_selector_all("a"):
+            href = a.get_attribute("href") or ""
+            if "/part/" in href:
+                detail = href if href.startswith("http") else "https://octopart.com" + href
+                break
+        if not detail:
+            return {"platform": "octopart-alt", "url": "", "text": "（octopart 未找到详情页）"}
+        try:
+            p.goto(detail, wait_until="networkidle", timeout=wait * 1000)
+        except Exception:
+            pass
+        p.wait_for_timeout(4000)
+        for y in range(0, 5000, 700):
+            p.evaluate(f"window.scrollTo(0,{y})")
+            p.wait_for_timeout(500)
+        p.wait_for_timeout(2000)
+        t = p.inner_text("body")
+        i = t.find("Alternate Parts")
+        if i < 0:
+            return {"platform": "octopart-alt", "url": detail, "text": "（octopart 该型号无替代料区）"}
+        seg = " ".join(t[i:i + 1400].split())
+        return {"platform": "octopart-alt", "url": detail, "text": seg}
+    finally:
+        b.close()
+
+
 SCRAPERS = {
     "master": scrape_master,
     "ickey": scrape_ickey,
     "ickey-replace": scrape_ickey_replace,
     "octopart": scrape_octopart,
+    "octopart-alt": scrape_octopart_alt,
 }
 
 
