@@ -9,6 +9,7 @@
 - 查平台/分销商报价、现货、产品页、替代料 → `procurement-platform-search`
 - 按品牌/品类列供应商候选 → `procurement-supplier-shortlist`
 - 采购型号和报价型号不一致、判断能不能用 → `procurement-part-mismatch-review`
+- 找替代料 / 停产或缺货想换料 / pin 兼容料 → `procurement-alternative-search`
 - 把整理好的结果写进飞书表 → `procurement-feishu-table-fill`
 
 意图匹配某个 skill 时，读它的 SKILL.md 再按其中说明做。
