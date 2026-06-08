@@ -8,38 +8,36 @@ metadata:
 
 # 本地库存查询
 
-输入一个型号，用 `lark-cli` 查飞书 Base 里的本地/供应商库存，给采购展示库存线索。
+输入一个型号，用 `lark-cli base` 命令查飞书 Base 的本地/供应商库存，给采购展示库存线索。
 
 不做比价、供应商真假、下单建议、替代料判断。
 
-## 数据源（飞书 Base，用 lark-cli base 命令查）
+## 数据源（飞书 Base，base-token `Mjlkb49B9aoptssVw8Jc0wGwnhh`）
 
-- base-token：`Mjlkb49B9aoptssVw8Jc0wGwnhh`
-- 先查汇总表 `查找库存`（table-id `tbl9I8ZWFwCMlxNm`），它已 lookup 了下面各源表
-- 源表：A级 `tblzQbSnVNhGszYA`、B1 `tbldOthm6zmFonDM`、B2 `tblqaoi5UuUGybxF`、B3 `tbld53dBj2dvI1R6`、C级 `tblBbvvRKB0Ziioz`、自家 `tblSUjXdehzkxIbK`
+- **汇总表 `查找库存`**（table-id `tbl9I8ZWFwCMlxNm`）：字段含 `型号` + 各级供应商的 `A/B1/B2/B3/C 供应商·库存数量·单价` + `自家库存` + `动态库存(数量/单价)`。**只含已收录型号，不一定全**。
+- **源表**（汇总表查不到时逐张查，换 table-id，搜索字段同为 `型号`）：A级 `tblzQbSnVNhGszYA`、B1 `tbldOthm6zmFonDM`、B2 `tblqaoi5UuUGybxF`、B3 `tbld53dBj2dvI1R6`、C级 `tblBbvvRKB0Ziioz`、自家 `tblSUjXdehzkxIbK`。源表字段：`型号 / 品牌 / 库存数量 / 单价 / MOQ / SPQ / 供应商名称 / 供应商等级 / 批次 / 含税未税 / 更新时间`。
 
-## 怎么查（lark-cli，不是 lark-base skill）
+## 怎么查（默认 markdown 输出，直接读）
 
-1. 不确定型号字段名时，先列字段：
-
-       lark-cli base +field-list --base-token Mjlkb49B9aoptssVw8Jc0wGwnhh --table-id tbl9I8ZWFwCMlxNm
-
-2. 按型号搜 `查找库存`（`<型号>` 换成查询型号）：
+1. **先搜汇总表 `查找库存`**：
 
        lark-cli base +record-search --base-token Mjlkb49B9aoptssVw8Jc0wGwnhh --table-id tbl9I8ZWFwCMlxNm --json '{"keyword":"<型号>","search_fields":["型号"]}'
 
-3. 命中清楚（供应商/数量/单价/自家库存）就直接展示。
-4. 没命中、型号被模糊扩展、合并不清、或需原始明细，再用同样方式查 A/B/C/自家源表（换 table-id）。
+   命中就读各级 `供应商 / 库存数量 / 单价` + `自家库存`，给采购。
 
-> 若返回 `permission` / `scope` 错误（如 `base:record:read` 未开），说明飞书应用没开 Base 读权限——**如实告诉用户“需要在飞书开放平台给应用开通 base 读权限”，不要编造库存数据**。
+2. **汇总表 `count=0`（没收录），或只命中相近型号**：逐张搜源表（同样 `--json '{"keyword":"<型号>","search_fields":["型号"]}'`，换 table-id），读 `库存数量 / 单价 / 供应商名称 / 供应商等级`。
+
+3. 输出**注明结果来自 `查找库存` 还是源表**。
+
+> - markdown 有很多列，**只挑库存相关的给采购**（供应商、库存数量、单价、等级、自家库存），别整表照搬。
+> - 若返回 `permission`/`scope` 或登录失效错误，**如实告诉用户需要在飞书开放平台给应用开 base 读权限 / 重新登录 lark-cli**，不要编造库存。
 
 ## 规则
 
-1. 先用型号查 `查找库存`。
+1. 先用型号查 `查找库存`，没命中再查 A/B/C/自家源表。
 2. 命中清楚的供应商/数量/单价/自家库存就直接展示。
-3. 没命中、型号被扩展、或需原始明细，再查 A/B/C/自家源表。
-4. 只命中不同型号（如查 `55A0111-24-2` 命中 `55A0111-24-2L`）只能写“命中但需复核”，不能写成有库存。
-5. 输出注明结果来自 `查找库存` 还是源表复核。
+3. 只命中不同型号（如查 `55A0111-24-2` 命中 `55A0111-24-2L`）只能写“命中但需复核”，不能写成有库存。
+4. 输出注明结果来自 `查找库存` 还是源表复核。
 
 ## 边界
 
