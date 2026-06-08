@@ -56,11 +56,18 @@ ssh "$SERVER" "sudo rsync -a --delete \
   --exclude='node_modules/' \
   /tmp/craft-app-sync/ $REMOTE_APP/ && sudo chown -R craft:craft $REMOTE_APP"
 
-echo "==> [3/4] rsync skill 真源 → $REMOTE_SKILLS"
-rsync -az --delete --exclude=__pycache__ --exclude='*.pyc' \
+echo "==> [3/4] rsync skill 真源 → $REMOTE_SKILLS（排除 AGENTS.md，它走全局指令位置）"
+rsync -az --delete --exclude=__pycache__ --exclude='*.pyc' --exclude='AGENTS.md' \
   -e ssh "$SKILLS_SRC/" "$SERVER:/tmp/craft-skills-sync/"
 ssh "$SERVER" "sudo mkdir -p $REMOTE_SKILLS && sudo rsync -a --delete \
   /tmp/craft-skills-sync/ $REMOTE_SKILLS/ && sudo chown -R craft:craft /home/craft/.agents"
+
+# 业务总则 AGENTS.md → 全局指令位置（CRAFT_CONFIG_DIR/AGENTS.md），注入每个会话的 <global_instructions>
+if [[ -f "$SKILLS_SRC/AGENTS.md" ]]; then
+  echo "==> [3.6/4] 部署业务 AGENTS.md → /home/craft/.craft-agent/AGENTS.md"
+  scp -q "$SKILLS_SRC/AGENTS.md" "$SERVER:/tmp/craft-agents-md"
+  ssh "$SERVER" "sudo cp /tmp/craft-agents-md /home/craft/.craft-agent/AGENTS.md && sudo chown craft:craft /home/craft/.craft-agent/AGENTS.md && rm /tmp/craft-agents-md"
+fi
 
 if [[ "$DO_DEPS" == 1 ]]; then
   echo "==> [3.5/4] 服务器 bun install --frozen-lockfile"
