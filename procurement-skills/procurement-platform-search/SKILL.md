@@ -22,14 +22,14 @@ metadata:
 
 ## 云汉 + master —— CloakBrowser 采集（这两站有反爬，必须真浏览器）
 
-master 是 Akamai、云汉有验证码，普通 fetch 过不了。用 cloak_search.py（CloakBrowser 真 Chromium，实测能过并渲染出结果），返回渲染后的搜索结果页文本，你从里面抽型号/库存/价格/供应商：
+master 是 Akamai、云汉有验证码，普通 fetch / 轻量无头浏览器都过不了。用 cloak_search.py（CloakBrowser 真 Chromium）：
 
-    cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "<型号>"
+    cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "<型号>" 2>/dev/null
 
-只查其一加 `--source master` 或 `--source ickey`；云汉页较长可加 `--max-chars 14000`。注意：
-- 启动真 Chromium 较慢（每平台十几秒），脚本已串行+用完即关防 OOM，**别并发多开**。
-- master 走住宅代理、云汉境内直连，脚本内部已设好。
-- master 目录偏继电器/保护/被动件等，未必有 MCU；查不到就如实写“该平台无此料”。
+只查其一加 `--source master` 或 `--source ickey`。**务必加 `2>/dev/null`**，否则 cloakbrowser 的日志会混进 stdout 破坏 JSON。返回每平台一段商品行文本：
+- **master**：抽 `.search-result`，每行 = 型号/厂牌/库存/交期/阶梯价（USD）。走住宅代理。master 目录偏继电器/保护/被动件，未必有 MCU；无结果如实写“该平台无此料”。
+- **云汉**：抓搜索页 API 响应，每行 = 型号/厂牌/封装/库存/交期/阶梯价（RMB+USD），多供应商各一行。境内直连，无需登录。
+- 启动真 Chromium 较慢（每平台 ~十几秒），脚本已串行+用完即关防 OOM，**别并发多开**。
 
 ## 输出
 
