@@ -1,6 +1,6 @@
 ---
 name: procurement-part-mismatch-review
-description: 当采购需求型号与供应商报价型号不一致时，基于公开网页资料判断二者能否互相替代、差异是否影响使用，并给出证据。当用户同时给出“需求型号”和“报价型号”且两者不同（后缀/封装/批次差异），问“这俩能不能用/有没有区别/能替代吗”时使用。
+description: 当采购需求型号与供应商报价型号不一致时，基于公开资料判断二者能否互相替代、差异是否影响使用，并给出证据。当用户同时给出“需求型号”和“报价型号”且两者不同（后缀/封装/批次差异），问“这俩能不能用/有没有区别/能替代吗”时使用。
 metadata:
   short-description: 采购/报价型号差异判断
   lang: zh
@@ -8,25 +8,39 @@ metadata:
 
 # 采购/报价型号差异判断
 
-输入两个不同型号（采购型号 + 报价型号），用公开网页资料判断报价型号能不能接受、差异是否影响使用，并给证据。
+输入两个不同型号（采购型号 + 报价型号），判断报价型号能不能接受、差异是否影响使用，给证据。
 
-用你自己的联网工具（WebSearch / WebFetch）分别查两个型号的 exact MPN 页面或原厂资料。不能只查报价型号就判断可替代，也不能只靠字符串相似。
+**核心方法 = 拿两个型号的关键规格逐项对比**：替代规格覆盖采购型号的要求就能用，任一关键项不满足就不能用，关键规格查不到就需补料。原厂/授权渠道的明确替代或 cross-reference 是**强证据**（有就直接采信），但**不是必须**——规格对比本身就能下结论。
 
-方法和规则在 references/，按需读：
+## 第一步：拿两个型号的关键规格（优先结构化源，比挨个开网页快准）
 
-- 怎么查（搜索词、开哪些页、提取什么）：[references/search-workflow.md](references/search-workflow.md)
-- 怎么判断：[references/decision-rules.md](references/decision-rules.md)
-- 怎么输出（只用业务语言）：[references/output-format.md](references/output-format.md)
-- 容易误放行的边界样例：[references/minimal-acceptance.md](references/minimal-acceptance.md)
+1. **Octopart 对比表（最省事，原型号 vs 替代并排列规格）**：
 
-## 结论收敛
+       cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "<采购型号>" --source octopart-alt 2>/dev/null
 
-- 业务结论只两类：`不影响使用` / `影响使用`。
-- 资料不足时细化为：`差异资料不足` / `关系证据不足` / `使用条件不足`（不是第三种结论）。
-- 页面打不开/要验证单独写成资料获取阻碍，不能当作差异不存在。
+   若报价型号正好在它的 Alternate Parts 里，直接读两边封装/引脚/电参数/温度等对比。
 
-单型号对目标 2 分钟：打开 3-5 个最可能有用的页面，超时就用现有资料收口并说明缺口。
+2. **api_search（Digikey/Mouser，拿厂牌/描述/封装/datasheet）**，对两个型号各跑一次：
 
-## 边界
+       python3 .agents/skills/procurement-platform-search/scripts/api_search.py --part "<型号>"
 
-只处理两个型号能否互用，不做全表筛选、普通比价、供应商真伪。
+3. **datasheet / 原厂页**：上面给了 datasheet 链接，需要细规格（精度/温度/pin 定义）就用 WebFetch 打开核对；原厂页反爬抓不到时用 `cloak_search.py --source master` 或 `cloak_fetch.py`。需要系统化搜原厂资料时读 [references/search-workflow.md](references/search-workflow.md)。
+
+按品类锁定**关键规格项**：封装/引脚、核心电参数（电压/电流/精度/容值/阻值/功率/频率/速度）、Memory/接口/协议、温度等级、认证、生命周期。
+
+## 第二步：逐项对比下结论
+
+把报价型号的每个关键项和采购型号比，收敛到三类（细则见 [references/decision-rules.md](references/decision-rules.md)）：
+
+- **能用**：所有关键项，报价型号都满足/覆盖采购型号要求（或有原厂/授权渠道明确替代、cross-reference、同订货项）。
+- **不能用**：任一关键项冲突（封装不同、电压不够、精度更差、温度等级更低、pin 不兼容、容值/阻值不同等）。
+- **需补料**：关键项查不到资料，无法确认。细化缺口：缺规格资料 / 缺替代关系证据 / 缺客户使用要求。
+
+别只凭型号字符串相近或封装相近就说能用——必须有规格支撑。容易误判的边界样例见 [references/minimal-acceptance.md](references/minimal-acceptance.md)。
+
+## 输出 + 边界
+
+- 只用业务语言输出，格式见 [references/output-format.md](references/output-format.md)。
+- 单型号对约 2 分钟：先看结构化对比，缺的关键项再开 datasheet 补；超时就用现有资料收口并说明缺口。
+- 页面打不开/资料缺，如实写成阻碍/需补料，不能当差异不存在。
+- 只处理两个型号能否互用；找替代候选用 `procurement-alternative-search`，查报价货源用 `procurement-platform-search`。
