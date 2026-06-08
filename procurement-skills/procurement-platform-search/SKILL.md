@@ -24,9 +24,13 @@ metadata:
 
 两个脚本都要跑（它们独立，可并发起两个 Bash），把四家结果**合并**给采购。`2>/dev/null` 必加，否则日志污染 JSON。
 
-## 四家之外（仅当用户还想要更多货源时）
+## 四家之外（仅当用户还想要更多货源时，用 CloakBrowser）
 
-四家查完合并给用户后，如果用户还要别的渠道（如立创/LCSC、其它分销商或代理），再用你自己的 WebSearch / WebFetch 继续补。不要默认就去查这些。
+四家查完合并给用户后，如果用户还要别的渠道（如立创/LCSC、其它分销商或代理），**也用 CloakBrowser 补，别用普通 WebFetch**（这些站多半也有反爬）：先用 WebSearch 找到该分销商的搜索/产品页 URL，再用 cloak_fetch.py 渲染取文本——
+
+    cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_fetch.py "<分销商搜索页URL>" 2>/dev/null
+
+海外站加 `--proxy`（走住宅代理），境内站（立创等）不加；找到商品行选择器可加 `--selector ".xxx"` 让输出更干净。**不要默认就查这些**，只在用户明确还要更多货源时才补。
 
 ## 这些已固化在脚本里（你不用重新摸）
 
