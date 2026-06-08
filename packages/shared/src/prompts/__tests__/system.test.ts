@@ -9,7 +9,7 @@ mock.module('../../config/preferences.ts', () => ({
   formatPreferencesForPrompt: () => '',
 }))
 
-import { getSystemPrompt, formatAvailableSkillsBlock, getAvailableSkillsPrompt } from '../system'
+import { getSystemPrompt, formatAvailableSkillsBlock, getAvailableSkillsPrompt, formatGlobalAgentsBlock, getGlobalAgentsPrompt } from '../system'
 import type { LoadedSkill } from '../../skills/types.ts'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -165,5 +165,36 @@ describe('getAvailableSkillsPrompt / getSystemPrompt skills injection', () => {
     expect(prompt).toContain('demo-skill')
     expect(prompt).toContain('When a user')
     expect(prompt).toContain('Read')
+  })
+})
+
+describe('global AGENTS.md injection', () => {
+  it('formatGlobalAgentsBlock returns empty for null/empty content', () => {
+    expect(formatGlobalAgentsBlock(null)).toBe('')
+    expect(formatGlobalAgentsBlock('')).toBe('')
+  })
+
+  it('formatGlobalAgentsBlock wraps content in a tagged block', () => {
+    const block = formatGlobalAgentsBlock('业务规则:先识别型号')
+    expect(block).toContain('<global_instructions')
+    expect(block).toContain('业务规则:先识别型号')
+  })
+
+  it('formatGlobalAgentsBlock truncates oversized content', () => {
+    const big = 'x'.repeat(11 * 1024)
+    const block = formatGlobalAgentsBlock(big)
+    expect(block).toContain('... (truncated)')
+    expect(block.length).toBeLessThan(big.length)
+  })
+
+  it('getGlobalAgentsPrompt reads AGENTS.md from the given config dir', () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), 'craft-cfg-'))
+    writeFileSync(pathJoin(dir, 'AGENTS.md'), '全局采购指令')
+    expect(getGlobalAgentsPrompt(dir)).toContain('全局采购指令')
+  })
+
+  it('getGlobalAgentsPrompt returns empty when AGENTS.md absent', () => {
+    const dir = mkdtempSync(pathJoin(tmpdir(), 'craft-cfg-'))
+    expect(getGlobalAgentsPrompt(dir)).toBe('')
   })
 })

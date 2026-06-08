@@ -286,6 +286,35 @@ export function getAvailableSkillsPrompt(
 }
 
 /**
+ * Format an inline <global_instructions> block from raw AGENTS.md content.
+ * Pure; truncates to MAX_CONTEXT_FILE_SIZE. Returns '' for null/empty content.
+ */
+export function formatGlobalAgentsBlock(content: string | null): string {
+  if (!content || content.trim().length === 0) return '';
+  const body =
+    content.length > MAX_CONTEXT_FILE_SIZE
+      ? content.slice(0, MAX_CONTEXT_FILE_SIZE) + '\n\n... (truncated)'
+      : content;
+  return `\n\n<global_instructions source="~/.craft-agent/AGENTS.md">\n${body}\n</global_instructions>`;
+}
+
+/**
+ * Load the workspace-wide AGENTS.md from the config dir (default CONFIG_DIR,
+ * i.e. ~/.craft-agent or $CRAFT_CONFIG_DIR). Embedded inline so it applies to
+ * every workspace regardless of working directory. Returns '' when absent.
+ * configDir is a parameter so tests can point it at a temp dir.
+ */
+export function getGlobalAgentsPrompt(configDir: string = CONFIG_DIR): string {
+  const path = join(configDir, 'AGENTS.md');
+  if (!existsSync(path)) return '';
+  try {
+    return formatGlobalAgentsBlock(readFileSync(path, 'utf-8'));
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Get the project context files prompt section for the system prompt.
  * Lists all discovered context files (AGENTS.md, CLAUDE.md) in the working directory.
  * For monorepos, this includes nested package context files.
@@ -401,6 +430,9 @@ export function getSystemPrompt(
   // Catalog of skills the model may autonomously use (it Reads the SKILL.md when a request matches)
   const availableSkills = getAvailableSkillsPrompt(workspaceRootPath, workingDirectory);
 
+  // Workspace-wide business instructions, embedded inline so they apply across every workspace
+  const globalAgents = getGlobalAgentsPrompt();
+
   // Fall back to the user's current preference when callers don't pin/pass a value,
   // so forgetting the argument can't silently re-enable the co-author trailer (see #576).
   const resolvedIncludeCoAuthoredBy = includeCoAuthoredBy ?? getCoAuthorPreference();
@@ -409,7 +441,7 @@ export function getSystemPrompt(
   // to enable prompt caching. The system prompt stays static and cacheable.
   // Safe Mode context is also in user messages for the same reason.
   const basePrompt = getCraftAssistantPrompt(workspaceRootPath, backendName, resolvedIncludeCoAuthoredBy);
-  const fullPrompt = `${basePrompt}${preferences}${debugContext}${availableSkills}${projectContextFiles}`;
+  const fullPrompt = `${basePrompt}${preferences}${debugContext}${globalAgents}${availableSkills}${projectContextFiles}`;
 
   debug('[getSystemPrompt] full prompt length:', fullPrompt.length);
 
@@ -547,6 +579,8 @@ Skills are stored at three levels (checked in order):
 ## Project Context
 
 When \`<project_context_files>\` appears in the system prompt, it lists all discovered context files (CLAUDE.md, AGENTS.md) in the working directory and its subdirectories. This supports monorepos where each package may have its own context file.
+
+A workspace-wide \`<global_instructions>\` block (sourced from \`~/.craft-agent/AGENTS.md\`) may also appear — treat it as always-on business guidance that applies across every workspace.
 
 Read relevant context files using the Read tool - they contain architecture info, conventions, and project-specific guidance. For monorepos, read the root context file first, then package-specific files as needed based on what you're working on.
 
