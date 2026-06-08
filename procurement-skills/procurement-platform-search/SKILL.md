@@ -18,11 +18,13 @@ metadata:
 
     python3 .agents/skills/procurement-platform-search/scripts/api_search.py --part "<型号>"
 
-**云汉(ickey) + master —— CloakBrowser（这两站有反爬，必须真浏览器）：**
+**云汉(ickey) + master + octopart —— CloakBrowser（有反爬/需真浏览器）：**
 
     cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "<型号>" 2>/dev/null
 
-两个脚本都要跑（它们独立，可并发起两个 Bash），把四家结果**合并**给采购。`2>/dev/null` 必加，否则日志污染 JSON。
+默认就跑 master + 云汉 + **octopart**（octopart 聚合 Avnet/Newark/Arrow/DigiKey/Mouser/LCSC 等多分销商库存报价，货源比 Digikey/Mouser API 广）。三个串行、每个十几秒，较慢但货源全；只要其中某个加 `--source master` / `ickey` / `octopart`。
+
+两个脚本都要跑（独立，可并发起两个 Bash），把结果**合并**给采购。`2>/dev/null` 必加，否则日志污染 JSON。
 
 ## 四家之外（仅当用户还想要更多货源时，用 CloakBrowser）
 

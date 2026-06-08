@@ -151,13 +151,45 @@ def scrape_ickey_replace(part, wait, limit):
         b.close()
 
 
-SCRAPERS = {"master": scrape_master, "ickey": scrape_ickey, "ickey-replace": scrape_ickey_replace}
+def scrape_octopart(part, wait, limit):
+    """Octopart —— 多分销商报价聚合（Avnet/Newark/Arrow/DigiKey/Mouser/LCSC 等 70M 料）。
+    走住宅代理；报价 SSR 在 [data-testid*=offer] 行里。注意：octopart 网页不给干净的替代
+    型号列表（"Alternates" 是同型号的分销商报盘替代），找替代料用 --source ickey-replace。"""
+    url = f"https://octopart.com/search?q={part}"
+    b = launch(headless=True, humanize=True, proxy=MIHOMO)
+    try:
+        p = b.new_page()
+        try:
+            p.goto(url, wait_until="networkidle", timeout=wait * 1000)
+        except Exception:
+            pass
+        p.wait_for_timeout(6000)
+        rows = []
+        for e in p.query_selector_all("[data-testid*=offer]")[:limit]:
+            try:
+                rows.append(" ".join((e.inner_text() or "").split()))
+            except Exception:
+                pass
+        uniq = list(dict.fromkeys(r for r in rows if r))
+        text = "\n".join(uniq) or "（octopart 无报价命中）"
+        return {"platform": "octopart", "url": url, "text": text}
+    finally:
+        b.close()
+
+
+SCRAPERS = {
+    "master": scrape_master,
+    "ickey": scrape_ickey,
+    "ickey-replace": scrape_ickey_replace,
+    "octopart": scrape_octopart,
+}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--part", required=True)
-    ap.add_argument("--source", default="master,ickey", help="逗号分隔，默认 master,ickey")
+    ap.add_argument("--source", default="master,ickey,octopart",
+                    help="逗号分隔，默认 master,ickey,octopart（octopart=多分销商报价聚合）")
     ap.add_argument("--wait", type=int, default=40, help="单页超时秒")
     ap.add_argument("--limit", type=int, default=20, help="每平台最多返回商品行")
     args = ap.parse_args()
