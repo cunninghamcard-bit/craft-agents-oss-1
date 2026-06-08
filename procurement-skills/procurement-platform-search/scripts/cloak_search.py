@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-无 API 平台采集（master / 云汉 ickey），用 CloakBrowser 真 Chromium 过反爬。
+无 API 平台采集（master + 云汉ickey，ickey.cn=ICKey/云汉芯城），用 CloakBrowser 真 Chromium 过反爬。
 
 master 是 Akamai Bot Manager（curl 403）、云汉是点击验证码——普通 fetch 和轻量无头
 浏览器（lightpanda/obscura）都过不了；只有 CloakBrowser（真 Chromium + C++ 级指纹
