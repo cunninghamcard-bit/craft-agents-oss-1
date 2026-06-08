@@ -2,18 +2,18 @@
 """
 无 API 平台采集（master / 云汉 ickey），用 CloakBrowser 真 Chromium 过反爬。
 
-为什么要它：master 是 Akamai Bot Manager（curl 吃 403），云汉是点击验证码——
-普通 fetch、轻量无头浏览器（lightpanda/obscura）都过不了；只有 CloakBrowser
-（真 Chromium + C++ 级指纹伪装）实测能过并渲染出结果。Digikey/Mouser 有 API，
-用 api_search.py，别用这个。
+master 是 Akamai Bot Manager（curl 403）、云汉是点击验证码——普通 fetch 和轻量无头
+浏览器（lightpanda/obscura）都过不了；只有 CloakBrowser（真 Chromium + C++ 级指纹
+伪装）实测能过。Digikey/Mouser 有 API，用 api_search.py，别用这个。
 
-必须用 cloakbrowser 的 venv python 跑（普通 python3 没有 cloakbrowser 模块）：
-  cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "LM358"
+必须用 cloakbrowser 的 venv python 跑：
+  cloakbrowser-python .agents/skills/procurement-platform-search/scripts/cloak_search.py --part "LM358" --source master
 
 约束（小内存服务器）：串行启动、用完即关，一次只开一个 Chromium，避免 OOM。
 
-输出：每个平台返回渲染后的搜索结果页可见文本（agent 自己从里面抽型号/库存/价格）。
-master 走住宅代理（mihomo 127.0.0.1:7899），云汉境内直连。
+输出：master 直接抽商品行（.search-result，干净）；云汉商品搜索端点尚未定位
+（site/index 是站内搜索、对 MPN 返回 0 条），暂返回结果区文本、上限收紧，待后续
+找到真实商品 API 再结构化。
 """
 import argparse
 import json
@@ -27,22 +27,22 @@ except ImportError:
 
 MIHOMO = "http://127.0.0.1:7899"
 
-# 平台配置：搜索 URL 模板 + 是否走代理（海外站走住宅代理，境内直连）
 PLATFORMS = {
     "master": {
+        # Akamai；走住宅代理。商品行选择器干净
         "url": "https://www.masterelectronics.com/en/keywordsearch?text={part}",
         "proxy": MIHOMO,
-        "wait_until": "networkidle",
+        "selector": ".search-result",
     },
-    "ickey": {  # 云汉站内搜索（site/index 才是 MPN 搜索；yuncang 是云仓促销页）
+    "ickey": {  # 云汉，境内直连。⚠️ 商品搜索端点待定，当前 URL 是站内搜索
         "url": "https://search.ickey.cn/site/index.html?keyword={part}",
         "proxy": None,
-        "wait_until": "networkidle",
+        "selector": None,
     },
 }
 
 
-def scrape(part, name, cfg, wait, max_chars):
+def scrape(part, name, cfg, wait, max_chars, limit):
     url = cfg["url"].format(part=part)
     kw = {"headless": True, "humanize": True}
     if cfg["proxy"]:
@@ -51,12 +51,25 @@ def scrape(part, name, cfg, wait, max_chars):
     try:
         p = b.new_page()
         try:
-            p.goto(url, wait_until=cfg.get("wait_until", "domcontentloaded"), timeout=wait * 1000)
+            p.goto(url, wait_until="networkidle", timeout=wait * 1000)
         except Exception:
-            pass  # 渲染超时也尝试取已有内容
+            pass
         p.wait_for_timeout(2500)
-        text = p.inner_text("body")
-        return {"platform": name, "url": url, "text": text[:max_chars]}
+        sel = cfg.get("selector")
+        if sel:
+            els = p.query_selector_all(sel)
+            rows = []
+            for e in els[:limit]:
+                try:
+                    rows.append(" ".join((e.inner_text() or "").split()))
+                except Exception:
+                    pass
+            text = "\n".join(r for r in rows if r)
+            if not text:
+                text = f"（{sel} 无命中——该平台可能无此料，或页面结构变了）"
+        else:
+            text = p.inner_text("body")[:max_chars]
+        return {"platform": name, "url": url, "text": text}
     finally:
         b.close()
 
@@ -64,21 +77,20 @@ def scrape(part, name, cfg, wait, max_chars):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--part", required=True)
-    ap.add_argument("--source", default="master,ickey",
-                    help="逗号分隔，默认 master,ickey")
+    ap.add_argument("--source", default="master,ickey", help="逗号分隔，默认 master,ickey")
     ap.add_argument("--wait", type=int, default=30, help="单页超时秒")
-    ap.add_argument("--max-chars", type=int, default=9000, help="每平台返回文本上限（云汉页较长，可调大）")
+    ap.add_argument("--max-chars", type=int, default=4000, help="无选择器平台的文本上限")
+    ap.add_argument("--limit", type=int, default=15, help="有选择器平台返回的最多商品行")
     args = ap.parse_args()
 
     out = {"part": args.part, "results": [], "errors": []}
-    # 串行：一次只开一个 Chromium，省内存
     for name in [s.strip() for s in args.source.split(",") if s.strip()]:
         cfg = PLATFORMS.get(name)
         if not cfg:
             out["errors"].append({"platform": name, "error": "未知平台（仅 master/ickey）"})
             continue
         try:
-            out["results"].append(scrape(args.part, name, cfg, args.wait, args.max_chars))
+            out["results"].append(scrape(args.part, name, cfg, args.wait, args.max_chars, args.limit))
         except Exception as e:
             out["errors"].append({"platform": name, "error": str(e)})
 
