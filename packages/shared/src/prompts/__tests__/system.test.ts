@@ -9,7 +9,8 @@ mock.module('../../config/preferences.ts', () => ({
   formatPreferencesForPrompt: () => '',
 }))
 
-import { getSystemPrompt } from '../system'
+import { getSystemPrompt, formatAvailableSkillsBlock } from '../system'
+import type { LoadedSkill } from '../../skills/types.ts'
 
 const GIT_CONVENTIONS_HEADING = '## Git Conventions'
 const CO_AUTHOR_TRAILER = 'Co-Authored-By: Craft Agent <agents-noreply@craft.do>'
@@ -105,5 +106,27 @@ describe('includeCoAuthoredBy handling', () => {
 
     expect(prompt).toContain(GIT_CONVENTIONS_HEADING)
     expect(prompt).toContain(CO_AUTHOR_TRAILER)
+  })
+})
+
+function fakeSkill(slug: string, name: string, description: string, path: string): LoadedSkill {
+  return { slug, metadata: { name, description }, content: '', path, source: 'workspace' }
+}
+
+describe('formatAvailableSkillsBlock', () => {
+  it('returns empty string when no skills', () => {
+    expect(formatAvailableSkillsBlock([])).toBe('')
+  })
+
+  it('lists slug, name, description and SKILL.md path', () => {
+    const block = formatAvailableSkillsBlock([
+      fakeSkill('procurement-platform-search', '采购平台报价线索查找', '在平台查报价', '/ws/skills/procurement-platform-search'),
+    ])
+    expect(block).toContain('<available_skills>')
+    expect(block).toContain('</available_skills>')
+    expect(block).toContain('procurement-platform-search')
+    expect(block).toContain('采购平台报价线索查找')
+    expect(block).toContain('在平台查报价')
+    expect(block).toContain('/ws/skills/procurement-platform-search/SKILL.md')
   })
 })

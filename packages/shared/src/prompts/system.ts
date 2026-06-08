@@ -7,6 +7,9 @@ import { PERMISSION_MODE_CONFIG } from '../agent/mode-types.ts';
 import { FEATURE_FLAGS } from '../feature-flags.ts';
 import { APP_VERSION } from '../version/index.ts';
 import { readPluginName } from '../utils/workspace.ts';
+import { loadAllSkills } from '../skills/storage.ts';
+import type { LoadedSkill } from '../skills/types.ts';
+import { CONFIG_DIR } from '../config/paths.ts';
 import { globSync } from 'glob';
 import os from 'os';
 
@@ -249,6 +252,23 @@ export function getDateTimeContext(): string {
 export interface DebugModeConfig {
   enabled: boolean;
   logFilePath?: string;
+}
+
+/**
+ * Format the <available_skills> block from a list of loaded skills.
+ * Pure (no IO) so it is deterministically testable.
+ * Each line carries the slug, human name, description, and absolute SKILL.md path
+ * so the model can Read it directly when a request matches the skill's purpose.
+ */
+export function formatAvailableSkillsBlock(skills: LoadedSkill[]): string {
+  if (skills.length === 0) return '';
+  const lines = skills
+    .map(
+      (s) =>
+        `- ${s.slug} — ${s.metadata.name}: ${s.metadata.description}\n  Path: ${join(s.path, 'SKILL.md')}`
+    )
+    .join('\n');
+  return `\n\n<available_skills>\n${lines}\n</available_skills>`;
 }
 
 /**
