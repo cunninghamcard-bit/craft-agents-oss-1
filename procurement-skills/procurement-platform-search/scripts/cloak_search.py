@@ -101,7 +101,57 @@ def scrape_ickey(part, wait, limit):
         b.close()
 
 
-SCRAPERS = {"master": scrape_master, "ickey": scrape_ickey}
+def _ickey_replace_line(prod):
+    nums = prod.get("nums") or []
+    rmb = prod.get("rmb") or []
+    breaks = []
+    for i, q in enumerate(nums[:5]):
+        r = f"¥{rmb[i]}" if i < len(rmb) else ""
+        breaks.append(f"{q}{('@' + r) if r else ''}")
+    ds = prod.get("data_sheet") or []
+    parts = [
+        prod.get("pro_name") or prod.get("pro_sno") or "",
+        prod.get("short_desc") or "",                      # 规格摘要，用于跟原型号对比
+        prod.get("t_cate_name_cn_v2") or "",               # 品类
+        f"库存{prod.get('stock')}",
+        prod.get("lead_time_cn") or "",
+        ("价 " + " ".join(breaks)) if breaks else "",
+        ("datasheet:" + ds[0]) if ds else "",
+    ]
+    return " | ".join(x for x in parts if x)
+
+
+def scrape_ickey_replace(part, wait, limit):
+    """云汉原生替代料接口 ajax-get-replace-product —— 给一个型号返回替代/相似料候选。"""
+    url = f"https://search.ickey.cn/?keyword={part}&bom_ab=null"
+    lines = []
+    b = launch(headless=True, humanize=True)
+    try:
+        p = b.new_page()
+
+        def on_resp(r):
+            if "ajax-get-replace-product" in r.url:
+                try:
+                    d = r.json()
+                except Exception:
+                    return
+                for prod in (d.get("result") or {}).get("replace_products") or []:
+                    lines.append(_ickey_replace_line(prod))
+
+        p.on("response", on_resp)
+        try:
+            p.goto(url, wait_until="networkidle", timeout=wait * 1000)
+        except Exception:
+            pass
+        p.wait_for_timeout(7000)
+        uniq = list(dict.fromkeys(l for l in lines if l))[:limit]
+        text = "\n".join(uniq) or "（云汉无替代料命中）"
+        return {"platform": "ickey-replace", "url": url, "text": text}
+    finally:
+        b.close()
+
+
+SCRAPERS = {"master": scrape_master, "ickey": scrape_ickey, "ickey-replace": scrape_ickey_replace}
 
 
 def main():
