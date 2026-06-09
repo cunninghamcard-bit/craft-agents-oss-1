@@ -11,6 +11,7 @@
 - 采购型号和报价型号不一致、判断能不能用 → `procurement-part-mismatch-review`
 - 找替代料 / 停产或缺货想换料 / pin 兼容料 → `procurement-alternative-search`
 - 把整理好的结果写进飞书表 → `procurement-feishu-table-fill`
+- 把飞书订单数据按模板生成可编辑单据(请款发票PI/请款单/对账/报关资料)给用户下载或发飞书 → `procurement-doc-export`
 
 意图匹配某个 skill 时，读它的 SKILL.md 再按其中说明做。
 

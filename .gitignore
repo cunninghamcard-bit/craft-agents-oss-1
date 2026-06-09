@@ -75,8 +75,13 @@ credentials.enc
 deploy/mihomo.yaml
 build-skills/
 build-bin/
-.env.docker
 
 # procurement skills: 忽略 python 缓存
 procurement-skills/**/__pycache__/
 procurement-skills/**/*.pyc
+
+# procurement-doc-export: 真实业务模板含客户/财务/合同数据，只留本地，绝不进（公开 fork）仓库
+procurement-skills/procurement-doc-export/templates/*.xlsx
+procurement-skills/procurement-doc-export/templates/*.docx
+# 客户抬头对照表含真实客户地址/联系人，同样只留本地
+procurement-skills/procurement-doc-export/customers.json
