@@ -1,84 +1,18 @@
-# =============================================================================
-# craft-agents 全 Docker 部署（生产）
-#
-# 服务（看这份文件就知道服务器跑了什么）：
-#   mihomo        代理链：Clash 订阅节点翻墙 + 住宅代理出口，容器网络内 :7899
-#   searxng       自建元搜索引擎(Google+Bing+DDG 聚合)，容器网络内 :8080
-#   craft-server  应用本体（bun+lark-cli+CloakBrowser+skill），发布到 127.0.0.1:9100
-#
-# 宿主机 cloudflared（systemd，保持不动）把 127.0.0.1:9100 经隧道暴露成
-# https://agent.inotoday.asia。craft-proxy（旧的 SSH 绕 GFW）改用容器内 mihomo
-# 的订阅节点后即可停用。
-#
-# 镜像 craft-agents-full 由 scripts/build-and-deploy.sh 在本机构建后传到服务器
-# 加载，这里只引用，不在服务器上构建（构建吃 4G 内存，别在生产机做）。
-#
-# 用法：cp .env.docker.example .env && 填好；cp deploy/mihomo.example.yaml
-#       deploy/mihomo.yaml && 填好订阅/住宅代理；然后 docker compose up -d
-# =============================================================================
-
+# 迁移后只剩 searxng（自建元搜索）。主服务（craft-server）+ mihomo 均已转原生 systemd：
+#   craft-agent.service、mihomo.service（部署见 scripts/deploy.sh / quick-deploy.sh）。
+# 这份只管 searxng 一个容器，发布到宿主回环 127.0.0.1:8080，宿主 cloudflared 不经它。
+# 用法（服务器 /opt/craft-docker/）：docker compose up -d searxng
 services:
-  mihomo:
-    image: metacubex/mihomo:latest
-    restart: unless-stopped
-    volumes:
-      - ./deploy/mihomo.yaml:/root/.config/mihomo/config.yaml:ro
-    # 仅容器网络内可达，不发布到宿主机
-    expose:
-      - "7899"
-
   searxng:
     image: searxng/searxng:latest
     restart: unless-stopped
     volumes:
       - ./deploy/searxng-settings.yml:/etc/searxng/settings.yml:ro
-    expose:
-      - "8080"
-    environment:
-      # 容器内搜索请求经 mihomo 出去(Google/Bing…在国内不可达)
-      HTTP_PROXY: http://mihomo:7899
-      HTTPS_PROXY: http://mihomo:7899
-      NO_PROXY: localhost,127.0.0.1,::1
-
-  craft-server:
-    image: craft-agents-full:latest
-    restart: unless-stopped
-    command: ["bun", "run", "packages/server/src/index.ts", "--allow-insecure-bind"]
-    depends_on:
-      - mihomo
-      - searxng
-    env_file:
-      - .env
-    environment:
-      # 采集（CloakBrowser/Chromium）走容器内 mihomo（订阅翻墙 + 住宅出口）。
-      # 显式 --proxy 传给 CloakBrowser，优先级高于下面的 *_PROXY 环境变量。
-      CLOAKBROWSER_PROXY: http://mihomo:7899
-      # agent 内置联网工具（WebSearch/DuckDuckGo、WebFetch、fd/rg 二进制下载）
-      # 默认不走代理，在境内直接撞 GFW 挂超时——表现为“卡在工具调用”。
-      # 这里给容器全局出站挂上 mihomo，NO_PROXY 里的境内/内部域名直连放行。
-      HTTP_PROXY: http://mihomo:7899
-      HTTPS_PROXY: http://mihomo:7899
-      # 直连放行（不走代理）：本机/容器内部、DeepSeek、飞书、国内采集、SearXNG
-      NO_PROXY: localhost,127.0.0.1,::1,mihomo,searxng,api.deepseek.com,.deepseek.com,.feishu.cn,open.feishu.cn,.larksuite.com,.feishucdn.com,.szlcsc.com,.ickey.cn,.hqew.com
-      # lark-cli 只与境内飞书通信，永不走代理
-      LARK_CLI_NO_PROXY: "1"
-      CRAFT_WEBUI_SECURE_COOKIE: "true"
-      # SearXNG——自建元搜索引擎,替代 DDG
-      SEARXNG_URL: http://searxng:8080
-      SEARXNG_SECRET_KEY: "${SEARXNG_SECRET_KEY:-change-me-in-production}"
-    volumes:
-      - craft_data:/home/craftagents/.craft-agent          # 数据（命根子）
-      - craft_lark:/home/craftagents/.lark-cli              # lark-cli 配置
-      - craft_lark_store:/home/craftagents/.local/share/lark-cli  # lark-cli 登录态
-      # 宿主 machine-id 注入容器：凭证(credentials.enc)的加密 key 由 machine-id 派生，
-      # 从旧部署迁移的 DeepSeek key 才能在容器里解密。
-      - /var/lib/dbus/machine-id:/var/lib/dbus/machine-id:ro
-      - /etc/machine-id:/etc/machine-id:ro
-    # 只发布到回环，给宿主 cloudflared 接
     ports:
-      - "127.0.0.1:9100:9100"
-
-volumes:
-  craft_data:
-  craft_lark:
-  craft_lark_store:
+      - "127.0.0.1:8080:8080"
+    environment:
+      # 海外搜索引擎出口走宿主机原生 mihomo（docker 网关 172.17.0.1，mihomo 监听 :7899）
+      HTTP_PROXY: http://172.17.0.1:7899
+      HTTPS_PROXY: http://172.17.0.1:7899
+      NO_PROXY: localhost,127.0.0.1,::1
+      SEARXNG_SECRET_KEY: change-me-in-production
